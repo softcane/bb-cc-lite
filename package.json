@@ -1,0 +1,39 @@
+{
+  "name": "bb-cc-lite",
+  "version": "0.1.0",
+  "description": "A small Claude Code companion status line that says when to continue, slow down, or stop.",
+  "type": "module",
+  "bin": {
+    "bb-cc-lite": "./dist/cli.js"
+  },
+  "files": [
+    "assets",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "claude-code",
+    "statusline",
+    "litellm",
+    "cli"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^25.0.0",
+    "eslint": "^9.39.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.48.0",
+    "vitest": "^4.0.14"
+  }
+}

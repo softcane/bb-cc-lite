@@ -1,0 +1,83 @@
+import type { Decision } from "./types.js";
+
+const DEFAULT_WIDTH = 120;
+const RESET = "\u001b[0m";
+const COLORS: Record<Decision["state"], string> = {
+  Healthy: "\u001b[32m",
+  Careful: "\u001b[33m",
+  Stop: "\u001b[1;31m"
+};
+
+export function renderStatusLine(decision: Decision, width?: number): string {
+  const terminalWidth = Math.max(20, Math.floor(width || DEFAULT_WIDTH));
+  const candidates = decision.state === "Stop" ? stopCandidates(decision) : defaultCandidates(decision);
+
+  for (const candidate of candidates.map(joinParts)) {
+    if (visibleLength(candidate) <= terminalWidth) {
+      return colorizeState(candidate, decision.state);
+    }
+  }
+
+  return colorizeState(truncate(joinParts(candidates.at(-1) || [`bb: ${decision.state}`]), terminalWidth), decision.state);
+}
+
+function defaultCandidates(decision: Decision): string[][] {
+  const evidence = decision.evidence.map((item) => item.label);
+  return [
+    [`bb: ${decision.state}`, ...evidence, decision.action],
+    [`bb: ${decision.state}`, decision.primaryEvidence, decision.action],
+    [`bb: ${decision.state}`, decision.action]
+  ];
+}
+
+function stopCandidates(decision: Decision): string[][] {
+  const costEvidence = decision.evidence.filter((item) => item.detail).map((item) => item.label);
+  const fullWhy =
+    decision.impact && decision.impact !== decision.primaryEvidence
+      ? `why: ${decision.primaryEvidence}; ${decision.impact}`
+      : `why: ${decision.primaryEvidence}`;
+  const shortWhy = `why: ${decision.primaryEvidence}`;
+  const action = `do: ${decision.action}`;
+  return [
+    [`bb: ${decision.state}`, fullWhy, ...costEvidence, action],
+    [`bb: ${decision.state}`, shortWhy, action],
+    [`bb: ${decision.state}`, shortWhy]
+  ];
+}
+
+function joinParts(parts: string[]): string {
+  return parts.filter(Boolean).map(sanitizeLinePart).join(" | ");
+}
+
+function visibleLength(value: string): number {
+  // ANSI escape stripping is needed before width checks.
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/\u001b\[[0-9;]*m/gu, "").length;
+}
+
+function truncate(value: string, width: number): string {
+  if (visibleLength(value) <= width) {
+    return value;
+  }
+  if (width <= 3) {
+    return value.slice(0, width);
+  }
+  return `${value.slice(0, width - 3).trimEnd()}...`;
+}
+
+function sanitizeLinePart(value: string): string {
+  // Collapse control characters before joining statusline segments.
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\u0000-\u001f\u007f]+/gu, " ").replace(/\s+/gu, " ").trim();
+}
+
+function colorizeState(value: string, state: Decision["state"]): string {
+  if (process.env.NO_COLOR || process.env.BB_CC_LITE_COLOR === "0") {
+    return value;
+  }
+  const prefix = `bb: ${state}`;
+  if (!value.startsWith(prefix)) {
+    return value;
+  }
+  return `${COLORS[state]}${prefix}${RESET}${value.slice(prefix.length)}`;
+}

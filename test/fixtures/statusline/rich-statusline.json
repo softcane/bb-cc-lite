@@ -1,0 +1,45 @@
+{
+  "session_id": "session-fixture-001",
+  "transcript_path": "/tmp/bb-cc-lite/transcripts/session.jsonl",
+  "cwd": "/tmp/bb-cc-lite/workspace",
+  "model": {
+    "id": "claude-sonnet-4-5",
+    "display_name": "Claude Sonnet 4.5"
+  },
+  "cost": {
+    "total_cost_usd": "0.0421",
+    "total_duration_ms": 8342
+  },
+  "context_window": {
+    "used_tokens": 82000,
+    "total": 200000,
+    "current_usage": {
+      "input_tokens": 1250,
+      "output_tokens": 350,
+      "cache_read_input_tokens": 910,
+      "total_tokens": 2400
+    }
+  },
+  "rate_limits": {
+    "primary": {
+      "used_percentage": "0.87"
+    }
+  },
+  "usage": {
+    "input_tokens": 1200,
+    "output_tokens": 340,
+    "cache_read_input_tokens": 900
+  },
+  "token_usage": {
+    "cacheCreationInputTokens": 400
+  },
+  "tokens": {
+    "context_tokens": 94000
+  },
+  "terminal_width": 132,
+  "raw_prompt": "BB_CC_LITE_RAW_PROMPT_SENTINEL must not appear in parsed status input",
+  "tool_output": "BB_CC_LITE_TOOL_OUTPUT_SENTINEL must not appear in parsed status input",
+  "environment": {
+    "ANTHROPIC_API_KEY": "BB_CC_LITE_API_KEY_SENTINEL"
+  }
+}

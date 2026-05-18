@@ -1,0 +1,10 @@
+{"timestamp":"2026-02-03T00:00:01.000Z","type":"assistant","message":{"role":"assistant","usage":{"input_tokens":100,"output_tokens":20,"cache_creation_input_tokens":10},"content":[{"type":"tool_use","id":"edit-1","name":"Edit","input":{"file_path":"/tmp/project/src/private.ts","old_string":"BB_CC_LITE_RAW_PROMPT_SENTINEL must not appear in summaries","new_string":"const value = 1;"}}]}}
+{"timestamp":"2026-02-03T00:00:02.000Z","type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"bash-test-1","name":"Bash","input":{"command":"npm test -- --runInBand"}}]}}
+{"timestamp":"2026-02-03T00:00:03.000Z","type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"bash-test-1","is_error":true,"content":"BB_CC_LITE_TOOL_OUTPUT_SENTINEL failing assertion details and local output"}]}}
+{"timestamp":"2026-02-03T00:00:04.000Z","type":"tool_use","tool_use":{"id":"edit-2","name":"MultiEdit","input":{"edits":[{"old_string":"before","new_string":"after"}]}}}
+{"timestamp":"2026-02-03T00:00:05.000Z","type":"tool_use","tool_use":{"id":"bash-test-2","name":"Bash","input":{"command":"pnpm vitest run test/transcript.test.ts"}}}
+{"timestamp":"2026-02-03T00:00:06.000Z","type":"tool_result","tool_use_id":"bash-test-2","exit_code":1,"content":"second test failure with BB_CC_LITE_TOOL_OUTPUT_SENTINEL"}
+{"timestamp":"2026-02-03T00:00:07.000Z","type":"assistant","content":[{"type":"tool_use","id":"bash-lint-1","name":"Bash","input":{"command":"npm run lint"}}]}
+{"timestamp":"2026-02-03T00:00:08.000Z","type":"assistant","content":[{"type":"tool_result","tool_use_id":"bash-lint-1","isError":true,"content":"lint output contains BB_CC_LITE_API_KEY_SENTINEL but must stay out of summaries"}]}
+{"timestamp":"2026-02-03T00:00:09.000Z","type":"PostCompact","usage":{"prompt_tokens":150,"completion_tokens":30,"cache_read_input_tokens":90,"total_tokens":270}}
+not-json
