@@ -6,8 +6,6 @@ Claude Code can look busy while it is stuck retrying the same command, burning c
 
 ![bb-cc-lite statusline examples](./assets/statusline-demo.gif)
 
-No dashboard. No Docker. No proxy. No LiteLLM gateway. No cc-blackbox required.
-
 ## Install
 
 ```bash
