@@ -1,8 +1,10 @@
 # bb-cc-lite
 
+[![CI](https://github.com/softcane/bb-cc-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/softcane/bb-cc-lite/actions/workflows/ci.yml)
+
 Claude Code can look busy while it is stuck retrying the same command, burning context, or spending money after the useful work is already over.
 
-`bb-cc-lite` puts one decision line inside Claude Code:
+`bb-cc-lite` is **Black Box Claude Code Lite**. It puts one decision line inside Claude Code:
 
 ![bb-cc-lite statusline examples](./assets/statusline-demo.gif)
 
