@@ -13,7 +13,7 @@
     "url": "https://github.com/softcane/bb-cc-lite/issues"
   },
   "bin": {
-    "bb-cc-lite": "./dist/cli.js"
+    "bb-cc-lite": "dist/cli.js"
   },
   "files": [
     "assets",
