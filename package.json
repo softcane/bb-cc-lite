@@ -1,6 +1,6 @@
 {
   "name": "bb-cc-lite",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Black Box Claude Code Lite: a small Claude Code status line that says when to continue, slow down, or stop.",
   "type": "module",
   "author": "Softcane",
@@ -42,11 +42,11 @@
   ],
   "license": "MIT",
   "devDependencies": {
-    "@eslint/js": "^9.39.1",
-    "@types/node": "^25.0.0",
-    "eslint": "^9.39.1",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.48.0",
-    "vitest": "^4.0.14"
+    "@eslint/js": "9.39.4",
+    "@types/node": "25.9.0",
+    "eslint": "9.39.4",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.59.4",
+    "vitest": "4.1.6"
   }
 }
