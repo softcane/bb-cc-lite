@@ -13,6 +13,10 @@ export function eventStorePath(): string {
   return process.env.BB_CC_LITE_STORE || join(appHome(), "events.json");
 }
 
+export function baselinePath(homeDir?: string): string {
+  return join(appHome(homeDir), "baseline.json");
+}
+
 export function backupDir(homeDir?: string): string {
   return join(appHome(homeDir), "backups");
 }

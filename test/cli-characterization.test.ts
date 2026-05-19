@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createTempWorkspace, removeTempWorkspace, type TempWorkspace } from "./helpers/temp.js";
+import { createTempWorkspace, pathExists, removeTempWorkspace, type TempWorkspace, writeJson } from "./helpers/temp.js";
 
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 const tscPath = fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url));
@@ -52,6 +52,98 @@ afterAll(async () => {
 });
 
 describe("CLI behavior characterization", () => {
+  it("install --no-learn skips personal baseline learning explicitly", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const result = await runCli(["install", "--project", workspace.projectDir, "--home", workspace.homeDir, "--no-learn"], {
+        env: cliEnv(workspace)
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("Installed bb-cc-lite statusLine");
+      expect(result.stdout).toContain("Skipped personal baseline learning because --no-learn was passed.");
+      await expect(pathExists(join(workspace.appHome, "baseline.json"))).resolves.toBe(false);
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("install builds a personal baseline by default after statusline install", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const env = cliEnv(workspace);
+      const transcriptPath = join(workspace.homeDir, ".claude", "projects", "sample", "session.jsonl");
+      await writeTranscript(transcriptPath, repeatedFailedTestTranscript(3));
+
+      const result = await runCli(["install", "--project", workspace.projectDir, "--home", workspace.homeDir], {
+        env
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("personalizes the statusline from your past Claude sessions by default");
+      expect(result.stdout).toContain("It reads local Claude JSONL once.");
+      expect(result.stdout).toContain("Built personal baseline from 1 sessions.");
+      expect(result.stdout).toContain("No prompts, commands, outputs, paths, or file contents were stored.");
+
+      const baselinePath = join(workspace.appHome, "baseline.json");
+      await expect(pathExists(baselinePath)).resolves.toBe(true);
+      expectNoPrivacySentinels(await readFile(baselinePath, "utf8"), result.stdout);
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("install does not learn when a custom statusline is preserved", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const env = cliEnv(workspace);
+      const settingsPath = join(workspace.projectDir, ".claude", "settings.local.json");
+      await mkdir(dirname(settingsPath), { recursive: true });
+      await writeFile(
+        settingsPath,
+        `${JSON.stringify({ statusLine: { type: "command", command: "custom-statusline" } }, null, 2)}\n`,
+        "utf8"
+      );
+      await writeTranscript(
+        join(workspace.homeDir, ".claude", "projects", "sample", "session.jsonl"),
+        repeatedFailedTestTranscript(3)
+      );
+
+      const result = await runCli(["install", "--project", workspace.projectDir, "--home", workspace.homeDir], {
+        env
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("Preserved existing statusLine");
+      expect(result.stdout).toContain("Skipped personal baseline learning because statusline install was skipped.");
+      await expect(pathExists(join(workspace.appHome, "baseline.json"))).resolves.toBe(false);
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("unlearn clears the personal baseline", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const baselinePath = join(workspace.appHome, "baseline.json");
+      await writeFile(baselinePath, '{"schema":"bb-cc-lite.baseline.v1"}\n', "utf8");
+
+      const result = await runCli(["unlearn", "--home", workspace.homeDir], {
+        env: cliEnv(workspace)
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout.trim()).toBe("Cleared personal baseline.");
+      await expect(pathExists(baselinePath)).resolves.toBe(false);
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
   it("records and explains a healthy statusline decision without leaking private fields", async () => {
     const workspace = await createTempWorkspace();
     try {
@@ -107,6 +199,34 @@ describe("CLI behavior characterization", () => {
     }
   });
 
+  it("uses an aggregate personal baseline for read-heavy statusline wording", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const env = cliEnv(workspace);
+      await writeJson(join(workspace.appHome, "baseline.json"), readHeavyBaseline());
+      const transcriptPath = join(workspace.root, "transcripts", "research.jsonl");
+      await writeTranscript(transcriptPath, readHeavyTranscript());
+
+      const statusline = await runCli(["statusline"], {
+        env,
+        input: statusInput({
+          session_id: "session-research",
+          transcript_path: transcriptPath,
+          terminal_width: 180
+        })
+      });
+
+      expect(statusline.exitCode).toBe(0);
+      expect(statusline.stderr).toBe("");
+      expect(statusline.stdout).toContain("bb: Healthy");
+      expect(statusline.stdout).toContain("research phase: usually normal for you");
+      expect(statusline.stdout).toContain("usually Healthy-like for you");
+      expectNoPrivacySentinels(statusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
   it("keeps careful statusline output width-aware", async () => {
     const workspace = await createTempWorkspace();
     try {
@@ -126,7 +246,8 @@ describe("CLI behavior characterization", () => {
       expect(statusline.exitCode).toBe(0);
       expect(visibleLength(rendered)).toBeLessThanOrEqual(55);
       expect(rendered).toContain("bb: Careful");
-      expect(rendered).toMatch(/\.\.\.$/u);
+      expect(rendered).toContain("ctx 82%");
+      expect(rendered).not.toContain("ask Claude for a 6-bullet handoff before more work");
       expectNoPrivacySentinels(rendered, await readFile(cliEnv(workspace).BB_CC_LITE_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
@@ -152,8 +273,8 @@ describe("CLI behavior characterization", () => {
 
       expect(stop.exitCode).toBe(0);
       expect(stop.stdout).toContain("bb: Stop");
-      expect(stop.stdout).toContain("why: Bash failed 3x running tests");
-      expect(stop.stdout).toContain("do: fix the test setup manually, then ask Claude to rerun only that test");
+      expect(stop.stdout).toContain("why: test loop: failed 3x");
+      expect(stop.stdout).toContain("do: inspect first failure");
 
       const latest = await runCli(["statusline"], {
         env,
@@ -177,9 +298,7 @@ describe("CLI behavior characterization", () => {
       expect(whyStop.exitCode).toBe(0);
       expect(whyStop.stdout).toContain("Last decision: Stop.");
       expect(whyStop.stdout).toContain("Reason: Bash failed 3x running tests. Claude is retrying a broken test loop.");
-      expect(whyStop.stdout).toContain(
-        "Next action: fix the test setup manually, then ask Claude to rerun only that test."
-      );
+      expect(whyStop.stdout).toContain("Next action: inspect first failure.");
 
       const whyJson = await runCli(["why", "--session", stopSessionId, "--json"], { env });
       expect(whyJson.exitCode).toBe(0);
@@ -229,8 +348,8 @@ describe("CLI behavior characterization", () => {
         transcript: repeatedFailedTestTranscript(3),
         expected: [
           "bb: Stop",
-          "why: Bash failed 3x running tests",
-          "do: fix the test setup manually, then ask Claude to rerun only that test"
+          "why: test loop: failed 3x",
+          "do: inspect first failure"
         ]
       },
       {
@@ -393,6 +512,92 @@ function compactionTranscript(): string[] {
       content: privacySentinels[3]
     })
   ];
+}
+
+function readHeavyTranscript(): string[] {
+  return Array.from({ length: 5 }, (_value, index) =>
+    JSON.stringify({
+      timestamp: `2026-05-19T00:02:0${index}.000Z`,
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: `read-${index}`,
+            name: index % 2 === 0 ? "Read" : "Grep",
+            input: {
+              file_path: privacySentinels[4],
+              pattern: privacySentinels[0]
+            }
+          }
+        ]
+      }
+    })
+  );
+}
+
+function readHeavyBaseline(): Record<string, unknown> {
+  return {
+    schema: "bb-cc-lite.baseline.v1",
+    version: 1,
+    createdAt: "2026-05-19T00:00:00.000Z",
+    updatedAt: "2026-05-19T00:00:00.000Z",
+    source: {
+      kind: "local_transcript_scan",
+      transcriptFilesScanned: 16,
+      sessionsSeen: 16,
+      malformedLines: 0,
+      maxBytesPerTranscript: 524288
+    },
+    privacy: {
+      rawPromptsStored: false,
+      rawToolOutputStored: false,
+      rawPathsStored: false,
+      rawCommandsStored: false,
+      perSessionRowsStored: false
+    },
+    totals: {
+      toolCalls: 80,
+      successfulToolResults: 80,
+      failedToolResults: 0,
+      validationCalls: 0,
+      validationFailures: 0,
+      validationSuccesses: 0,
+      successfulEditResults: 0,
+      readSearchToolCalls: 70
+    },
+    scenarios: {
+      read_heavy_debugging: { seen: 16, confidence: "medium" },
+      repeated_failure: { seen: 0, confidence: "low" },
+      validation_command_loop: { seen: 0, confidence: "low" },
+      edit_without_validation: { seen: 0, confidence: "low" },
+      validation_recovered: { seen: 0, confidence: "low" }
+    },
+    outcomes: {
+      healthyLike: {
+        validationPassedAfterEdit: 0,
+        validationRecovered: 0,
+        readHeavyNoFailure: 16
+      },
+      carefulLike: {
+        editWithoutValidation: 0,
+        toolFailureRecovered: 0,
+        twoFailureStreakRecovered: 0
+      },
+      stopLike: {
+        validationLoopUnrecovered: 0,
+        toolLoopUnrecovered: 0,
+        sessionEndedInFailureLoop: 0
+      }
+    },
+    rates: {
+      toolFailureRate: 0,
+      repeatedFailureRate: 0,
+      validationFailureRate: 0,
+      cacheWritesHighRate: 0
+    }
+  };
 }
 
 async function writeTranscript(path: string, lines: string[]): Promise<void> {

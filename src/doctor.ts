@@ -1,6 +1,9 @@
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
-import { pricingCachePath } from "./paths.js";
+import { join } from "node:path";
+import { clearBaseline as clearBaselineFile, readBaseline, summarizeBaseline } from "./baseline.js";
+import { buildBaseline } from "./baseline-builder.js";
+import { baselinePath, pricingCachePath } from "./paths.js";
 import { refreshPricing } from "./pricing.js";
 import { hasBbHooks, isBbStatusLine, readHooks, readStatusLine, resolveSettingsTarget, type SettingsScope } from "./settings.js";
 
@@ -10,6 +13,10 @@ export interface DoctorOptions {
   homeDir?: string;
   transcriptPath?: string;
   refreshPricing?: boolean;
+  showBaseline?: boolean;
+  clearBaseline?: boolean;
+  buildBaseline?: boolean;
+  appHomePath?: string;
 }
 
 export interface DoctorCheck {
@@ -17,6 +24,19 @@ export interface DoctorCheck {
   name: string;
   message: string;
 }
+
+export interface PersonalBaselineResult {
+  ok: boolean;
+  message: string;
+}
+
+export const PERSONAL_BASELINE_DISCLOSURE = `bb-cc-lite personalizes the statusline from your past Claude sessions by default.
+
+It reads local Claude JSONL once.
+It stores only counts, rates, weak outcome labels, and pattern labels.
+It does not store prompts, commands, tool output, paths, or file contents.
+
+Use --no-learn to skip this.`;
 
 export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
@@ -71,6 +91,15 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorChec
   }
 
   addAnthropicBaseUrlCheck(checks);
+  if (options.clearBaseline) {
+    await addClearBaselineCheck(checks, options);
+  }
+  if (options.buildBaseline) {
+    await addBuildBaselineCheck(checks, options);
+  }
+  if (options.showBaseline) {
+    await addBaselineSummaryCheck(checks, options);
+  }
   await addLiteLLMChecks(checks, options.refreshPricing || false);
   return checks;
 }
@@ -85,6 +114,131 @@ function checkNodeVersion(): DoctorCheck {
     return { level: "OK", name: "node", message: `Node ${process.versions.node}` };
   }
   return { level: "FAIL", name: "node", message: `Node ${process.versions.node}; bb-cc-lite requires Node >=20` };
+}
+
+async function addClearBaselineCheck(checks: DoctorCheck[], options: DoctorOptions): Promise<void> {
+  await clearPersonalBaseline({ homeDir: options.homeDir, appHomePath: options.appHomePath });
+  checks.push({
+    level: "OK",
+    name: "baseline",
+    message: "cleared personal baseline"
+  });
+}
+
+async function addBuildBaselineCheck(checks: DoctorCheck[], options: DoctorOptions): Promise<void> {
+  const result = await buildPersonalBaseline({ homeDir: options.homeDir, appHomePath: options.appHomePath });
+  checks.push({
+    level: result.ok ? "OK" : "WARN",
+    name: "baseline",
+    message: result.message.replaceAll("\n", " ")
+  });
+}
+
+async function addBaselineSummaryCheck(checks: DoctorCheck[], options: DoctorOptions): Promise<void> {
+  const baseline = await readBaseline(baselineFilePath(options));
+  if (baseline) {
+    checks.push({
+      level: "OK",
+      name: "baseline",
+      message: formatBaselineSummaryMessage(baseline, summarizeBaseline(baseline))
+    });
+    return;
+  }
+  checks.push({
+    level: "WARN",
+    name: "baseline",
+    message: "no readable personal baseline found; run doctor --build-baseline to create one"
+  });
+}
+
+export async function buildPersonalBaseline(
+  options: { homeDir?: string; appHomePath?: string } = {}
+): Promise<PersonalBaselineResult> {
+  try {
+    const baseline = await buildBaseline({ homeDir: options.homeDir, appHomePath: options.appHomePath });
+    return {
+      ok: true,
+      message: formatBuiltBaselineMessage(baseline)
+    };
+  } catch {
+    return {
+      ok: false,
+      message: "could not build personal baseline"
+    };
+  }
+}
+
+export async function clearPersonalBaseline(
+  options: { homeDir?: string; appHomePath?: string } = {}
+): Promise<PersonalBaselineResult> {
+  await clearBaselineFile(baselineFilePath(options));
+  return {
+    ok: true,
+    message: "cleared personal baseline"
+  };
+}
+
+function formatBuiltBaselineMessage(value: unknown): string {
+  const sessionsSeen = sessionsSeenFrom(value);
+  return [
+    `Built personal baseline from ${sessionsSeen} sessions.`,
+    "Stored only counts, rates, weak outcome labels, and pattern labels.",
+    "No prompts, commands, outputs, paths, or file contents were stored."
+  ].join("\n");
+}
+
+function formatBaselineSummaryMessage(value: unknown, summary?: unknown): string {
+  const sessionsSeen = sessionsSeenFrom(value);
+  const filesScanned = filesScannedFrom(value);
+  const outcomeSummary =
+    typeof summary === "string" && summary.startsWith("Personal baseline:")
+      ? `; ${summary.replace("Personal baseline:", "outcomes:").replace(/\.$/u, "")}`
+      : "";
+  return `personal baseline: ${sessionsSeen} sessions, ${filesScanned} transcript files; derived aggregate data only${outcomeSummary}`;
+}
+
+function sessionsSeenFrom(value: unknown): number {
+  if (!value || typeof value !== "object") {
+    return 0;
+  }
+  const nestedBaseline = (value as { baseline?: unknown }).baseline;
+  if (nestedBaseline) {
+    return sessionsSeenFrom(nestedBaseline);
+  }
+  const source = (value as { source?: unknown }).source;
+  if (source && typeof source === "object" && typeof (source as { sessionsSeen?: unknown }).sessionsSeen === "number") {
+    return (source as { sessionsSeen: number }).sessionsSeen;
+  }
+  if (typeof (value as { sessionsSeen?: unknown }).sessionsSeen === "number") {
+    return (value as { sessionsSeen: number }).sessionsSeen;
+  }
+  return 0;
+}
+
+function filesScannedFrom(value: unknown): number {
+  if (!value || typeof value !== "object") {
+    return 0;
+  }
+  const nestedBaseline = (value as { baseline?: unknown }).baseline;
+  if (nestedBaseline) {
+    return filesScannedFrom(nestedBaseline);
+  }
+  const source = (value as { source?: unknown }).source;
+  if (
+    source &&
+    typeof source === "object" &&
+    typeof (source as { transcriptFilesScanned?: unknown }).transcriptFilesScanned === "number"
+  ) {
+    return (source as { transcriptFilesScanned: number }).transcriptFilesScanned;
+  }
+  if (typeof (value as { transcriptFilesScanned?: unknown }).transcriptFilesScanned === "number") {
+    return (value as { transcriptFilesScanned: number }).transcriptFilesScanned;
+  }
+  return 0;
+}
+
+function baselineFilePath(options: { homeDir?: string; appHomePath?: string }): string {
+  return options.appHomePath ? join(options.appHomePath, "baseline.json") : baselinePath(options.homeDir);
 }
 
 async function addLiteLLMChecks(checks: DoctorCheck[], shouldRefreshPricing: boolean): Promise<void> {

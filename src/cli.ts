@@ -1,5 +1,11 @@
 #!/usr/bin/env node
-import { formatDoctorChecks, runDoctor } from "./doctor.js";
+import {
+  buildPersonalBaseline,
+  clearPersonalBaseline,
+  formatDoctorChecks,
+  PERSONAL_BASELINE_DISCLOSURE,
+  runDoctor
+} from "./doctor.js";
 import { parseHookPayload } from "./hook-payload.js";
 import { installStatusLine, uninstallStatusLine, type SettingsScope } from "./settings.js";
 import { readStdin } from "./status-input.js";
@@ -21,6 +27,9 @@ async function main(): Promise<void> {
       break;
     case "uninstall":
       await commandUninstall(args);
+      break;
+    case "unlearn":
+      await commandUnlearn(args);
       break;
     case "statusline":
       await commandStatusLine();
@@ -51,6 +60,7 @@ async function main(): Promise<void> {
 }
 
 async function commandInstall(args: ParsedArgs): Promise<void> {
+  const shouldLearn = !args.flags["no-learn"];
   const result = await installStatusLine({
     scope: scopeFlag(args),
     replace: Boolean(args.flags.replace),
@@ -64,7 +74,20 @@ async function commandInstall(args: ParsedArgs): Promise<void> {
   }
   if (result.status === "skipped") {
     console.log(`Manual replace: bb-cc-lite install --scope ${result.target.scope} --replace`);
+    if (shouldLearn) {
+      console.log("Skipped personal baseline learning because statusline install was skipped.");
+    } else {
+      console.log("Skipped personal baseline learning because --no-learn was passed.");
+    }
+    return;
   }
+  if (!shouldLearn) {
+    console.log("Skipped personal baseline learning because --no-learn was passed.");
+    return;
+  }
+  console.log(PERSONAL_BASELINE_DISCLOSURE);
+  const baseline = await buildPersonalBaseline({ homeDir: stringFlag(args, "home") });
+  console.log(baseline.message);
 }
 
 async function commandUninstall(args: ParsedArgs): Promise<void> {
@@ -78,6 +101,11 @@ async function commandUninstall(args: ParsedArgs): Promise<void> {
   if (result.status === "refused") {
     process.exitCode = 1;
   }
+}
+
+async function commandUnlearn(args: ParsedArgs): Promise<void> {
+  await clearPersonalBaseline({ homeDir: stringFlag(args, "home") });
+  console.log("Cleared personal baseline.");
 }
 
 async function commandStatusLine(): Promise<void> {
@@ -121,7 +149,10 @@ async function commandDoctor(args: ParsedArgs): Promise<void> {
     projectDir: stringFlag(args, "project"),
     homeDir: stringFlag(args, "home"),
     transcriptPath: stringFlag(args, "transcript"),
-    refreshPricing: Boolean(args.flags["refresh-pricing"])
+    refreshPricing: Boolean(args.flags["refresh-pricing"]),
+    buildBaseline: Boolean(args.flags["build-baseline"]),
+    showBaseline: Boolean(args.flags.baseline),
+    clearBaseline: Boolean(args.flags["clear-baseline"])
   });
   console.log(formatDoctorChecks(checks));
   if (checks.some((check) => check.level === "FAIL")) {
@@ -173,10 +204,20 @@ function printHelp(): void {
 
 Usage:
   bb-cc-lite install [--scope local|project|user] [--replace] [--hooks]
+                     [--no-learn]
   bb-cc-lite statusline
   bb-cc-lite why [--session <id>] [--json]
   bb-cc-lite doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing]
+                    [--baseline] [--build-baseline] [--clear-baseline]
+  bb-cc-lite unlearn
   bb-cc-lite uninstall [--scope local|project|user]
+
+Learning:
+  install builds a local personal baseline from Claude JSONL by default.
+  --no-learn skips that scan.
+  doctor --baseline shows a safe aggregate summary.
+  doctor --build-baseline refreshes the baseline.
+  doctor --clear-baseline and unlearn remove only the baseline.
 `);
 }
 

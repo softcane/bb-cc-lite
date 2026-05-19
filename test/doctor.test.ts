@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { formatDoctorChecks, runDoctor, type DoctorCheck } from "../src/doctor.js";
 import { installStatusLine, resolveSettingsTarget } from "../src/settings.js";
 import {
   createTempWorkspace,
+  pathExists,
   removeTempWorkspace,
   setIsolatedEnv,
   type TempWorkspace,
@@ -114,6 +115,162 @@ describe("doctor", () => {
       message: expect.stringContaining("127.0.0.1:10000")
     });
   });
+
+  it("shows a safe personal baseline summary without exposing raw fields", async () => {
+    const dirs = mustHaveWorkspace(workspace);
+    const rawPathSentinel = "/tmp/bb-cc-lite/private/worktree/src/secret.ts";
+    await writeJson(join(dirs.appHome, "baseline.json"), {
+      schema: "bb-cc-lite.baseline.v1",
+      version: 1,
+      createdAt: "2026-05-19T12:00:00.000Z",
+      updatedAt: rawPathSentinel,
+      source: {
+        kind: "local_transcript_scan",
+        transcriptFilesScanned: 4,
+        sessionsSeen: 3,
+        malformedLines: 1,
+        maxBytesPerTranscript: 524288
+      },
+      privacy: {
+        rawPromptsStored: false,
+        rawToolOutputStored: false,
+        rawPathsStored: false,
+        rawCommandsStored: false,
+        perSessionRowsStored: false
+      },
+      totals: {
+        toolCalls: 8,
+        successfulToolResults: 8,
+        failedToolResults: 0,
+        validationCalls: 0,
+        validationFailures: 0,
+        validationSuccesses: 0,
+        successfulEditResults: 0,
+        readSearchToolCalls: 6
+      },
+      scenarios: {
+        read_heavy_debugging: { seen: 2, confidence: "medium" },
+        repeated_failure: { seen: 0, confidence: "low" },
+        validation_command_loop: { seen: 0, confidence: "low" },
+        edit_without_validation: { seen: 0, confidence: "low" },
+        validation_recovered: { seen: 0, confidence: "low" }
+      },
+      outcomes: {
+        healthyLike: {
+          validationPassedAfterEdit: 0,
+          validationRecovered: 0,
+          readHeavyNoFailure: 2
+        },
+        carefulLike: {
+          editWithoutValidation: 0,
+          toolFailureRecovered: 0,
+          twoFailureStreakRecovered: 0
+        },
+        stopLike: {
+          validationLoopUnrecovered: 0,
+          toolLoopUnrecovered: 0,
+          sessionEndedInFailureLoop: 0
+        }
+      },
+      rates: {
+        toolFailureRate: 0,
+        repeatedFailureRate: 0,
+        validationFailureRate: 0,
+        cacheWritesHighRate: 0
+      }
+    });
+
+    const checks = await runDoctor({
+      projectDir: dirs.projectDir,
+      homeDir: dirs.homeDir,
+      appHomePath: dirs.appHome,
+      showBaseline: true
+    });
+
+    const baseline = findCheck(checks, "baseline");
+    expect(baseline).toMatchObject({ level: "OK" });
+    expect(baseline.message).toContain("3 sessions");
+    expect(baseline.message).toContain("4 transcript files");
+    expect(baseline.message).toContain("derived aggregate data only");
+    expect(baseline.message).not.toContain(rawPathSentinel);
+  });
+
+  it("clears only the personal baseline", async () => {
+    const dirs = mustHaveWorkspace(workspace);
+    const baselinePath = join(dirs.appHome, "baseline.json");
+    const eventStorePath = join(dirs.appHome, "events.json");
+    await Promise.all([
+      writeJson(baselinePath, {
+        schema: "bb-cc-lite.baseline.v1",
+        version: 1,
+        source: { sessionsSeen: 1, transcriptFilesScanned: 1 }
+      }),
+      writeJson(eventStorePath, { events: [{ state: "Healthy" }] })
+    ]);
+
+    const checks = await runDoctor({
+      projectDir: dirs.projectDir,
+      homeDir: dirs.homeDir,
+      appHomePath: dirs.appHome,
+      clearBaseline: true
+    });
+
+    expect(findCheck(checks, "baseline")).toMatchObject({
+      level: "OK",
+      message: "cleared personal baseline"
+    });
+    await expect(pathExists(baselinePath)).resolves.toBe(false);
+    await expect(pathExists(eventStorePath)).resolves.toBe(true);
+  });
+
+  it("builds a personal baseline from local Claude JSONL history", async () => {
+    const dirs = mustHaveWorkspace(workspace);
+    const transcriptPath = join(dirs.homeDir, ".claude", "projects", "sample", "session.jsonl");
+    await writeTranscript(transcriptPath, [
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "bash-test",
+              name: "Bash",
+              input: { command: "npm test -- BB_CC_LITE_RAW_COMMAND_SENTINEL" }
+            }
+          ]
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "bash-test",
+              is_error: false,
+              content: "BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL"
+            }
+          ]
+        }
+      })
+    ]);
+
+    const checks = await runDoctor({
+      projectDir: dirs.projectDir,
+      homeDir: dirs.homeDir,
+      appHomePath: dirs.appHome,
+      buildBaseline: true
+    });
+
+    const baseline = findCheck(checks, "baseline");
+    expect(baseline).toMatchObject({ level: "OK" });
+    expect(baseline.message).toContain("Built personal baseline from 1 sessions.");
+    const baselinePath = join(dirs.appHome, "baseline.json");
+    await expect(pathExists(baselinePath)).resolves.toBe(true);
+    const serialized = await readFile(baselinePath, "utf8");
+    expect(serialized).not.toContain("BB_CC_LITE_RAW_COMMAND_SENTINEL");
+    expect(serialized).not.toContain("BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL");
+  });
 });
 
 function findCheck(checks: DoctorCheck[], name: string): DoctorCheck {
@@ -136,4 +293,9 @@ async function createFakeRuntime(root: string): Promise<string> {
   await mkdir(distDir, { recursive: true });
   await writeFile(join(distDir, "cli.js"), "console.log('fake bb-cc-lite runtime');\n", "utf8");
   return join(distDir, "cli.js");
+}
+
+async function writeTranscript(path: string, lines: string[]): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${lines.join("\n")}\n`, "utf8");
 }

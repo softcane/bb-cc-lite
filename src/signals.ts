@@ -1,9 +1,10 @@
 import { sessionKeyFromId } from "./session.js";
 import { mergeUsage } from "./status-input.js";
-import type { Decision, StatusLineInput, StoredDecision, TokenUsage, TranscriptSummary } from "./types.js";
+import type { Decision, DecisionPersonalBaseline, StatusLineInput, StoredDecision, TokenUsage, TranscriptSummary } from "./types.js";
 
 export interface DecideOptions {
   previous?: StoredDecision;
+  baseline?: DecisionPersonalBaseline;
 }
 
 export function decide(
@@ -40,13 +41,22 @@ export function decide(
     .sort((a, b) => b.count - a.count)[0];
   if (repeatedFailure) {
     const runningTests = repeatedFailure.toolName === "Bash" && repeatedFailure.purpose === "tests";
+    const baselineStopLike = runningTests && supportsValidationLoopStop(options.baseline);
     return baseDecision({
       state: "Stop",
       reasonCode: "repeated_tool_failure",
+      diagnosisCode: runningTests ? "validation_command_loop" : "tool_failure_repeated",
+      diagnosis: runningTests
+        ? baselineStopLike
+          ? "test loop: past runs ended badly"
+          : `test loop: failed ${repeatedFailure.count}x`
+        : undefined,
+      confidence: "high",
+      baselineNote: baselineStopLike ? "usually Stop-like for you" : undefined,
       primaryEvidence: `${repeatedFailure.toolName} failed ${repeatedFailure.count}x${runningTests ? " running tests" : ""}`,
       impact: runningTests ? "Claude is retrying a broken test loop" : "Claude is retrying the same failing tool",
       action: runningTests
-        ? "fix the test setup manually, then ask Claude to rerun only that test"
+        ? "inspect first failure"
         : repeatedFailure.toolName === "Bash"
           ? "fix the failing command manually, then ask Claude to rerun only that command"
           : `inspect the failing ${repeatedFailure.toolName} step manually before more retries`,
@@ -151,6 +161,26 @@ export function decide(
     });
   }
 
+  if (transcript.hasUnvalidatedEdits) {
+    return baseDecision({
+      state: "Careful",
+      reasonCode: "edit_without_validation",
+      diagnosisCode: "edit_without_validation",
+      diagnosis: "edits not checked yet",
+      confidence: "medium",
+      primaryEvidence: "edits not validated",
+      impact: "A successful edit has not been checked by validation yet",
+      action: "run focused check",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
   if (cacheWritesHigh(usage)) {
     return baseDecision({
       state: "Careful",
@@ -203,6 +233,47 @@ export function decide(
     });
   }
 
+  if (transcript.validationRecovered) {
+    return baseDecision({
+      state: "Healthy",
+      reasonCode: "validation_recovered",
+      diagnosisCode: "validation_recovered",
+      diagnosis: "validation recovered",
+      confidence: "medium",
+      primaryEvidence: "validation recovered",
+      impact: "A failed validation later passed",
+      action: "continue",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
+  if (isReadHeavyCurrentSession(transcript) && supportsReadHeavyHealthy(options.baseline)) {
+    return baseDecision({
+      state: "Healthy",
+      reasonCode: "read_heavy_debugging",
+      diagnosisCode: "read_heavy_debugging",
+      diagnosis: "research phase: usually normal for you",
+      confidence: options.baseline?.scenarios?.read_heavy_debugging?.confidence || "medium",
+      baselineNote: "usually Healthy-like for you",
+      primaryEvidence: `${transcript.readToolCalls} read/search tool calls`,
+      impact: "This matches your Healthy-like read-heavy sessions",
+      action: "continue",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
   return baseDecision({
     state: "Healthy",
     reasonCode: "healthy",
@@ -232,6 +303,10 @@ export function formatCost(value: number): string {
 function baseDecision(args: {
   state: Decision["state"];
   reasonCode: string;
+  diagnosisCode?: Decision["diagnosisCode"];
+  diagnosis?: string;
+  confidence?: Decision["confidence"];
+  baselineNote?: string;
   primaryEvidence: string;
   impact: string;
   action: string;
@@ -256,6 +331,10 @@ function baseDecision(args: {
   return {
     state: args.state,
     reasonCode: args.reasonCode,
+    diagnosisCode: args.diagnosisCode,
+    diagnosis: args.diagnosis,
+    confidence: args.confidence,
+    baselineNote: args.baselineNote,
     primaryEvidence: args.primaryEvidence,
     evidence,
     impact: args.impact,
@@ -279,4 +358,26 @@ function cacheWarm(usage: TokenUsage): boolean {
   const reads = usage.cacheReadInputTokens || 0;
   const writes = usage.cacheCreationInputTokens || 0;
   return reads > 0 && reads >= writes;
+}
+
+function isReadHeavyCurrentSession(transcript: TranscriptSummary): boolean {
+  return (
+    transcript.toolCalls >= 4 &&
+    transcript.readToolCalls >= 3 &&
+    transcript.readToolCalls / Math.max(1, transcript.toolCalls) >= 0.6 &&
+    transcript.failedToolResults === 0 &&
+    !transcript.hasUnvalidatedEdits
+  );
+}
+
+function supportsReadHeavyHealthy(baseline: DecisionPersonalBaseline | undefined): boolean {
+  const scenario = baseline?.scenarios?.read_heavy_debugging;
+  const healthyCount = baseline?.outcomes?.healthyLike?.readHeavyNoFailure || 0;
+  return Boolean(scenario && scenario.seen >= 3 && scenario.confidence !== "low" && healthyCount > 0);
+}
+
+function supportsValidationLoopStop(baseline: DecisionPersonalBaseline | undefined): boolean {
+  const scenario = baseline?.scenarios?.validation_command_loop;
+  const stopCount = baseline?.outcomes?.stopLike?.validationLoopUnrecovered || 0;
+  return Boolean(scenario && scenario.seen >= 3 && scenario.confidence !== "low" && stopCount > 0);
 }

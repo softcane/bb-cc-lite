@@ -1,4 +1,5 @@
 export type DecisionState = "Healthy" | "Careful" | "Stop";
+export type DecisionConfidence = "low" | "medium" | "high";
 
 export interface StatusLineModel {
   id?: string;
@@ -41,9 +42,12 @@ export interface TranscriptSummary {
   linesRead: number;
   malformedLines: number;
   toolCalls: number;
+  readToolCalls: number;
   failedToolResults: number;
   repeatedFailures: ToolFailureSummary[];
   editTestLoopFailures: number;
+  hasUnvalidatedEdits: boolean;
+  validationRecovered: boolean;
   compactionEvents: number;
   usage: TokenUsage;
   latestTimestamp?: string;
@@ -70,9 +74,28 @@ export interface DecisionEvidence {
   detail?: string;
 }
 
+export interface BaselineScenarioSummary {
+  seen: number;
+  confidence?: DecisionConfidence;
+}
+
+export interface DecisionPersonalBaseline {
+  scenarios?: Partial<Record<string, BaselineScenarioSummary>>;
+  outcomes?: {
+    healthyLike?: Partial<Record<string, number>>;
+    carefulLike?: Partial<Record<string, number>>;
+    stopLike?: Partial<Record<string, number>>;
+  };
+  rates?: Partial<Record<string, number>>;
+}
+
 export interface Decision {
   state: DecisionState;
   reasonCode: string;
+  diagnosisCode?: string;
+  diagnosis?: string;
+  confidence?: DecisionConfidence;
+  baselineNote?: string;
   primaryEvidence: string;
   evidence: DecisionEvidence[];
   impact: string;

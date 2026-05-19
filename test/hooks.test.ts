@@ -31,9 +31,12 @@ function transcript(overrides: Partial<TranscriptSummary> = {}): TranscriptSumma
     linesRead: 0,
     malformedLines: 0,
     toolCalls: 0,
+    readToolCalls: 0,
     failedToolResults: 0,
     repeatedFailures: [],
     editTestLoopFailures: 0,
+    hasUnvalidatedEdits: false,
+    validationRecovered: false,
     compactionEvents: 0,
     usage: {},
     ...overrides

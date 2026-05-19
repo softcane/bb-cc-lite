@@ -40,9 +40,12 @@ describe("parseTranscriptLines", () => {
       linesRead: 10,
       malformedLines: 1,
       toolCalls: 5,
+      readToolCalls: 0,
       failedToolResults: 3,
       repeatedFailures: [{ toolName: "Bash", purpose: "tests", count: 2 }],
       editTestLoopFailures: 2,
+      hasUnvalidatedEdits: false,
+      validationRecovered: false,
       compactionEvents: 1,
       usage: {
         inputTokens: 150,
@@ -101,6 +104,86 @@ describe("parseTranscriptLines", () => {
     expect(summary.toolCalls).toBe(4);
     expect(summary.repeatedFailures).toEqual([]);
   });
+
+  it("marks successful edits as unvalidated until later validation succeeds", () => {
+    const edited = parseTranscriptLines([
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "edit-1", name: "Edit", input: { file_path: "/secret/path.ts" } }]
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "edit-1", is_error: false, content: "edited private file" }]
+        }
+      })
+    ]);
+
+    expect(edited.hasUnvalidatedEdits).toBe(true);
+
+    const checked = parseTranscriptLines([
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "edit-1", name: "Edit", input: { file_path: "/secret/path.ts" } }]
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "edit-1", is_error: false, content: "edited private file" }]
+        }
+      }),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "test-1", name: "Bash", input: { command: "npm test" } }]
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "test-1", is_error: false, content: "tests passed" }]
+        }
+      })
+    ]);
+
+    expect(checked.hasUnvalidatedEdits).toBe(false);
+    expectNoPrivacySentinels(checked);
+  });
+
+  it("detects validation recovery after a failed validation later passes", () => {
+    const summary = parseTranscriptLines([
+      ...failedBashTestPair(1),
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:07.000Z",
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "test-success", name: "Bash", input: { command: "npm test" } }]
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:08.000Z",
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "test-success", is_error: false, content: "tests passed" }]
+        }
+      })
+    ]);
+
+    expect(summary.validationRecovered).toBe(true);
+    expect(summary.repeatedFailures).toEqual([]);
+  });
 });
 
 describe("parseTranscriptTail", () => {
@@ -125,9 +208,12 @@ describe("parseTranscriptTail", () => {
       linesRead: 0,
       malformedLines: 0,
       toolCalls: 0,
+      readToolCalls: 0,
       failedToolResults: 0,
       repeatedFailures: [],
       editTestLoopFailures: 0,
+      hasUnvalidatedEdits: false,
+      validationRecovered: false,
       compactionEvents: 0,
       usage: {}
     });

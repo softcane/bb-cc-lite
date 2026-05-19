@@ -8,6 +8,7 @@ export type ParseTranscriptOptions = ReadTranscriptTailOptions;
 interface ToolMeta {
   name: string;
   purpose?: string;
+  isEdit: boolean;
 }
 
 export async function parseTranscriptTail(
@@ -25,8 +26,12 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
   const toolById = new Map<string, ToolMeta>();
   const failureCounts = new Map<string, ToolFailureSummary>();
   let recentEditBeforeTest = false;
+  let hasUnvalidatedEdits = false;
+  let validationFailedSinceSuccess = false;
+  let validationRecovered = false;
   let editTestLoopFailures = 0;
   let toolCalls = 0;
+  let readToolCalls = 0;
   let failedToolResults = 0;
   let malformedLines = 0;
   let compactionEvents = 0;
@@ -57,10 +62,15 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
 
     for (const toolUse of extractToolUses(entry)) {
       toolCalls += 1;
+      if (isReadLikeTool(toolUse.name)) {
+        readToolCalls += 1;
+      }
       if (toolUse.id) {
+        const isEdit = isEditTool(toolUse.name, { basenameOnly: true });
         toolById.set(toolUse.id, {
           name: safeToolName(toolUse.name, { basenameOnly: true }),
-          purpose: classifyToolPurpose(toolUse.name, toolUse.input, { basenameOnly: true })
+          purpose: classifyToolPurpose(toolUse.name, toolUse.input, { basenameOnly: true }),
+          isEdit
         });
       }
       if (isEditTool(toolUse.name, { basenameOnly: true })) {
@@ -72,13 +82,22 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
       const meta =
         (toolResult.toolUseId ? toolById.get(toolResult.toolUseId) : undefined) ||
         (toolResult.toolName
-          ? { name: safeToolName(toolResult.toolName, { basenameOnly: true }), purpose: undefined }
+          ? { name: safeToolName(toolResult.toolName, { basenameOnly: true }), purpose: undefined, isEdit: false }
           : undefined) ||
-        { name: "tool", purpose: undefined };
+        { name: "tool", purpose: undefined, isEdit: false };
       const purpose = toolResult.purpose || meta.purpose;
       const key = `${meta.name}:${purpose || ""}`;
       if (!toolResult.isError) {
         failureCounts.delete(key);
+        if (meta.isEdit) {
+          hasUnvalidatedEdits = true;
+        } else if (meta.name === "Bash" && purpose === "tests") {
+          if (validationFailedSinceSuccess) {
+            validationRecovered = true;
+          }
+          validationFailedSinceSuccess = false;
+          hasUnvalidatedEdits = false;
+        }
         continue;
       }
       failedToolResults += 1;
@@ -92,6 +111,9 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
         editTestLoopFailures += 1;
         recentEditBeforeTest = false;
       }
+      if (meta.name === "Bash" && purpose === "tests") {
+        validationFailedSinceSuccess = true;
+      }
     }
   }
 
@@ -101,9 +123,12 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
     linesRead: lines.length,
     malformedLines,
     toolCalls,
+    readToolCalls,
     failedToolResults,
     repeatedFailures: [...failureCounts.values()].filter((item) => item.count >= 2),
     editTestLoopFailures,
+    hasUnvalidatedEdits,
+    validationRecovered,
     compactionEvents,
     usage,
     latestTimestamp
@@ -117,12 +142,19 @@ function emptySummary(pathReadable: boolean): TranscriptSummary {
     linesRead: 0,
     malformedLines: 0,
     toolCalls: 0,
+    readToolCalls: 0,
     failedToolResults: 0,
     repeatedFailures: [],
     editTestLoopFailures: 0,
+    hasUnvalidatedEdits: false,
+    validationRecovered: false,
     compactionEvents: 0,
     usage: {}
   };
+}
+
+function isReadLikeTool(toolName: string): boolean {
+  return /^(Read|Grep|Glob|LS|WebFetch|WebSearch)$/u.test(safeToolName(toolName, { basenameOnly: true }));
 }
 
 function extractToolUses(entry: Record<string, unknown>): Array<{ id?: string; name: string; input?: unknown }> {

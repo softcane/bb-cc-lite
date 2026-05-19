@@ -23,20 +23,28 @@ export function renderStatusLine(decision: DecisionPresentation, width?: number)
 
 function defaultCandidates(decision: DecisionPresentation): string[][] {
   const evidence = decision.evidence.map((item) => item.label);
+  const headline = decision.diagnosis || decision.primaryEvidence;
+  const badge = decision.baselineNote || "";
+  if (decision.diagnosis) {
+    return [
+      [`bb: ${decision.state}`, headline, badge, decision.action],
+      [`bb: ${decision.state}`, headline, decision.action],
+      [`bb: ${decision.state}`, headline]
+    ];
+  }
   return [
-    [`bb: ${decision.state}`, ...evidence, decision.action],
-    [`bb: ${decision.state}`, decision.primaryEvidence, decision.action],
-    [`bb: ${decision.state}`, decision.action]
+    [`bb: ${decision.state}`, headline, badge, ...evidence.filter((item) => item !== headline), decision.action],
+    [`bb: ${decision.state}`, headline, decision.action],
+    [`bb: ${decision.state}`, headline]
   ];
 }
 
 function stopCandidates(decision: DecisionPresentation): string[][] {
   const costEvidence = decision.evidence.filter((item) => item.detail).map((item) => item.label);
+  const headline = decision.diagnosis || decision.primaryEvidence;
   const fullWhy =
-    decision.impact && decision.impact !== decision.primaryEvidence
-      ? `why: ${decision.primaryEvidence}; ${decision.impact}`
-      : `why: ${decision.primaryEvidence}`;
-  const shortWhy = `why: ${decision.primaryEvidence}`;
+    decision.impact && decision.impact !== headline ? `why: ${headline}; ${decision.impact}` : `why: ${headline}`;
+  const shortWhy = `why: ${headline}`;
   const action = `do: ${decision.action}`;
   return [
     [`bb: ${decision.state}`, fullWhy, ...costEvidence, action],

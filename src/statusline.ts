@@ -1,4 +1,5 @@
 import { mergeHookSummary } from "./hook-summary.js";
+import { readBaseline } from "./baseline.js";
 import { toDecisionPresentation } from "./decision-presentation.js";
 import { estimateCostUsd, loadPricing } from "./pricing.js";
 import { renderStatusLine } from "./renderer.js";
@@ -33,7 +34,7 @@ export async function createStatusLine(rawInput: string, terminalColumns?: numbe
   }
 
   const previous = sessionKey ? await latestDecision(sessionKey) : undefined;
-  const decision = decide(input, transcript, { previous });
+  const decision = decide(input, transcript, { previous, baseline: await readBaseline() });
   await recordDecision(decision);
   return renderStatusLine(toDecisionPresentation(decision), input.terminalWidth || terminalColumns);
 }
