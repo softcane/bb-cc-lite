@@ -8,6 +8,8 @@ Claude Code does not always fail loudly. Sometimes it loops, fills context, spen
 
 ![bb-cc-lite statusline examples](./assets/statusline-demo.gif)
 
+The demo above is generated from real `bb-cc-lite statusline` output.
+
 ## Install
 
 ```bash
@@ -28,8 +30,8 @@ Hooks are optional. They run in the background and skip `UserPromptSubmit`.
 
 ```text
 bb: Healthy | ctx 42% | $0.18 | cache warm | continue normally
-bb: Careful | ctx 82% | cache writes high | ask Claude for a 6-bullet handoff before more work
-bb: Stop | Bash failed 3x running tests | fix the test setup manually, then ask Claude to rerun only that test
+bb: Careful | ctx 82% | Context is getting tight | ask Claude for a 6-bullet handoff before more work
+bb: Stop | why: Bash failed 3x running tests | do: fix the test setup manually, then ask Claude to rerun only that test
 ```
 
 `Healthy` means keep going. `Careful` means slow down. `Stop` means take over before Claude burns more turns.
@@ -44,6 +46,12 @@ bb-cc-lite why
 Last decision: Stop.
 Reason: Bash failed 3x running tests. Claude is retrying a broken test loop.
 Next action: fix the test setup manually, then ask Claude to rerun only that test.
+```
+
+By default, `why` explains the latest recorded decision. To inspect a specific Claude Code session, pass its session id:
+
+```bash
+bb-cc-lite why --session <session-id>
 ```
 
 ## Privacy
