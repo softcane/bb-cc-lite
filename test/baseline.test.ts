@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -52,6 +52,8 @@ describe("personal baseline storage", () => {
         `${JSON.stringify({
           ...sampleBaseline(),
           rawPrompt: "BB_CC_LITE_RAW_PROMPT_SENTINEL",
+          raw_prompt: "BB_CC_LITE_RAW_PROMPT_SENTINEL",
+          cwd: "/private/path/BB_CC_LITE_RAW_PATH_SENTINEL",
           transcriptPath: "/private/path/BB_CC_LITE_RAW_PATH_SENTINEL.jsonl"
         })}\n`,
         "utf8"
@@ -69,6 +71,9 @@ describe("personal baseline storage", () => {
       const targetPath = join(tempDir, "baseline.json");
 
       await writeFile(targetPath, "{not-json", "utf8");
+      await expect(readBaseline(targetPath)).resolves.toBeUndefined();
+
+      await writeFile(targetPath, `${JSON.stringify({ ...sampleBaseline(), extra: "not allowed" })}\n`, "utf8");
       await expect(readBaseline(targetPath)).resolves.toBeUndefined();
 
       await writeFile(targetPath, `${JSON.stringify({ ...sampleBaseline(), version: 0 })}\n`, "utf8");
@@ -137,6 +142,143 @@ describe("personal baseline builder", () => {
         }
       });
     } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers newer JSONL transcripts before applying maxFiles", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-newest-"));
+    try {
+      const claudeProjectsDir = join(tempDir, ".claude", "projects");
+      const projectDir = join(claudeProjectsDir, "project");
+      await mkdir(projectDir, { recursive: true });
+
+      const oldStopPath = join(projectDir, "old-stop.jsonl");
+      const middleEditPath = join(projectDir, "middle-edit.jsonl");
+      const newestReadPath = join(projectDir, "newest-read.jsonl");
+      await writeJsonl(oldStopPath, stopLoopSession("old"));
+      await writeJsonl(middleEditPath, editWithoutValidationSession("middle"));
+      await writeJsonl(newestReadPath, readHeavySession("newest"));
+      await setMtime(oldStopPath, "2026-05-17T10:00:00.000Z");
+      await setMtime(middleEditPath, "2026-05-18T10:00:00.000Z");
+      await setMtime(newestReadPath, "2026-05-19T10:00:00.000Z");
+
+      const result = await buildBaseline({
+        claudeProjectsDir,
+        appHomePath: join(tempDir, "app-home"),
+        maxFiles: 2,
+        now: new Date("2026-05-19T11:00:00.000Z")
+      });
+
+      expect(result.baseline.source.sessionsSeen).toBe(2);
+      expect(result.baseline.source.transcriptFilesScanned).toBe(2);
+      expect(result.baseline.outcomes.healthyLike.readHeavyNoFailure).toBe(1);
+      expect(result.baseline.outcomes.carefulLike.editWithoutValidation).toBe(1);
+      expect(result.baseline.outcomes.stopLike.validationLoopUnrecovered).toBe(0);
+      expect(result.baseline.scenarios.validation_command_loop.seen).toBe(0);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("aggregates representative transcript counters across bounded parallel batches", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-parallel-"));
+    try {
+      const claudeProjectsDir = join(tempDir, ".claude", "projects");
+      const projectDir = join(claudeProjectsDir, "project");
+      await mkdir(projectDir, { recursive: true });
+
+      const sessions = [
+        readHeavySession("read-1"),
+        readHeavySession("read-2"),
+        editWithoutValidationSession("edit-1"),
+        editWithoutValidationSession("edit-2"),
+        validationRecoveredSession("recovered-1"),
+        validationRecoveredSession("recovered-2"),
+        validationRecoveredSession("recovered-3"),
+        stopLoopSession("stop-1"),
+        stopLoopSession("stop-2"),
+        stopLoopSession("stop-3")
+      ];
+      for (const [index, entries] of sessions.entries()) {
+        await writeJsonl(join(projectDir, `session-${index}.jsonl`), entries);
+      }
+
+      const result = await buildBaseline({
+        claudeProjectsDir,
+        appHomePath: join(tempDir, "app-home"),
+        now: new Date("2026-05-19T10:00:00.000Z")
+      });
+
+      expect(result.baseline.source.sessionsSeen).toBe(10);
+      expect(result.baseline).toMatchObject({
+        totals: {
+          toolCalls: 26,
+          successfulToolResults: 14,
+          failedToolResults: 12,
+          validationCalls: 15,
+          validationFailures: 12,
+          validationSuccesses: 3,
+          successfulEditResults: 5,
+          readSearchToolCalls: 6
+        },
+        outcomes: {
+          healthyLike: {
+            validationPassedAfterEdit: 3,
+            validationRecovered: 3,
+            readHeavyNoFailure: 2
+          },
+          carefulLike: {
+            editWithoutValidation: 2,
+            toolFailureRecovered: 3,
+            twoFailureStreakRecovered: 0
+          },
+          stopLike: {
+            validationLoopUnrecovered: 3,
+            toolLoopUnrecovered: 3,
+            sessionEndedInFailureLoop: 3
+          }
+        },
+        rates: {
+          toolFailureRate: 0.4615,
+          repeatedFailureRate: 0.3,
+          validationFailureRate: 0.8,
+          cacheWritesHighRate: 0
+        }
+      });
+      expect(result.baseline.scenarios.validation_command_loop).toEqual({ seen: 3, confidence: "medium" });
+      expect(result.baseline.scenarios.validation_recovered).toEqual({ seen: 3, confidence: "medium" });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips unreadable JSONL files safely", async () => {
+    if (process.platform === "win32" || process.getuid?.() === 0) {
+      return;
+    }
+
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-unreadable-"));
+    const unreadablePath = join(tempDir, ".claude", "projects", "project", "unreadable.jsonl");
+    try {
+      const claudeProjectsDir = join(tempDir, ".claude", "projects");
+      const projectDir = join(claudeProjectsDir, "project");
+      await mkdir(projectDir, { recursive: true });
+      await writeJsonl(join(projectDir, "readable.jsonl"), readHeavySession("readable"));
+      await writeJsonl(unreadablePath, stopLoopSession("unreadable"));
+      await chmod(unreadablePath, 0o000);
+
+      const result = await buildBaseline({
+        claudeProjectsDir,
+        appHomePath: join(tempDir, "app-home"),
+        now: new Date("2026-05-19T10:00:00.000Z")
+      });
+
+      expect(result.baseline.source.sessionsSeen).toBe(1);
+      expect(result.baseline.outcomes.healthyLike.readHeavyNoFailure).toBe(1);
+      expect(result.baseline.outcomes.stopLike.validationLoopUnrecovered).toBe(0);
+    } finally {
+      await chmod(unreadablePath, 0o600).catch(() => undefined);
       await rm(tempDir, { recursive: true, force: true });
     }
   });
@@ -333,6 +475,11 @@ async function writeJsonl(path: string, entries: unknown[]): Promise<void> {
   await writeFile(path, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
 }
 
+async function setMtime(path: string, timestamp: string): Promise<void> {
+  const date = new Date(timestamp);
+  await utimes(path, date, date);
+}
+
 function userText(content: string): unknown {
   return {
     type: "user",
@@ -380,4 +527,40 @@ function toolResult(toolUseId: string, isError: boolean, content: string): unkno
 
 function failedBashValidation(id: string): unknown[] {
   return [toolUse(id, "Bash", { command: "npm test" }), toolResult(id, true, "tests failed")];
+}
+
+function readHeavySession(prefix: string): unknown[] {
+  return [
+    toolUse(`${prefix}-read`, "Read", { file_path: "/private/file.ts" }),
+    toolResult(`${prefix}-read`, false, "file"),
+    toolUse(`${prefix}-grep`, "Grep", { pattern: "needle" }),
+    toolResult(`${prefix}-grep`, false, "match"),
+    toolUse(`${prefix}-glob`, "Glob", { pattern: "**/*.ts" }),
+    toolResult(`${prefix}-glob`, false, "paths")
+  ];
+}
+
+function editWithoutValidationSession(prefix: string): unknown[] {
+  return [
+    toolUse(`${prefix}-edit`, "Edit", { file_path: "/private/file.ts", new_string: "updated" }),
+    toolResult(`${prefix}-edit`, false, "edited")
+  ];
+}
+
+function validationRecoveredSession(prefix: string): unknown[] {
+  return [
+    toolUse(`${prefix}-edit`, "Edit", { file_path: "/private/file.ts", new_string: "updated" }),
+    toolResult(`${prefix}-edit`, false, "edited"),
+    ...failedBashValidation(`${prefix}-test-fail`),
+    toolUse(`${prefix}-test-pass`, "Bash", { command: "npm test" }),
+    toolResult(`${prefix}-test-pass`, false, "tests passed")
+  ];
+}
+
+function stopLoopSession(prefix: string): unknown[] {
+  return [
+    ...failedBashValidation(`${prefix}-loop-1`),
+    ...failedBashValidation(`${prefix}-loop-2`),
+    ...failedBashValidation(`${prefix}-loop-3`)
+  ];
 }

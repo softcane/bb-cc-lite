@@ -43,7 +43,7 @@ describe("settings install and uninstall", () => {
 
     const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
     const launcherPath = join(dirs.appHome, "bin", "statusline");
-    const stableCliPath = join(dirs.appHome, "versions", "0.1.0", "dist", "cli.js");
+    const stableCliPath = join(dirs.appHome, "versions", "0.1.1", "dist", "cli.js");
     const settings = await readJson<{ statusLine: { type: string; command: string; padding: number } }>(target.settingsPath);
     const launcher = await readFile(launcherPath, "utf8");
     const copiedRuntime = await readFile(stableCliPath, "utf8");
@@ -51,6 +51,11 @@ describe("settings install and uninstall", () => {
     expect(result.status).toBe("installed");
     expect(result.target).toEqual(target);
     expect(result.command).toBe(quoteShell(launcherPath));
+    const manifestText = await readFile(join(dirs.appHome, "backups", result.backupId as string, "manifest.json"), "utf8");
+    expect(manifestText).toContain("settingsPathHash");
+    expect(manifestText).toContain("projectDirHash");
+    expect(manifestText).not.toContain(dirs.projectDir);
+    expect(manifestText).not.toContain(target.settingsPath);
     expect(settings.statusLine).toEqual({
       type: "command",
       command: quoteShell(launcherPath),
@@ -74,7 +79,7 @@ describe("settings install and uninstall", () => {
 
     const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
     const hookLauncherPath = join(dirs.appHome, "bin", "hook");
-    const stableCliPath = join(dirs.appHome, "versions", "0.1.0", "dist", "cli.js");
+    const stableCliPath = join(dirs.appHome, "versions", "0.1.1", "dist", "cli.js");
     const settings = await readJson<{
       hooks: Record<string, Array<{ matcher: string; hooks: Array<{ command: string; args: string[]; async: boolean; timeout: number }> }>>;
     }>(target.settingsPath);
@@ -109,7 +114,7 @@ describe("settings install and uninstall", () => {
       cleanupPeriodDays: 7,
       statusLine: {
         type: "command",
-        command: "custom-statusline"
+        command: "custom-bb-cc-lite-wrapper"
       }
     };
     await writeJson(target.settingsPath, existing);
@@ -143,7 +148,7 @@ describe("settings install and uninstall", () => {
     await writeJson(target.settingsPath, {
       statusLine: {
         type: "command",
-        command: "custom-statusline"
+        command: "custom-bb-cc-lite-wrapper"
       }
     });
 
@@ -280,7 +285,7 @@ describe("settings install and uninstall", () => {
           hooks: [
             {
               type: "command",
-              command: "custom-format-hook"
+              command: "custom-bb-cc-lite-wrapper-hook"
             }
           ]
         }
@@ -338,7 +343,7 @@ describe("settings install and uninstall", () => {
       hooks: [
         {
           type: "command",
-          command: "custom-format-hook"
+          command: "custom-bb-cc-lite-wrapper-hook"
         }
       ]
     });
@@ -361,7 +366,7 @@ describe("settings install and uninstall", () => {
             hooks: [
               {
                 type: "command",
-                command: "custom-format-hook"
+                command: "custom-bb-cc-lite-wrapper-hook"
               }
             ]
           }

@@ -50,8 +50,11 @@ interface BackupManifest {
   packageVersion: string;
   createdAt: string;
   scope: SettingsScope;
-  projectDir: string;
-  settingsPath: string;
+  projectDirHash: string;
+  settingsPathHash: string;
+  // Legacy manifests may contain raw paths. New manifests store hashes only.
+  projectDir?: string;
+  settingsPath?: string;
   before: {
     fileExisted: boolean;
     sha256?: string;
@@ -69,7 +72,7 @@ interface BackupManifest {
   state: "active" | "uninstalled";
 }
 
-const PACKAGE_VERSION = "0.1.0";
+const PACKAGE_VERSION = "0.1.1";
 
 export function resolveSettingsTarget(options: InstallOptions | UninstallOptions = {}): SettingsTarget {
   const scope = options.scope || "local";
@@ -94,7 +97,7 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
     return {
       status: "skipped",
       target,
-      message: `Preserved existing statusLine in ${target.settingsPath}. Re-run with --replace to replace it.`
+      message: `Preserved existing statusLine in ${describeSettingsTarget(target)}. Re-run with --replace to replace it.`
     };
   }
 
@@ -103,7 +106,7 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
     return {
       status: "skipped",
       target,
-      message: `Preserved existing ${shadowed.scope} statusLine at ${shadowed.settingsPath}. Local install would shadow it; re-run with --replace to opt in.`
+      message: `Preserved existing ${shadowed.scope} statusLine. Local install would shadow it; re-run with --replace to opt in.`
     };
   }
 
@@ -135,14 +138,14 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
         target,
         command: statusLine.command,
         backupId: installId,
-        message: `bb-cc-lite statusLine is already installed in ${target.settingsPath}; ${options.hooks ? "repaired optional hooks and " : ""}refreshed runtime launcher.`
+        message: `bb-cc-lite statusLine is already installed in ${describeSettingsTarget(target)}; ${options.hooks ? "repaired optional hooks and " : ""}refreshed runtime launcher.`
       };
     }
     return {
       status: "updated",
       target,
       command: statusLine.command,
-      message: `bb-cc-lite statusLine is already installed in ${target.settingsPath}; refreshed runtime launcher.`
+      message: `bb-cc-lite statusLine is already installed in ${describeSettingsTarget(target)}; refreshed runtime launcher.`
     };
   }
 
@@ -163,7 +166,7 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
     target,
     command: statusLine.command,
     backupId: installId,
-    message: `${existing ? "Replaced" : "Installed"} bb-cc-lite statusLine${options.hooks ? " and optional hooks" : ""} in ${target.settingsPath}.`
+    message: `${existing ? "Replaced" : "Installed"} bb-cc-lite statusLine${options.hooks ? " and optional hooks" : ""} in ${describeSettingsTarget(target)}.`
   };
 }
 
@@ -180,7 +183,7 @@ export async function uninstallStatusLine(options: UninstallOptions = {}): Promi
     return {
       status: "skipped",
       target,
-      message: `No bb-cc-lite statusLine or hooks are configured in ${target.settingsPath}.`
+      message: `No bb-cc-lite statusLine or hooks are configured in ${describeSettingsTarget(target)}.`
     };
   }
 
@@ -191,7 +194,7 @@ export async function uninstallStatusLine(options: UninstallOptions = {}): Promi
     return {
       status: "refused",
       target,
-      message: `Refused to modify non-bb-cc-lite statusLine in ${target.settingsPath}.`
+      message: `Refused to modify non-bb-cc-lite statusLine in ${describeSettingsTarget(target)}.`
     };
   }
 
@@ -261,6 +264,10 @@ export async function readHooks(scope: SettingsScope, projectDir = process.cwd()
   return read.settings.hooks;
 }
 
+export function describeSettingsTarget(target: Pick<SettingsTarget, "scope">): string {
+  return `${target.scope} Claude settings`;
+}
+
 export function isBbStatusLine(value: unknown): boolean {
   if (!value || typeof value !== "object") {
     return false;
@@ -270,10 +277,7 @@ export function isBbStatusLine(value: unknown): boolean {
     return false;
   }
   const normalizedCommand = command.replaceAll("'", "");
-  return (
-    /bb-cc-lite|\/bb-cc-lite\/|\\bb-cc-lite\\/u.test(command) ||
-    normalizedCommand.includes(join(appHome(), "bin", "statusline"))
-  );
+  return commandReferencesBbCcLite(command) || normalizedCommand.includes(join(appHome(), "bin", "statusline"));
 }
 
 async function ensureRuntimeLaunchers(cliFilePath: string, homeDir: string): Promise<{ statusline: string; hook: string }> {
@@ -373,9 +377,13 @@ function isBbHookCommand(value: unknown, homeDir: string | undefined): boolean {
   const normalizedCommand = command.replaceAll("'", "");
   return (
     args.includes("--bb-cc-lite-hook") ||
-    /bb-cc-lite|\/bb-cc-lite\/|\\bb-cc-lite\\/u.test(command) ||
+    commandReferencesBbCcLite(command) ||
     (homeDir !== undefined && normalizedCommand.includes(join(appHome(homeDir), "bin", "hook")))
   );
+}
+
+function commandReferencesBbCcLite(command: string): boolean {
+  return /(^|[\s/\\])bb-cc-lite($|[\s/\\])/u.test(command.replaceAll("'", ""));
 }
 
 function cloneRecord(value: unknown): Record<string, unknown> {
@@ -434,7 +442,7 @@ async function readSettings(settingsPath: string): Promise<{
     const [raw, fileStat] = await Promise.all([readFile(settingsPath, "utf8"), stat(settingsPath)]);
     const parsed = JSON.parse(raw) as unknown;
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      throw new Error(`Settings file is not a JSON object: ${settingsPath}`);
+      throw new Error("Settings file is not a JSON object");
     }
     return { raw, settings: parsed as Record<string, unknown>, mode: fileStat.mode };
   } catch (error) {
@@ -467,8 +475,8 @@ async function writeBackup(
     packageVersion: PACKAGE_VERSION,
     createdAt: new Date().toISOString(),
     scope: target.scope,
-    projectDir: target.projectDir,
-    settingsPath: target.settingsPath,
+    projectDirHash: sha256(target.projectDir),
+    settingsPathHash: sha256(target.settingsPath),
     before: {
       fileExisted: beforeRaw !== undefined,
       sha256: beforeRaw === undefined ? undefined : sha256(beforeRaw),
@@ -507,7 +515,7 @@ async function latestBackupFor(
         const parsed = JSON.parse(await readFile(join(backupDir(homeDir), entry.name, "manifest.json"), "utf8")) as BackupManifest;
         if (
           parsed.schema === "bb-cc-lite.install-backup.v1" &&
-          parsed.settingsPath === settingsPath &&
+          (parsed.settingsPathHash === sha256(settingsPath) || parsed.settingsPath === settingsPath) &&
           parsed.state === "active" &&
           include(parsed)
         ) {

@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { baselinePath } from "./paths.js";
 import { asRecord, extractUsage, mergeUsage, stringField } from "./status-input.js";
 import { isEditTool, safeToolName } from "./tool-metadata.js";
@@ -11,6 +11,7 @@ import type { TokenUsage } from "./types.js";
 const DEFAULT_MAX_FILES = 500;
 const DEFAULT_MAX_BYTES_PER_TRANSCRIPT = 512 * 1024;
 const SCAN_BUDGET_MS = 5_000;
+const TRANSCRIPT_READ_CONCURRENCY = 8;
 
 export interface BuildBaselineOptions {
   homeDir?: string;
@@ -42,6 +43,11 @@ interface BuildCounters {
     validation_recovered: number;
   };
   outcomes: PersonalBaseline["outcomes"];
+}
+
+interface TranscriptCandidate {
+  path: string;
+  mtimeMs: number;
 }
 
 interface ToolMeta {
@@ -81,45 +87,13 @@ export async function buildBaseline(options: BuildBaselineOptions = {}): Promise
   const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
   const maxBytesPerTranscript = options.maxBytesPerTranscript ?? DEFAULT_MAX_BYTES_PER_TRANSCRIPT;
   const startedAt = Date.now();
-  const files = await listTranscriptFiles(claudeProjectsDir, maxFiles, startedAt + SCAN_BUDGET_MS);
+  const deadlineMs = startedAt + SCAN_BUDGET_MS;
+  const files = await listTranscriptFiles(claudeProjectsDir, maxFiles, deadlineMs);
   const counters = emptyCounters();
+  const sessions = await summarizeTranscriptFiles(files, maxBytesPerTranscript, deadlineMs);
 
-  for (const file of files) {
-    if (Date.now() > startedAt + SCAN_BUDGET_MS) {
-      break;
-    }
-    const tail = await readTranscriptTail(file, { maxBytes: maxBytesPerTranscript });
-    if (!tail.pathReadable) {
-      continue;
-    }
-    const session = summarizeSession(tail.lines);
-    counters.transcriptFilesScanned += 1;
-    counters.sessionsSeen += 1;
-    counters.malformedLines += session.malformedLines;
-    counters.toolCalls += session.toolCalls;
-    counters.toolResults += session.toolResults;
-    counters.failedToolResults += session.failedToolResults;
-    counters.validationResults += session.validationResults;
-    counters.validationFailures += session.validationFailures;
-    counters.successfulEditResults += session.successfulEditResults;
-    counters.readSearchToolCalls += session.readSearchToolCalls;
-    counters.cacheWritesHighSessions += session.cacheWritesHigh ? 1 : 0;
-    counters.repeatedFailureSessions += session.repeatedFailure ? 1 : 0;
-    counters.scenarios.read_heavy_debugging += session.readSearchToolCalls >= 3 && session.failedToolResults === 0 ? 1 : 0;
-    counters.scenarios.repeated_failure += session.repeatedFailure ? 1 : 0;
-    counters.scenarios.validation_command_loop += session.validationLoopUnrecovered ? 1 : 0;
-    counters.scenarios.edit_without_validation += session.editWithoutValidation ? 1 : 0;
-    counters.scenarios.validation_recovered += session.validationRecovered ? 1 : 0;
-    counters.outcomes.healthyLike.validationPassedAfterEdit += session.validationPassedAfterEdit ? 1 : 0;
-    counters.outcomes.healthyLike.validationRecovered += session.validationRecovered ? 1 : 0;
-    counters.outcomes.healthyLike.readHeavyNoFailure +=
-      session.readSearchToolCalls >= 3 && session.failedToolResults === 0 ? 1 : 0;
-    counters.outcomes.carefulLike.editWithoutValidation += session.editWithoutValidation ? 1 : 0;
-    counters.outcomes.carefulLike.toolFailureRecovered += session.toolFailureRecovered ? 1 : 0;
-    counters.outcomes.carefulLike.twoFailureStreakRecovered += session.twoFailureStreakRecovered ? 1 : 0;
-    counters.outcomes.stopLike.validationLoopUnrecovered += session.validationLoopUnrecovered ? 1 : 0;
-    counters.outcomes.stopLike.toolLoopUnrecovered += session.toolLoopUnrecovered ? 1 : 0;
-    counters.outcomes.stopLike.sessionEndedInFailureLoop += session.sessionEndedInFailureLoop ? 1 : 0;
+  for (const session of sessions) {
+    addSessionCounters(counters, session);
   }
 
   const baseline = baselineFromCounters(counters, maxBytesPerTranscript, options.now ?? new Date());
@@ -131,10 +105,14 @@ export async function buildBaseline(options: BuildBaselineOptions = {}): Promise
 }
 
 async function listTranscriptFiles(root: string, maxFiles: number, deadlineMs: number): Promise<string[]> {
-  const files: string[] = [];
+  if (maxFiles <= 0 || Date.now() > deadlineMs) {
+    return [];
+  }
+
+  const candidates: TranscriptCandidate[] = [];
   const pending = [root];
 
-  while (pending.length > 0 && files.length < maxFiles && Date.now() <= deadlineMs) {
+  while (pending.length > 0 && Date.now() <= deadlineMs) {
     const current = pending.pop()!;
     let entries;
     try {
@@ -144,19 +122,87 @@ async function listTranscriptFiles(root: string, maxFiles: number, deadlineMs: n
     }
 
     for (const entry of entries) {
-      if (files.length >= maxFiles || Date.now() > deadlineMs) {
+      if (Date.now() > deadlineMs) {
         break;
       }
       const child = join(current, entry.name);
       if (entry.isDirectory()) {
         pending.push(child);
       } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-        files.push(child);
+        const mtimeMs = await readableFileMtimeMs(child);
+        if (mtimeMs !== undefined) {
+          candidates.push({ path: child, mtimeMs });
+        }
       }
     }
   }
 
-  return files;
+  return candidates
+    .sort((left, right) => right.mtimeMs - left.mtimeMs || left.path.localeCompare(right.path))
+    .slice(0, maxFiles)
+    .map((candidate) => candidate.path);
+}
+
+async function readableFileMtimeMs(path: string): Promise<number | undefined> {
+  try {
+    const fileStat = await stat(path);
+    return fileStat.isFile() ? fileStat.mtimeMs : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function summarizeTranscriptFiles(
+  files: string[],
+  maxBytesPerTranscript: number,
+  deadlineMs: number
+): Promise<SessionCounters[]> {
+  const sessions: SessionCounters[] = [];
+
+  for (let index = 0; index < files.length && Date.now() <= deadlineMs; index += TRANSCRIPT_READ_CONCURRENCY) {
+    const batch = files.slice(index, index + TRANSCRIPT_READ_CONCURRENCY);
+    const summaries = await Promise.all(
+      batch.map(async (file) => {
+        if (Date.now() > deadlineMs) {
+          return undefined;
+        }
+        const tail = await readTranscriptTail(file, { maxBytes: maxBytesPerTranscript });
+        return tail.pathReadable ? summarizeSession(tail.lines) : undefined;
+      })
+    );
+    sessions.push(...summaries.filter((session): session is SessionCounters => session !== undefined));
+  }
+
+  return sessions;
+}
+
+function addSessionCounters(counters: BuildCounters, session: SessionCounters): void {
+  counters.transcriptFilesScanned += 1;
+  counters.sessionsSeen += 1;
+  counters.malformedLines += session.malformedLines;
+  counters.toolCalls += session.toolCalls;
+  counters.toolResults += session.toolResults;
+  counters.failedToolResults += session.failedToolResults;
+  counters.validationResults += session.validationResults;
+  counters.validationFailures += session.validationFailures;
+  counters.successfulEditResults += session.successfulEditResults;
+  counters.readSearchToolCalls += session.readSearchToolCalls;
+  counters.cacheWritesHighSessions += session.cacheWritesHigh ? 1 : 0;
+  counters.repeatedFailureSessions += session.repeatedFailure ? 1 : 0;
+  counters.scenarios.read_heavy_debugging += session.readSearchToolCalls >= 3 && session.failedToolResults === 0 ? 1 : 0;
+  counters.scenarios.repeated_failure += session.repeatedFailure ? 1 : 0;
+  counters.scenarios.validation_command_loop += session.validationLoopUnrecovered ? 1 : 0;
+  counters.scenarios.edit_without_validation += session.editWithoutValidation ? 1 : 0;
+  counters.scenarios.validation_recovered += session.validationRecovered ? 1 : 0;
+  counters.outcomes.healthyLike.validationPassedAfterEdit += session.validationPassedAfterEdit ? 1 : 0;
+  counters.outcomes.healthyLike.validationRecovered += session.validationRecovered ? 1 : 0;
+  counters.outcomes.healthyLike.readHeavyNoFailure += session.readSearchToolCalls >= 3 && session.failedToolResults === 0 ? 1 : 0;
+  counters.outcomes.carefulLike.editWithoutValidation += session.editWithoutValidation ? 1 : 0;
+  counters.outcomes.carefulLike.toolFailureRecovered += session.toolFailureRecovered ? 1 : 0;
+  counters.outcomes.carefulLike.twoFailureStreakRecovered += session.twoFailureStreakRecovered ? 1 : 0;
+  counters.outcomes.stopLike.validationLoopUnrecovered += session.validationLoopUnrecovered ? 1 : 0;
+  counters.outcomes.stopLike.toolLoopUnrecovered += session.toolLoopUnrecovered ? 1 : 0;
+  counters.outcomes.stopLike.sessionEndedInFailureLoop += session.sessionEndedInFailureLoop ? 1 : 0;
 }
 
 function summarizeSession(lines: string[]): SessionCounters {

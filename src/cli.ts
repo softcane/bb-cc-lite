@@ -210,7 +210,7 @@ Usage:
   bb-cc-lite doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing]
                     [--baseline] [--build-baseline] [--clear-baseline]
   bb-cc-lite unlearn
-  bb-cc-lite uninstall [--scope local|project|user]
+  bb-cc-lite uninstall [--scope local|project|user] [--force]
 
 Learning:
   install builds a local personal baseline from Claude JSONL by default.

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -110,6 +110,52 @@ describe("store and pricing", () => {
         expect(scannedText).not.toContain(rawToolOutputSentinel);
         expect(scannedText).not.toContain(rawSessionId);
       }
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("drops malformed legacy decisions with raw-data fields before why can print them", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-store-legacy-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      const rawPromptSentinel = "RAW_PROMPT_SENTINEL_DO_NOT_PRINT";
+      await writeFile(
+        storePath,
+        `${JSON.stringify(
+          {
+            version: 1,
+            updatedAt: "2026-05-19T12:00:00.000Z",
+            decisions: [
+              {
+                id: "legacy-raw",
+                state: "Healthy",
+                action: "continue",
+                raw_prompt: rawPromptSentinel
+              },
+              {
+                id: "safe-derived",
+                state: "Healthy",
+                reasonCode: "healthy",
+                primaryEvidence: "no stop-level findings",
+                evidence: [{ label: "no stop-level findings" }],
+                impact: "session stable",
+                action: "continue normally",
+                createdAt: "2026-05-19T12:00:00.000Z"
+              }
+            ],
+            hookEvents: []
+          },
+          null,
+          2
+        )}\n`,
+        "utf8"
+      );
+
+      const whyDecision = await latestDecision(undefined, storePath);
+
+      expect(whyDecision?.id).toBe("safe-derived");
+      expect(JSON.stringify(whyDecision)).not.toContain(rawPromptSentinel);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

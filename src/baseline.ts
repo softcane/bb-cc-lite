@@ -126,7 +126,13 @@ export function summarizeBaseline(baseline: PersonalBaseline | undefined): strin
 
 function isPersonalBaseline(value: unknown): value is PersonalBaseline {
   const root = asRecord(value);
-  if (!root || containsForbiddenRawDataKey(root) || root.schema !== BASELINE_SCHEMA || root.version !== BASELINE_VERSION) {
+  if (
+    !root ||
+    containsForbiddenRawDataKey(root) ||
+    !hasOnlyKeys(root, ROOT_KEYS) ||
+    root.schema !== BASELINE_SCHEMA ||
+    root.version !== BASELINE_VERSION
+  ) {
     return false;
   }
 
@@ -151,6 +157,8 @@ function isPersonalBaseline(value: unknown): value is PersonalBaseline {
 
 function isSource(value: Record<string, unknown> | undefined): boolean {
   return (
+    value !== undefined &&
+    hasOnlyKeys(value, SOURCE_KEYS) &&
     value?.kind === "local_transcript_scan" &&
     isNonNegativeNumber(value.transcriptFilesScanned) &&
     isNonNegativeNumber(value.sessionsSeen) &&
@@ -161,6 +169,8 @@ function isSource(value: Record<string, unknown> | undefined): boolean {
 
 function isPrivacy(value: Record<string, unknown> | undefined): boolean {
   return (
+    value !== undefined &&
+    hasOnlyKeys(value, PRIVACY_KEYS) &&
     value?.rawPromptsStored === false &&
     value.rawToolOutputStored === false &&
     value.rawPathsStored === false &&
@@ -171,6 +181,8 @@ function isPrivacy(value: Record<string, unknown> | undefined): boolean {
 
 function isTotals(value: Record<string, unknown> | undefined): boolean {
   return (
+    value !== undefined &&
+    hasOnlyKeys(value, TOTALS_KEYS) &&
     isNonNegativeNumber(value?.toolCalls) &&
     isNonNegativeNumber(value?.successfulToolResults) &&
     isNonNegativeNumber(value?.failedToolResults) &&
@@ -184,6 +196,8 @@ function isTotals(value: Record<string, unknown> | undefined): boolean {
 
 function isScenarios(value: Record<string, unknown> | undefined): boolean {
   return (
+    value !== undefined &&
+    hasOnlyKeys(value, SCENARIO_KEYS) &&
     isScenario(asRecord(value?.read_heavy_debugging)) &&
     isScenario(asRecord(value?.repeated_failure)) &&
     isScenario(asRecord(value?.validation_command_loop)) &&
@@ -193,14 +207,23 @@ function isScenarios(value: Record<string, unknown> | undefined): boolean {
 }
 
 function isScenario(value: Record<string, unknown> | undefined): boolean {
-  return isNonNegativeNumber(value?.seen) && isConfidence(value?.confidence);
+  return value !== undefined && hasOnlyKeys(value, BASELINE_SCENARIO_KEYS) && isNonNegativeNumber(value.seen) && isConfidence(value.confidence);
 }
 
 function isOutcomes(value: Record<string, unknown> | undefined): boolean {
+  if (!value || !hasOnlyKeys(value, OUTCOME_KEYS)) {
+    return false;
+  }
   const healthyLike = asRecord(value?.healthyLike);
   const carefulLike = asRecord(value?.carefulLike);
   const stopLike = asRecord(value?.stopLike);
   return (
+    healthyLike !== undefined &&
+    hasOnlyKeys(healthyLike, HEALTHY_OUTCOME_KEYS) &&
+    carefulLike !== undefined &&
+    hasOnlyKeys(carefulLike, CAREFUL_OUTCOME_KEYS) &&
+    stopLike !== undefined &&
+    hasOnlyKeys(stopLike, STOP_OUTCOME_KEYS) &&
     isNonNegativeNumber(healthyLike?.validationPassedAfterEdit) &&
     isNonNegativeNumber(healthyLike?.validationRecovered) &&
     isNonNegativeNumber(healthyLike?.readHeavyNoFailure) &&
@@ -215,6 +238,8 @@ function isOutcomes(value: Record<string, unknown> | undefined): boolean {
 
 function isRates(value: Record<string, unknown> | undefined): boolean {
   return (
+    value !== undefined &&
+    hasOnlyKeys(value, RATE_KEYS) &&
     isRate(value?.toolFailureRate) &&
     isRate(value?.repeatedFailureRate) &&
     isRate(value?.validationFailureRate) &&
@@ -244,6 +269,10 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function hasOnlyKeys(value: Record<string, unknown>, allowed: ReadonlySet<string>): boolean {
+  return Object.keys(value).every((key) => allowed.has(key));
+}
+
 function containsForbiddenRawDataKey(value: unknown): boolean {
   if (Array.isArray(value)) {
     return value.some((item) => containsForbiddenRawDataKey(item));
@@ -253,12 +282,39 @@ function containsForbiddenRawDataKey(value: unknown): boolean {
     return false;
   }
   for (const [key, child] of Object.entries(record)) {
-    if (FORBIDDEN_RAW_DATA_KEYS.has(key) || containsForbiddenRawDataKey(child)) {
+    if (FORBIDDEN_RAW_DATA_KEYS.has(key) || FORBIDDEN_RAW_DATA_KEYS_NORMALIZED.has(normalizeKey(key)) || containsForbiddenRawDataKey(child)) {
       return true;
     }
   }
   return false;
 }
+
+const ROOT_KEYS = new Set(["schema", "version", "createdAt", "updatedAt", "source", "privacy", "totals", "scenarios", "outcomes", "rates"]);
+const SOURCE_KEYS = new Set(["kind", "transcriptFilesScanned", "sessionsSeen", "malformedLines", "maxBytesPerTranscript"]);
+const PRIVACY_KEYS = new Set(["rawPromptsStored", "rawToolOutputStored", "rawPathsStored", "rawCommandsStored", "perSessionRowsStored"]);
+const TOTALS_KEYS = new Set([
+  "toolCalls",
+  "successfulToolResults",
+  "failedToolResults",
+  "validationCalls",
+  "validationFailures",
+  "validationSuccesses",
+  "successfulEditResults",
+  "readSearchToolCalls"
+]);
+const SCENARIO_KEYS = new Set([
+  "read_heavy_debugging",
+  "repeated_failure",
+  "validation_command_loop",
+  "edit_without_validation",
+  "validation_recovered"
+]);
+const BASELINE_SCENARIO_KEYS = new Set(["seen", "confidence"]);
+const OUTCOME_KEYS = new Set(["healthyLike", "carefulLike", "stopLike"]);
+const HEALTHY_OUTCOME_KEYS = new Set(["validationPassedAfterEdit", "validationRecovered", "readHeavyNoFailure"]);
+const CAREFUL_OUTCOME_KEYS = new Set(["editWithoutValidation", "toolFailureRecovered", "twoFailureStreakRecovered"]);
+const STOP_OUTCOME_KEYS = new Set(["validationLoopUnrecovered", "toolLoopUnrecovered", "sessionEndedInFailureLoop"]);
+const RATE_KEYS = new Set(["toolFailureRate", "repeatedFailureRate", "validationFailureRate", "cacheWritesHighRate"]);
 
 const FORBIDDEN_RAW_DATA_KEYS = new Set([
   "assistantText",
@@ -286,6 +342,12 @@ const FORBIDDEN_RAW_DATA_KEYS = new Set([
   "workspacePath",
   "workspacePaths"
 ]);
+
+const FORBIDDEN_RAW_DATA_KEYS_NORMALIZED = new Set([...FORBIDDEN_RAW_DATA_KEYS, "cwd", "cwds"].map(normalizeKey));
+
+function normalizeKey(value: string): string {
+  return value.replaceAll(/[_-]/gu, "").toLowerCase();
+}
 
 async function bestEffortChmod(path: string, mode: number): Promise<void> {
   try {

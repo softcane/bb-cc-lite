@@ -5,7 +5,15 @@ import { clearBaseline as clearBaselineFile, readBaseline, summarizeBaseline } f
 import { buildBaseline } from "./baseline-builder.js";
 import { baselinePath, pricingCachePath } from "./paths.js";
 import { refreshPricing } from "./pricing.js";
-import { hasBbHooks, isBbStatusLine, readHooks, readStatusLine, resolveSettingsTarget, type SettingsScope } from "./settings.js";
+import {
+  describeSettingsTarget,
+  hasBbHooks,
+  isBbStatusLine,
+  readHooks,
+  readStatusLine,
+  resolveSettingsTarget,
+  type SettingsScope
+} from "./settings.js";
 
 export interface DoctorOptions {
   scope?: SettingsScope;
@@ -43,27 +51,28 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorChec
   checks.push(checkNodeVersion());
 
   const target = resolveSettingsTarget(options);
+  const targetLabel = describeSettingsTarget(target);
   try {
     const statusLine = await readStatusLine(target.scope, target.projectDir, target.homeDir);
     if (statusLine && isBbStatusLine(statusLine)) {
-      checks.push({ level: "OK", name: "settings", message: `bb-cc-lite statusLine is installed in ${target.settingsPath}` });
+      checks.push({ level: "OK", name: "settings", message: `bb-cc-lite statusLine is installed in ${targetLabel}` });
     } else if (statusLine) {
-      checks.push({ level: "WARN", name: "settings", message: `custom statusLine is configured in ${target.settingsPath}` });
+      checks.push({ level: "WARN", name: "settings", message: `custom statusLine is configured in ${targetLabel}` });
     } else {
-      checks.push({ level: "WARN", name: "settings", message: `no statusLine found in ${target.settingsPath}` });
+      checks.push({ level: "WARN", name: "settings", message: `no statusLine found in ${targetLabel}` });
     }
   } catch (error) {
     checks.push({
       level: "FAIL",
       name: "settings",
-      message: error instanceof Error ? error.message : `could not read ${target.settingsPath}`
+      message: error instanceof Error ? error.message : `could not read ${targetLabel}`
     });
   }
 
   try {
     const hooks = await readHooks(target.scope, target.projectDir, target.homeDir);
     if (hasBbHooks(hooks, target.homeDir)) {
-      checks.push({ level: "OK", name: "hooks", message: `optional bb-cc-lite hooks are installed in ${target.settingsPath}` });
+      checks.push({ level: "OK", name: "hooks", message: `optional bb-cc-lite hooks are installed in ${targetLabel}` });
     } else {
       checks.push({ level: "WARN", name: "hooks", message: "optional bb-cc-lite hooks are not installed; run install --hooks to enable faster telemetry" });
     }
@@ -71,7 +80,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorChec
     checks.push({
       level: "FAIL",
       name: "hooks",
-      message: error instanceof Error ? error.message : `could not read hooks from ${target.settingsPath}`
+      message: error instanceof Error ? error.message : `could not read hooks from ${targetLabel}`
     });
   }
 

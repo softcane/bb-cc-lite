@@ -16,7 +16,7 @@ npx bb-cc-lite install --scope local
 
 Restart Claude Code in the project. The line appears at the bottom.
 
-Install builds a local personal baseline by default. It reads recent local Claude Code JSONL once, extracts aggregate patterns from past sessions, and stores a small `baseline.json` under the `bb-cc-lite` app home. Use `--no-learn` to install the statusline without scanning old JSONL:
+Install builds a local personal baseline by default. It reads bounded local Claude Code JSONL once, extracts aggregate patterns from past sessions, and stores a small `baseline.json` under the `bb-cc-lite` app home. Use `--no-learn` to install the statusline without scanning old JSONL:
 
 ```bash
 npx bb-cc-lite install --scope local --no-learn
@@ -34,8 +34,8 @@ Hooks are optional. They run in the background and skip `UserPromptSubmit`.
 
 ```text
 bb: Healthy | ctx 42% | $0.18 | cache warm | continue normally
-bb: Healthy | research phase: usually normal for you | do: continue
-bb: Careful | edits not checked yet | do: run focused check
+bb: Healthy | research phase: usually normal for you | continue
+bb: Careful | edits not checked yet | run focused check
 bb: Careful | ctx 82% | Context is getting tight | ask Claude for a 6-bullet handoff before more work
 bb: Stop | why: test loop: failed 3x | do: inspect first failure
 ```
