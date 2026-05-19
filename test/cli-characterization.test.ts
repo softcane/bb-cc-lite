@@ -85,7 +85,9 @@ describe("CLI behavior characterization", () => {
       expect(result.stdout).toContain("personalizes the statusline from your past Claude sessions by default");
       expect(result.stdout).toContain("It reads local Claude JSONL once.");
       expect(result.stdout).toContain("Built personal baseline from 1 sessions.");
-      expect(result.stdout).toContain("No prompts, commands, outputs, paths, or file contents were stored.");
+      expect(result.stdout).toContain(
+        "No prompts, assistant text, commands, command args, outputs, paths, file contents, transcript paths, workspace paths, raw session ids, or per-session rows were stored."
+      );
 
       const baselinePath = join(workspace.appHome, "baseline.json");
       await expect(pathExists(baselinePath)).resolves.toBe(true);
@@ -222,6 +224,70 @@ describe("CLI behavior characterization", () => {
       expect(statusline.stdout).toContain("research phase: usually normal for you");
       expect(statusline.stdout).toContain("usually Healthy-like for you");
       expectNoPrivacySentinels(statusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("does not scan old Claude JSONL history during statusline rendering", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const env = cliEnv(workspace);
+      await writeTranscript(
+        join(workspace.homeDir, ".claude", "projects", "old", "stop-loop.jsonl"),
+        repeatedFailedTestTranscript(3)
+      );
+
+      const statusline = await runCli(["statusline"], {
+        env,
+        input: statusInput({
+          session_id: "session-no-transcript",
+          terminal_width: 180
+        })
+      });
+
+      expect(statusline.exitCode).toBe(0);
+      expect(statusline.stderr).toBe("");
+      expect(statusline.stdout).toContain("bb: Healthy");
+      expect(statusline.stdout).not.toContain("test loop");
+      expectNoPrivacySentinels(statusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("explains extended baseline recovery influence through statusline and why safely", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const env = cliEnv(workspace);
+      await writeJson(join(workspace.appHome, "baseline.json"), recoveryBaseline());
+      const transcriptPath = join(workspace.root, "transcripts", "two-test-failures.jsonl");
+      await writeTranscript(transcriptPath, repeatedFailedTestTranscript(2));
+
+      const statusline = await runCli(["statusline"], {
+        env,
+        input: statusInput({
+          session_id: "session-recovery-baseline",
+          transcript_path: transcriptPath,
+          terminal_width: 180
+        })
+      });
+
+      expect(statusline.exitCode).toBe(0);
+      expect(statusline.stderr).toBe("");
+      expect(statusline.stdout).toContain("bb: Careful");
+      expect(statusline.stdout).toContain("tests failed twice; usually recovers after one fix");
+
+      const why = await runCli(["why"], { env });
+      expect(why.stdout).toContain("Baseline: test failures usually recovered after one focused fix.");
+
+      const whyJson = await runCli(["why", "--json"], { env });
+      const parsed = JSON.parse(whyJson.stdout) as { state: string; baselineNote?: string };
+      expect(parsed).toMatchObject({
+        state: "Careful",
+        baselineNote: "test failures usually recovered after one focused fix"
+      });
+      expectNoPrivacySentinels(statusline.stdout, why.stdout, whyJson.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -596,6 +662,26 @@ function readHeavyBaseline(): Record<string, unknown> {
       repeatedFailureRate: 0,
       validationFailureRate: 0,
       cacheWritesHighRate: 0
+    }
+  };
+}
+
+function recoveryBaseline(): Record<string, unknown> {
+  return {
+    ...readHeavyBaseline(),
+    validation: {
+      tests: {
+        calls: 24,
+        failures: 10,
+        failureRate: 0.4167,
+        recovered: 9,
+        unrecovered: 1,
+        recoveryRate: 0.9,
+        averageFailuresBeforeRecovery: 1,
+        medianFailuresBeforeRecovery: 1,
+        p75FailuresBeforeRecovery: 1,
+        fivePlusFailuresBeforeRecovery: 0
+      }
     }
   };
 }

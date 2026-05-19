@@ -160,6 +160,57 @@ describe("parseTranscriptLines", () => {
     expectNoPrivacySentinels(checked);
   });
 
+  it("tracks safe tool-step lag after an unvalidated edit", () => {
+    const summary = parseTranscriptLines([
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "edit-1", name: "Edit", input: { file_path: "/secret/path.ts" } }]
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "edit-1", is_error: false, content: "edited private file" }]
+        }
+      }),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "read-1", name: "Read", input: { file_path: "/secret/path.ts" } }]
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "read-1", is_error: false, content: "private content" }]
+        }
+      }),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "grep-1", name: "Grep", input: { pattern: "private" } }]
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "grep-1", is_error: false, content: "private match" }]
+        }
+      })
+    ]);
+
+    expect(summary.hasUnvalidatedEdits).toBe(true);
+    expect(summary.unvalidatedEditToolSteps).toBe(2);
+    expectNoPrivacySentinels(summary);
+  });
+
   it("detects validation recovery after a failed validation later passes", () => {
     const summary = parseTranscriptLines([
       ...failedBashTestPair(1),
@@ -183,6 +234,70 @@ describe("parseTranscriptLines", () => {
 
     expect(summary.validationRecovered).toBe(true);
     expect(summary.repeatedFailures).toEqual([]);
+  });
+
+  it("clears stale edit-test loop failures after validation recovers", () => {
+    const summary = parseTranscriptLines([
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "edit-1", name: "Edit", input: { file_path: "/secret/path.ts" } }]
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "edit-1", is_error: false, content: "edited private file" }]
+        }
+      }),
+      ...failedBashTestPair(1),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "edit-2", name: "Edit", input: { file_path: "/secret/path.ts" } }]
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "edit-2", is_error: false, content: "edited private file" }]
+        }
+      }),
+      ...failedBashTestPair(2),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "test-success", name: "Bash", input: { command: "npm test" } }]
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "test-success", is_error: false, content: "tests passed" }]
+        }
+      })
+    ]);
+
+    expect(summary.validationRecovered).toBe(true);
+    expect(summary.repeatedFailures).toEqual([]);
+    expect(summary.editTestLoopFailures).toBe(0);
+    expect(summary.hasUnvalidatedEdits).toBe(false);
+  });
+
+  it("classifies repeated typecheck failures as validation failures without storing commands", () => {
+    const summary = parseTranscriptLines([
+      ...failedBashCommandPair(1, "npm run typecheck -- --pretty false"),
+      ...failedBashCommandPair(2, "npm run typecheck -- --pretty false")
+    ]);
+
+    expect(summary.repeatedFailures).toEqual([{ toolName: "Bash", purpose: "typecheck", count: 2 }]);
+    expectNoPrivacySentinels(summary);
   });
 });
 
@@ -221,6 +336,10 @@ describe("parseTranscriptTail", () => {
 });
 
 function failedBashTestPair(index: number): string[] {
+  return failedBashCommandPair(index, "npm test");
+}
+
+function failedBashCommandPair(index: number, command: string): string[] {
   return [
     JSON.stringify({
       timestamp: `2026-02-03T00:00:0${index}.000Z`,
@@ -230,13 +349,13 @@ function failedBashTestPair(index: number): string[] {
         content: [
           {
             type: "tool_use",
-            id: `bash-test-${index}`,
-            name: "Bash",
-            input: {
-              command: "npm test"
+              id: `bash-test-${index}`,
+              name: "Bash",
+              input: {
+              command
+              }
             }
-          }
-        ]
+          ]
       }
     }),
     JSON.stringify({

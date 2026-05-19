@@ -287,14 +287,22 @@ async function ensureRuntimeLaunchers(cliFilePath: string, homeDir: string): Pro
   const hookPath = join(binDir, "hook");
   const stableCliPath = await copyRuntime(cliFilePath, home);
   await mkdir(binDir, { recursive: true, mode: 0o700 });
-  await writeFile(statuslinePath, `#!/bin/sh\nexec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} statusline "$@"\n`, {
-    encoding: "utf8",
-    mode: 0o700
-  });
-  await writeFile(hookPath, `#!/bin/sh\nexec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} hook "$@"\n`, {
-    encoding: "utf8",
-    mode: 0o700
-  });
+  await writeFile(
+    statuslinePath,
+    `#!/bin/sh\nexport BB_CC_LITE_HOME=${quoteShell(home)}\nexec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} statusline "$@"\n`,
+    {
+      encoding: "utf8",
+      mode: 0o700
+    }
+  );
+  await writeFile(
+    hookPath,
+    `#!/bin/sh\nexport BB_CC_LITE_HOME=${quoteShell(home)}\nexec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} hook "$@"\n`,
+    {
+      encoding: "utf8",
+      mode: 0o700
+    }
+  );
   await chmod(statuslinePath, 0o700);
   await chmod(hookPath, 0o700);
   return { statusline: statuslinePath, hook: hookPath };

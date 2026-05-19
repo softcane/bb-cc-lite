@@ -27,9 +27,11 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
   const failureCounts = new Map<string, ToolFailureSummary>();
   let recentEditBeforeTest = false;
   let hasUnvalidatedEdits = false;
+  let unvalidatedEditStep: number | undefined;
   let validationFailedSinceSuccess = false;
   let validationRecovered = false;
   let editTestLoopFailures = 0;
+  let toolResultStep = 0;
   let toolCalls = 0;
   let readToolCalls = 0;
   let failedToolResults = 0;
@@ -79,6 +81,7 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
     }
 
     for (const toolResult of extractToolResults(entry)) {
+      toolResultStep += 1;
       const meta =
         (toolResult.toolUseId ? toolById.get(toolResult.toolUseId) : undefined) ||
         (toolResult.toolName
@@ -91,12 +94,16 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
         failureCounts.delete(key);
         if (meta.isEdit) {
           hasUnvalidatedEdits = true;
+          unvalidatedEditStep = toolResultStep;
         } else if (meta.name === "Bash" && purpose === "tests") {
           if (validationFailedSinceSuccess) {
             validationRecovered = true;
           }
           validationFailedSinceSuccess = false;
+          editTestLoopFailures = 0;
+          recentEditBeforeTest = false;
           hasUnvalidatedEdits = false;
+          unvalidatedEditStep = undefined;
         }
         continue;
       }
@@ -128,6 +135,8 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
     repeatedFailures: [...failureCounts.values()].filter((item) => item.count >= 2),
     editTestLoopFailures,
     hasUnvalidatedEdits,
+    unvalidatedEditToolSteps:
+      hasUnvalidatedEdits && unvalidatedEditStep !== undefined ? toolResultStep - unvalidatedEditStep : undefined,
     validationRecovered,
     compactionEvents,
     usage,

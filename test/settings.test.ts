@@ -61,7 +61,9 @@ describe("settings install and uninstall", () => {
       command: quoteShell(launcherPath),
       padding: 0
     });
-    expect(launcher).toBe(`#!/bin/sh\nexec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} statusline "$@"\n`);
+    expect(launcher).toBe(
+      `#!/bin/sh\nexport BB_CC_LITE_HOME=${quoteShell(dirs.appHome)}\nexec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} statusline "$@"\n`
+    );
     expect(launcher).not.toContain(cliFilePath);
     expect(copiedRuntime).toContain("fake bb-cc-lite runtime");
   });
@@ -104,7 +106,9 @@ describe("settings install and uninstall", () => {
         }
       ]);
     }
-    expect(hookLauncher).toBe(`#!/bin/sh\nexec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} hook "$@"\n`);
+    expect(hookLauncher).toBe(
+      `#!/bin/sh\nexport BB_CC_LITE_HOME=${quoteShell(dirs.appHome)}\nexec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} hook "$@"\n`
+    );
   });
 
   it("preserves a custom statusLine unless replace is requested", async () => {

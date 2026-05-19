@@ -7,6 +7,30 @@ export const BASELINE_VERSION = 1;
 export const BASELINE_READ_MAX_BYTES = 64 * 1024;
 
 export type BaselineConfidence = "low" | "medium" | "high";
+export type ValidationCategory = "tests" | "lint" | "typecheck" | "build";
+export type SafeToolCategory = "Bash:tests" | "Bash:lint" | "Bash:typecheck" | "Bash:build" | "Read" | "Grep" | "Glob" | "LS" | "Edit";
+
+export interface ValidationAggregate {
+  calls: number;
+  failures: number;
+  failureRate: number;
+  recovered: number;
+  unrecovered: number;
+  recoveryRate: number;
+  averageFailuresBeforeRecovery: number;
+  medianFailuresBeforeRecovery: number;
+  p75FailuresBeforeRecovery: number;
+  fivePlusFailuresBeforeRecovery: number;
+}
+
+export interface ToolCategoryAggregate {
+  calls: number;
+  failures: number;
+  repeatedFailureSessions: number;
+  recovered: number;
+  unrecovered: number;
+  recoveryRate: number;
+}
 
 export interface PersonalBaseline {
   schema: typeof BASELINE_SCHEMA;
@@ -19,6 +43,9 @@ export interface PersonalBaseline {
     sessionsSeen: number;
     malformedLines: number;
     maxBytesPerTranscript: number;
+    maxFiles?: number;
+    scanStrategy?: "mtime_desc_bounded_parallel";
+    parallelism?: number;
   };
   privacy: {
     rawPromptsStored: false;
@@ -26,6 +53,12 @@ export interface PersonalBaseline {
     rawPathsStored: false;
     rawCommandsStored: false;
     perSessionRowsStored: false;
+  };
+  recent?: {
+    windowKind: "newest_files";
+    windowSize: number;
+    transcriptFilesScanned: number;
+    sessionsSeen: number;
   };
   totals: {
     toolCalls: number;
@@ -67,6 +100,15 @@ export interface PersonalBaseline {
     validationFailureRate: number;
     cacheWritesHighRate: number;
   };
+  validation?: Partial<Record<ValidationCategory, ValidationAggregate>>;
+  editValidation?: {
+    editsFollowedByValidation: number;
+    editsWithoutValidation: number;
+    editWithoutValidationRate: number;
+    medianToolStepsFromEditToValidation: number;
+    p75ToolStepsFromEditToValidation: number;
+  };
+  toolCategories?: Partial<Record<SafeToolCategory, ToolCategoryAggregate>>;
 }
 
 interface BaselineScenario {
@@ -138,20 +180,28 @@ function isPersonalBaseline(value: unknown): value is PersonalBaseline {
 
   const source = asRecord(root.source);
   const privacy = asRecord(root.privacy);
+  const recent = root.recent === undefined ? undefined : asRecord(root.recent);
   const totals = asRecord(root.totals);
   const scenarios = asRecord(root.scenarios);
   const outcomes = asRecord(root.outcomes);
   const rates = asRecord(root.rates);
+  const validation = root.validation === undefined ? undefined : asRecord(root.validation);
+  const editValidation = root.editValidation === undefined ? undefined : asRecord(root.editValidation);
+  const toolCategories = root.toolCategories === undefined ? undefined : asRecord(root.toolCategories);
 
   return (
-    typeof root.createdAt === "string" &&
-    typeof root.updatedAt === "string" &&
+    isIsoTimestamp(root.createdAt) &&
+    isIsoTimestamp(root.updatedAt) &&
     isSource(source) &&
     isPrivacy(privacy) &&
+    (root.recent === undefined || isRecent(recent)) &&
     isTotals(totals) &&
     isScenarios(scenarios) &&
     isOutcomes(outcomes) &&
-    isRates(rates)
+    isRates(rates) &&
+    (root.validation === undefined || isValidationAggregates(validation)) &&
+    (root.editValidation === undefined || isEditValidation(editValidation)) &&
+    (root.toolCategories === undefined || isToolCategories(toolCategories))
   );
 }
 
@@ -160,10 +210,24 @@ function isSource(value: Record<string, unknown> | undefined): boolean {
     value !== undefined &&
     hasOnlyKeys(value, SOURCE_KEYS) &&
     value?.kind === "local_transcript_scan" &&
-    isNonNegativeNumber(value.transcriptFilesScanned) &&
-    isNonNegativeNumber(value.sessionsSeen) &&
-    isNonNegativeNumber(value.malformedLines) &&
-    isNonNegativeNumber(value.maxBytesPerTranscript)
+    isNonNegativeInteger(value.transcriptFilesScanned) &&
+    isNonNegativeInteger(value.sessionsSeen) &&
+    isNonNegativeInteger(value.malformedLines) &&
+    isNonNegativeInteger(value.maxBytesPerTranscript) &&
+    (value.maxFiles === undefined || isNonNegativeInteger(value.maxFiles)) &&
+    (value.scanStrategy === undefined || value.scanStrategy === "mtime_desc_bounded_parallel") &&
+    (value.parallelism === undefined || isNonNegativeInteger(value.parallelism))
+  );
+}
+
+function isRecent(value: Record<string, unknown> | undefined): boolean {
+  return (
+    value !== undefined &&
+    hasOnlyKeys(value, RECENT_KEYS) &&
+    value.windowKind === "newest_files" &&
+    isNonNegativeInteger(value.windowSize) &&
+    isNonNegativeInteger(value.transcriptFilesScanned) &&
+    isNonNegativeInteger(value.sessionsSeen)
   );
 }
 
@@ -183,14 +247,14 @@ function isTotals(value: Record<string, unknown> | undefined): boolean {
   return (
     value !== undefined &&
     hasOnlyKeys(value, TOTALS_KEYS) &&
-    isNonNegativeNumber(value?.toolCalls) &&
-    isNonNegativeNumber(value?.successfulToolResults) &&
-    isNonNegativeNumber(value?.failedToolResults) &&
-    isNonNegativeNumber(value?.validationCalls) &&
-    isNonNegativeNumber(value?.validationFailures) &&
-    isNonNegativeNumber(value?.validationSuccesses) &&
-    isNonNegativeNumber(value?.successfulEditResults) &&
-    isNonNegativeNumber(value?.readSearchToolCalls)
+    isNonNegativeInteger(value?.toolCalls) &&
+    isNonNegativeInteger(value?.successfulToolResults) &&
+    isNonNegativeInteger(value?.failedToolResults) &&
+    isNonNegativeInteger(value?.validationCalls) &&
+    isNonNegativeInteger(value?.validationFailures) &&
+    isNonNegativeInteger(value?.validationSuccesses) &&
+    isNonNegativeInteger(value?.successfulEditResults) &&
+    isNonNegativeInteger(value?.readSearchToolCalls)
   );
 }
 
@@ -207,7 +271,13 @@ function isScenarios(value: Record<string, unknown> | undefined): boolean {
 }
 
 function isScenario(value: Record<string, unknown> | undefined): boolean {
-  return value !== undefined && hasOnlyKeys(value, BASELINE_SCENARIO_KEYS) && isNonNegativeNumber(value.seen) && isConfidence(value.confidence);
+  return (
+    value !== undefined &&
+    hasOnlyKeys(value, BASELINE_SCENARIO_KEYS) &&
+    isNonNegativeInteger(value.seen) &&
+    (value.recentSeen === undefined || isNonNegativeInteger(value.recentSeen)) &&
+    isConfidence(value.confidence)
+  );
 }
 
 function isOutcomes(value: Record<string, unknown> | undefined): boolean {
@@ -224,15 +294,15 @@ function isOutcomes(value: Record<string, unknown> | undefined): boolean {
     hasOnlyKeys(carefulLike, CAREFUL_OUTCOME_KEYS) &&
     stopLike !== undefined &&
     hasOnlyKeys(stopLike, STOP_OUTCOME_KEYS) &&
-    isNonNegativeNumber(healthyLike?.validationPassedAfterEdit) &&
-    isNonNegativeNumber(healthyLike?.validationRecovered) &&
-    isNonNegativeNumber(healthyLike?.readHeavyNoFailure) &&
-    isNonNegativeNumber(carefulLike?.editWithoutValidation) &&
-    isNonNegativeNumber(carefulLike?.toolFailureRecovered) &&
-    isNonNegativeNumber(carefulLike?.twoFailureStreakRecovered) &&
-    isNonNegativeNumber(stopLike?.validationLoopUnrecovered) &&
-    isNonNegativeNumber(stopLike?.toolLoopUnrecovered) &&
-    isNonNegativeNumber(stopLike?.sessionEndedInFailureLoop)
+    isNonNegativeInteger(healthyLike?.validationPassedAfterEdit) &&
+    isNonNegativeInteger(healthyLike?.validationRecovered) &&
+    isNonNegativeInteger(healthyLike?.readHeavyNoFailure) &&
+    isNonNegativeInteger(carefulLike?.editWithoutValidation) &&
+    isNonNegativeInteger(carefulLike?.toolFailureRecovered) &&
+    isNonNegativeInteger(carefulLike?.twoFailureStreakRecovered) &&
+    isNonNegativeInteger(stopLike?.validationLoopUnrecovered) &&
+    isNonNegativeInteger(stopLike?.toolLoopUnrecovered) &&
+    isNonNegativeInteger(stopLike?.sessionEndedInFailureLoop)
   );
 }
 
@@ -247,6 +317,64 @@ function isRates(value: Record<string, unknown> | undefined): boolean {
   );
 }
 
+function isValidationAggregates(value: Record<string, unknown> | undefined): boolean {
+  return (
+    value !== undefined &&
+    hasOnlyKeys(value, VALIDATION_CATEGORY_KEYS) &&
+    Object.values(value).every((aggregate) => isValidationAggregate(asRecord(aggregate)))
+  );
+}
+
+function isValidationAggregate(value: Record<string, unknown> | undefined): boolean {
+  return (
+    value !== undefined &&
+    hasOnlyKeys(value, VALIDATION_AGGREGATE_KEYS) &&
+    isNonNegativeInteger(value.calls) &&
+    isNonNegativeInteger(value.failures) &&
+    isRate(value.failureRate) &&
+    isNonNegativeInteger(value.recovered) &&
+    isNonNegativeInteger(value.unrecovered) &&
+    isRate(value.recoveryRate) &&
+    isNonNegativeNumber(value.averageFailuresBeforeRecovery) &&
+    isNonNegativeInteger(value.medianFailuresBeforeRecovery) &&
+    isNonNegativeInteger(value.p75FailuresBeforeRecovery) &&
+    isNonNegativeInteger(value.fivePlusFailuresBeforeRecovery)
+  );
+}
+
+function isEditValidation(value: Record<string, unknown> | undefined): boolean {
+  return (
+    value !== undefined &&
+    hasOnlyKeys(value, EDIT_VALIDATION_KEYS) &&
+    isNonNegativeInteger(value.editsFollowedByValidation) &&
+    isNonNegativeInteger(value.editsWithoutValidation) &&
+    isRate(value.editWithoutValidationRate) &&
+    isNonNegativeInteger(value.medianToolStepsFromEditToValidation) &&
+    isNonNegativeInteger(value.p75ToolStepsFromEditToValidation)
+  );
+}
+
+function isToolCategories(value: Record<string, unknown> | undefined): boolean {
+  return (
+    value !== undefined &&
+    Object.keys(value).every((key) => SAFE_TOOL_CATEGORY_KEYS.has(key)) &&
+    Object.values(value).every((aggregate) => isToolCategoryAggregate(asRecord(aggregate)))
+  );
+}
+
+function isToolCategoryAggregate(value: Record<string, unknown> | undefined): boolean {
+  return (
+    value !== undefined &&
+    hasOnlyKeys(value, TOOL_CATEGORY_AGGREGATE_KEYS) &&
+    isNonNegativeInteger(value.calls) &&
+    isNonNegativeInteger(value.failures) &&
+    isNonNegativeInteger(value.repeatedFailureSessions) &&
+    isNonNegativeInteger(value.recovered) &&
+    isNonNegativeInteger(value.unrecovered) &&
+    isRate(value.recoveryRate)
+  );
+}
+
 function isConfidence(value: unknown): value is BaselineConfidence {
   return value === "low" || value === "medium" || value === "high";
 }
@@ -255,8 +383,16 @@ function isNonNegativeNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isInteger(value) && isNonNegativeNumber(value);
+}
+
 function isRate(value: unknown): value is number {
   return isNonNegativeNumber(value) && value <= 1;
+}
+
+function isIsoTimestamp(value: unknown): value is string {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) && new Date(value).toISOString() === value;
 }
 
 function sumCounts(value: Record<string, number>): number {
@@ -289,9 +425,34 @@ function containsForbiddenRawDataKey(value: unknown): boolean {
   return false;
 }
 
-const ROOT_KEYS = new Set(["schema", "version", "createdAt", "updatedAt", "source", "privacy", "totals", "scenarios", "outcomes", "rates"]);
-const SOURCE_KEYS = new Set(["kind", "transcriptFilesScanned", "sessionsSeen", "malformedLines", "maxBytesPerTranscript"]);
+const ROOT_KEYS = new Set([
+  "schema",
+  "version",
+  "createdAt",
+  "updatedAt",
+  "source",
+  "privacy",
+  "recent",
+  "totals",
+  "scenarios",
+  "outcomes",
+  "rates",
+  "validation",
+  "editValidation",
+  "toolCategories"
+]);
+const SOURCE_KEYS = new Set([
+  "kind",
+  "transcriptFilesScanned",
+  "sessionsSeen",
+  "malformedLines",
+  "maxBytesPerTranscript",
+  "maxFiles",
+  "scanStrategy",
+  "parallelism"
+]);
 const PRIVACY_KEYS = new Set(["rawPromptsStored", "rawToolOutputStored", "rawPathsStored", "rawCommandsStored", "perSessionRowsStored"]);
+const RECENT_KEYS = new Set(["windowKind", "windowSize", "transcriptFilesScanned", "sessionsSeen"]);
 const TOTALS_KEYS = new Set([
   "toolCalls",
   "successfulToolResults",
@@ -309,24 +470,63 @@ const SCENARIO_KEYS = new Set([
   "edit_without_validation",
   "validation_recovered"
 ]);
-const BASELINE_SCENARIO_KEYS = new Set(["seen", "confidence"]);
+const BASELINE_SCENARIO_KEYS = new Set(["seen", "recentSeen", "confidence"]);
 const OUTCOME_KEYS = new Set(["healthyLike", "carefulLike", "stopLike"]);
 const HEALTHY_OUTCOME_KEYS = new Set(["validationPassedAfterEdit", "validationRecovered", "readHeavyNoFailure"]);
 const CAREFUL_OUTCOME_KEYS = new Set(["editWithoutValidation", "toolFailureRecovered", "twoFailureStreakRecovered"]);
 const STOP_OUTCOME_KEYS = new Set(["validationLoopUnrecovered", "toolLoopUnrecovered", "sessionEndedInFailureLoop"]);
 const RATE_KEYS = new Set(["toolFailureRate", "repeatedFailureRate", "validationFailureRate", "cacheWritesHighRate"]);
+const VALIDATION_CATEGORY_KEYS = new Set(["tests", "lint", "typecheck", "build"]);
+const VALIDATION_AGGREGATE_KEYS = new Set([
+  "calls",
+  "failures",
+  "failureRate",
+  "recovered",
+  "unrecovered",
+  "recoveryRate",
+  "averageFailuresBeforeRecovery",
+  "medianFailuresBeforeRecovery",
+  "p75FailuresBeforeRecovery",
+  "fivePlusFailuresBeforeRecovery"
+]);
+const EDIT_VALIDATION_KEYS = new Set([
+  "editsFollowedByValidation",
+  "editsWithoutValidation",
+  "editWithoutValidationRate",
+  "medianToolStepsFromEditToValidation",
+  "p75ToolStepsFromEditToValidation"
+]);
+const SAFE_TOOL_CATEGORY_KEYS = new Set(["Bash:tests", "Bash:lint", "Bash:typecheck", "Bash:build", "Read", "Grep", "Glob", "LS", "Edit"]);
+const TOOL_CATEGORY_AGGREGATE_KEYS = new Set(["calls", "failures", "repeatedFailureSessions", "recovered", "unrecovered", "recoveryRate"]);
 
 const FORBIDDEN_RAW_DATA_KEYS = new Set([
+  "args",
+  "argument",
+  "arguments",
   "assistantText",
   "command",
+  "commandArgs",
   "commands",
+  "content",
+  "diff",
   "fileContent",
   "fileContents",
+  "filePath",
+  "filePaths",
+  "file_path",
+  "input",
+  "message",
+  "output",
+  "patch",
+  "path",
+  "paths",
   "prompt",
   "prompts",
   "promptText",
   "rawCommand",
   "rawCommands",
+  "rawPath",
+  "rawPaths",
   "rawPrompt",
   "rawPrompts",
   "rawSessionId",

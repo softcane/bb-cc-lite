@@ -1,6 +1,6 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { baselinePath } from "../src/paths.js";
 import {
@@ -24,6 +24,7 @@ describe("personal baseline storage", () => {
 
       await expect(readBaseline(targetPath)).resolves.toEqual(baseline);
       expect((await stat(targetPath)).mode & 0o777).toBe(0o600);
+      expect((await stat(dirname(targetPath))).mode & 0o777).toBe(0o700);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -59,6 +60,96 @@ describe("personal baseline storage", () => {
         "utf8"
       );
 
+      await expect(readBaseline(targetPath)).resolves.toBeUndefined();
+
+      await writeFile(
+        targetPath,
+        `${JSON.stringify({
+          ...sampleBaseline(),
+          updatedAt: "/private/path/BB_CC_LITE_RAW_PATH_SENTINEL"
+        })}\n`,
+        "utf8"
+      );
+
+      await expect(readBaseline(targetPath)).resolves.toBeUndefined();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reads an extended v1 baseline with only approved aggregate sections", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-extended-"));
+    try {
+      const targetPath = join(tempDir, "baseline.json");
+      const baseline = {
+        ...sampleBaseline(),
+        source: {
+          ...sampleBaseline().source,
+          maxFiles: 500,
+          scanStrategy: "mtime_desc_bounded_parallel",
+          parallelism: 8
+        },
+        recent: {
+          windowKind: "newest_files",
+          windowSize: 100,
+          transcriptFilesScanned: 4,
+          sessionsSeen: 4
+        },
+        validation: {
+          tests: validationAggregate(),
+          lint: validationAggregate(),
+          typecheck: validationAggregate(),
+          build: validationAggregate()
+        },
+        editValidation: {
+          editsFollowedByValidation: 3,
+          editsWithoutValidation: 1,
+          editWithoutValidationRate: 0.25,
+          medianToolStepsFromEditToValidation: 2,
+          p75ToolStepsFromEditToValidation: 4
+        },
+        toolCategories: {
+          "Bash:tests": toolCategoryAggregate(),
+          Read: toolCategoryAggregate()
+        }
+      };
+      await writeFile(targetPath, `${JSON.stringify(baseline)}\n`, "utf8");
+
+      await expect(readBaseline(targetPath)).resolves.toEqual(baseline);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores extended v1 baselines with unsafe aggregate keys or raw-data-like fields", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-unsafe-extended-"));
+    try {
+      const targetPath = join(tempDir, "baseline.json");
+      await writeFile(
+        targetPath,
+        `${JSON.stringify({
+          ...sampleBaseline(),
+          toolCategories: {
+            "Bash:npm test -- private": toolCategoryAggregate()
+          }
+        })}\n`,
+        "utf8"
+      );
+      await expect(readBaseline(targetPath)).resolves.toBeUndefined();
+
+      await writeFile(
+        targetPath,
+        `${JSON.stringify({
+          ...sampleBaseline(),
+          validation: {
+            tests: {
+              ...validationAggregate(),
+              filePath: "/private/path/BB_CC_LITE_RAW_PATH_SENTINEL.ts"
+            }
+          }
+        })}\n`,
+        "utf8"
+      );
       await expect(readBaseline(targetPath)).resolves.toBeUndefined();
     } finally {
       await rm(tempDir, { recursive: true, force: true });
@@ -172,10 +263,24 @@ describe("personal baseline builder", () => {
 
       expect(result.baseline.source.sessionsSeen).toBe(2);
       expect(result.baseline.source.transcriptFilesScanned).toBe(2);
+      expect(result.baseline.source).toMatchObject({
+        maxFiles: 2,
+        scanStrategy: "mtime_desc_bounded_parallel",
+        parallelism: 8
+      });
+      expect(result.baseline.recent).toEqual({
+        windowKind: "newest_files",
+        windowSize: 100,
+        transcriptFilesScanned: 2,
+        sessionsSeen: 2
+      });
       expect(result.baseline.outcomes.healthyLike.readHeavyNoFailure).toBe(1);
       expect(result.baseline.outcomes.carefulLike.editWithoutValidation).toBe(1);
       expect(result.baseline.outcomes.stopLike.validationLoopUnrecovered).toBe(0);
       expect(result.baseline.scenarios.validation_command_loop.seen).toBe(0);
+      expect(result.baseline.scenarios.read_heavy_debugging).toMatchObject({ seen: 1, recentSeen: 1 });
+      expect(result.baseline.scenarios.edit_without_validation).toMatchObject({ seen: 1, recentSeen: 1 });
+      expect(result.baseline.scenarios.validation_command_loop).toMatchObject({ seen: 0, recentSeen: 0 });
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -246,8 +351,8 @@ describe("personal baseline builder", () => {
           cacheWritesHighRate: 0
         }
       });
-      expect(result.baseline.scenarios.validation_command_loop).toEqual({ seen: 3, confidence: "medium" });
-      expect(result.baseline.scenarios.validation_recovered).toEqual({ seen: 3, confidence: "medium" });
+      expect(result.baseline.scenarios.validation_command_loop).toMatchObject({ seen: 3, recentSeen: 3, confidence: "medium" });
+      expect(result.baseline.scenarios.validation_recovered).toMatchObject({ seen: 3, recentSeen: 3, confidence: "medium" });
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -322,6 +427,97 @@ describe("personal baseline builder", () => {
     }
   });
 
+  it("builds extended validation, recovery, edit-lag, and safe tool-category aggregates", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-rich-"));
+    try {
+      const claudeProjectsDir = join(tempDir, ".claude", "projects");
+      const projectDir = join(claudeProjectsDir, "project");
+      await mkdir(projectDir, { recursive: true });
+      await writeJsonl(join(projectDir, "rich.jsonl"), [
+        toolUse("edit-rich", "Edit", { file_path: "/private/file.ts", new_string: "updated" }),
+        toolResult("edit-rich", false, "edited"),
+        ...failedBashCommand("test-fail-1", "npm test"),
+        ...failedBashCommand("test-fail-2", "npm test"),
+        ...successfulBashCommand("test-pass", "npm test"),
+        ...failedBashCommand("lint-fail", "npm run lint"),
+        ...successfulBashCommand("lint-pass", "npm run lint"),
+        ...successfulBashCommand("typecheck-pass", "tsc --noEmit"),
+        ...failedBashCommand("build-fail", "npm run build"),
+        ...successfulBashCommand("git-status", "git status")
+      ]);
+      await writeJsonl(join(projectDir, "edit-only.jsonl"), editWithoutValidationSession("edit-only"));
+
+      const result = await buildBaseline({
+        claudeProjectsDir,
+        appHomePath: join(tempDir, "app-home"),
+        now: new Date("2026-05-19T10:00:00.000Z")
+      });
+
+      expect(result.baseline.validation?.tests).toMatchObject({
+        calls: 3,
+        failures: 2,
+        failureRate: 0.6667,
+        recovered: 1,
+        unrecovered: 0,
+        recoveryRate: 1,
+        averageFailuresBeforeRecovery: 2,
+        medianFailuresBeforeRecovery: 2,
+        p75FailuresBeforeRecovery: 2,
+        fivePlusFailuresBeforeRecovery: 0
+      });
+      expect(result.baseline.validation?.lint).toMatchObject({
+        calls: 2,
+        failures: 1,
+        recovered: 1,
+        recoveryRate: 1,
+        medianFailuresBeforeRecovery: 1
+      });
+      expect(result.baseline.validation?.typecheck).toMatchObject({
+        calls: 1,
+        failures: 0,
+        recoveryRate: 0
+      });
+      expect(result.baseline.validation?.build).toMatchObject({
+        calls: 1,
+        failures: 1,
+        recovered: 0,
+        unrecovered: 1,
+        recoveryRate: 0
+      });
+      expect(result.baseline.editValidation).toMatchObject({
+        editsFollowedByValidation: 1,
+        editsWithoutValidation: 1,
+        editWithoutValidationRate: 0.5,
+        medianToolStepsFromEditToValidation: 1,
+        p75ToolStepsFromEditToValidation: 1
+      });
+      expect(result.baseline.toolCategories?.["Bash:tests"]).toMatchObject({
+        calls: 3,
+        failures: 2,
+        repeatedFailureSessions: 1,
+        recovered: 1,
+        unrecovered: 0,
+        recoveryRate: 1
+      });
+      expect(result.baseline.toolCategories?.["Bash:build"]).toMatchObject({
+        calls: 1,
+        failures: 1,
+        recovered: 0,
+        unrecovered: 1,
+        recoveryRate: 0
+      });
+      expect(result.baseline.toolCategories?.Edit).toMatchObject({
+        calls: 2,
+        failures: 0,
+        recoveryRate: 0
+      });
+      expect(result.baseline.toolCategories).not.toHaveProperty("Bash:git");
+      expect(JSON.stringify(result.baseline)).not.toContain("git status");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("learns weak outcome aggregates without storing raw private transcript data", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-builder-"));
     try {
@@ -386,8 +582,8 @@ describe("personal baseline builder", () => {
           readSearchToolCalls: 3
         }
       });
-      expect(result.baseline.scenarios.validation_command_loop).toEqual({ seen: 1, confidence: "low" });
-      expect(result.baseline.scenarios.read_heavy_debugging).toEqual({ seen: 1, confidence: "low" });
+      expect(result.baseline.scenarios.validation_command_loop).toMatchObject({ seen: 1, recentSeen: 1, confidence: "low" });
+      expect(result.baseline.scenarios.read_heavy_debugging).toMatchObject({ seen: 1, recentSeen: 1, confidence: "low" });
 
       const baselineText = await readFile(join(appHomePath, "baseline.json"), "utf8");
       for (const sentinel of [
@@ -471,6 +667,32 @@ function sampleBaseline(): PersonalBaseline {
   };
 }
 
+function validationAggregate(): Record<string, number> {
+  return {
+    calls: 4,
+    failures: 2,
+    failureRate: 0.5,
+    recovered: 1,
+    unrecovered: 1,
+    recoveryRate: 0.5,
+    averageFailuresBeforeRecovery: 1,
+    medianFailuresBeforeRecovery: 1,
+    p75FailuresBeforeRecovery: 1,
+    fivePlusFailuresBeforeRecovery: 0
+  };
+}
+
+function toolCategoryAggregate(): Record<string, number> {
+  return {
+    calls: 4,
+    failures: 2,
+    repeatedFailureSessions: 1,
+    recovered: 1,
+    unrecovered: 1,
+    recoveryRate: 0.5
+  };
+}
+
 async function writeJsonl(path: string, entries: unknown[]): Promise<void> {
   await writeFile(path, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
 }
@@ -527,6 +749,14 @@ function toolResult(toolUseId: string, isError: boolean, content: string): unkno
 
 function failedBashValidation(id: string): unknown[] {
   return [toolUse(id, "Bash", { command: "npm test" }), toolResult(id, true, "tests failed")];
+}
+
+function failedBashCommand(id: string, command: string): unknown[] {
+  return [toolUse(id, "Bash", { command }), toolResult(id, true, "command failed")];
+}
+
+function successfulBashCommand(id: string, command: string): unknown[] {
+  return [toolUse(id, "Bash", { command }), toolResult(id, false, "command passed")];
 }
 
 function readHeavySession(prefix: string): unknown[] {

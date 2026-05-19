@@ -41,8 +41,8 @@ export interface PersonalBaselineResult {
 export const PERSONAL_BASELINE_DISCLOSURE = `bb-cc-lite personalizes the statusline from your past Claude sessions by default.
 
 It reads local Claude JSONL once.
-It stores only counts, rates, weak outcome labels, and pattern labels.
-It does not store prompts, commands, tool output, paths, or file contents.
+It stores only counts, rates, weak outcome labels, pattern labels, recovery aggregates, and coarse categories.
+It does not store prompts, assistant text, commands, command args, tool output, paths, file contents, transcript paths, workspace paths, raw session ids, or per-session rows.
 
 Use --no-learn to skip this.`;
 
@@ -191,8 +191,8 @@ function formatBuiltBaselineMessage(value: unknown): string {
   const sessionsSeen = sessionsSeenFrom(value);
   return [
     `Built personal baseline from ${sessionsSeen} sessions.`,
-    "Stored only counts, rates, weak outcome labels, and pattern labels.",
-    "No prompts, commands, outputs, paths, or file contents were stored."
+    "Stored only counts, rates, weak outcome labels, pattern labels, recovery aggregates, and coarse categories.",
+    "No prompts, assistant text, commands, command args, outputs, paths, file contents, transcript paths, workspace paths, raw session ids, or per-session rows were stored."
   ].join("\n");
 }
 
@@ -203,7 +203,38 @@ function formatBaselineSummaryMessage(value: unknown, summary?: unknown): string
     typeof summary === "string" && summary.startsWith("Personal baseline:")
       ? `; ${summary.replace("Personal baseline:", "outcomes:").replace(/\.$/u, "")}`
       : "";
-  return `personal baseline: ${sessionsSeen} sessions, ${filesScanned} transcript files; derived aggregate data only${outcomeSummary}`;
+  const extendedSummary = extendedBaselineSummary(value);
+  return `personal baseline: ${sessionsSeen} sessions, ${filesScanned} transcript files; derived aggregate data only${outcomeSummary}${extendedSummary}`;
+}
+
+function extendedBaselineSummary(value: unknown): string {
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+  const baseline = value as {
+    recent?: { windowKind?: unknown; windowSize?: unknown; sessionsSeen?: unknown };
+    validation?: Record<string, unknown>;
+    toolCategories?: Record<string, unknown>;
+  };
+  const parts: string[] = [];
+  const recent = baseline.recent;
+  if (
+    recent &&
+    recent.windowKind === "newest_files" &&
+    typeof recent.sessionsSeen === "number" &&
+    typeof recent.windowSize === "number"
+  ) {
+    parts.push(`recent newest_files window ${recent.sessionsSeen}/${recent.windowSize}`);
+  }
+  const validationCategories = baseline.validation ? Object.keys(baseline.validation).sort() : [];
+  if (validationCategories.length > 0) {
+    parts.push(`validation categories: ${validationCategories.join(", ")}`);
+  }
+  const toolCategories = baseline.toolCategories ? Object.keys(baseline.toolCategories).sort() : [];
+  if (toolCategories.length > 0) {
+    parts.push(`tool categories: ${toolCategories.join(", ")}`);
+  }
+  return parts.length > 0 ? `; ${parts.join("; ")}` : "";
 }
 
 function sessionsSeenFrom(value: unknown): number {

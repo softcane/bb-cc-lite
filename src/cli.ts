@@ -214,8 +214,9 @@ Usage:
 
 Learning:
   install builds a local personal baseline from Claude JSONL by default.
+  learning scans newest eligible JSONL first with capped 512 KiB tails and bounded reads.
   --no-learn skips that scan.
-  doctor --baseline shows a safe aggregate summary.
+  doctor --baseline shows a safe aggregate summary, including recent and validation categories.
   doctor --build-baseline refreshes the baseline.
   doctor --clear-baseline and unlearn remove only the baseline.
 `);

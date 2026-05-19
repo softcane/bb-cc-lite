@@ -84,6 +84,80 @@ describe("signals and renderer", () => {
     });
   });
 
+  it("uses validation recovery history for a two-failure test streak without escalating to Stop", () => {
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        failedToolResults: 2,
+        repeatedFailures: [{ toolName: "Bash", purpose: "tests", count: 2 }]
+      }),
+      {
+        baseline: {
+          validation: {
+            tests: {
+              calls: 24,
+              failures: 10,
+              failureRate: 0.4167,
+              recovered: 9,
+              unrecovered: 1,
+              recoveryRate: 0.9,
+              averageFailuresBeforeRecovery: 1,
+              medianFailuresBeforeRecovery: 1,
+              p75FailuresBeforeRecovery: 1,
+              fivePlusFailuresBeforeRecovery: 0
+            }
+          }
+        }
+      }
+    );
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "tool_failure_repeated",
+      diagnosis: "tests failed twice; usually recovers after one fix",
+      baselineNote: "test failures usually recovered after one focused fix",
+      action: "inspect first failure"
+    });
+    expect(renderStatusLine(decision, 140)).toContain("tests failed twice; usually recovers after one fix");
+    expect(formatWhy(decision)).toContain("Baseline: test failures usually recovered after one focused fix.");
+  });
+
+  it("uses category-specific recovery history for a two-failure typecheck streak", () => {
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        failedToolResults: 2,
+        repeatedFailures: [{ toolName: "Bash", purpose: "typecheck", count: 2 }]
+      }),
+      {
+        baseline: {
+          validation: {
+            typecheck: {
+              calls: 12,
+              failures: 6,
+              failureRate: 0.5,
+              recovered: 5,
+              unrecovered: 1,
+              recoveryRate: 0.8333,
+              averageFailuresBeforeRecovery: 1,
+              medianFailuresBeforeRecovery: 1,
+              p75FailuresBeforeRecovery: 1,
+              fivePlusFailuresBeforeRecovery: 0
+            }
+          }
+        }
+      }
+    );
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "tool_failure_repeated",
+      diagnosis: "typecheck failed twice; usually recovers after one fix",
+      baselineNote: "typecheck failures usually recovered after one focused fix",
+      action: "inspect first failure"
+    });
+  });
+
   it("warns when edits have not been validated yet", () => {
     const decision = decide(
       input({ contextPercent: 42 }),
@@ -98,6 +172,34 @@ describe("signals and renderer", () => {
       action: "run focused check"
     });
     expect(renderStatusLine(decision, 120)).toContain("edits not checked yet");
+  });
+
+  it("uses edit-validation lag history when an unvalidated edit is unusual", () => {
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({ hasUnvalidatedEdits: true, unvalidatedEditToolSteps: 7 }),
+      {
+        baseline: {
+          editValidation: {
+            editsFollowedByValidation: 12,
+            editsWithoutValidation: 1,
+            editWithoutValidationRate: 0.0769,
+            medianToolStepsFromEditToValidation: 2,
+            p75ToolStepsFromEditToValidation: 4
+          }
+        }
+      }
+    );
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "edit_without_validation",
+      diagnosis: "edit lag unusual for you",
+      baselineNote: "this edit has gone longer than your usual validation lag",
+      action: "run focused check"
+    });
+    expect(renderStatusLine(decision, 120)).toContain("edit lag unusual for you");
+    expect(formatWhy(decision)).toContain("Baseline: this edit has gone longer than your usual validation lag.");
   });
 
   it("renders validation recovery as healthy", () => {
@@ -140,6 +242,54 @@ describe("signals and renderer", () => {
     expect(renderStatusLine(decision, 140)).toContain("research phase: usually normal for you");
   });
 
+  it("prefers recent read-heavy baseline evidence over stale all-time history", () => {
+    const current = transcript({ toolCalls: 8, readToolCalls: 7 });
+    const staleAllTime = decide(input({ contextPercent: 42 }), current, {
+      baseline: {
+        recent: {
+          windowKind: "newest_files",
+          windowSize: 100,
+          transcriptFilesScanned: 20,
+          sessionsSeen: 20
+        },
+        scenarios: {
+          read_heavy_debugging: { seen: 16, recentSeen: 0, confidence: "medium" }
+        },
+        outcomes: {
+          healthyLike: { readHeavyNoFailure: 16 }
+        }
+      }
+    });
+
+    expect(staleAllTime).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy"
+    });
+
+    const recentHealthy = decide(input({ contextPercent: 42 }), current, {
+      baseline: {
+        recent: {
+          windowKind: "newest_files",
+          windowSize: 100,
+          transcriptFilesScanned: 20,
+          sessionsSeen: 20
+        },
+        scenarios: {
+          read_heavy_debugging: { seen: 16, recentSeen: 4, confidence: "medium" }
+        },
+        outcomes: {
+          healthyLike: { readHeavyNoFailure: 16 }
+        }
+      }
+    });
+
+    expect(recentHealthy).toMatchObject({
+      state: "Healthy",
+      reasonCode: "read_heavy_debugging",
+      diagnosis: "research phase: usually normal for you"
+    });
+  });
+
   it("lets Stop-like baseline history strengthen wording without overriding hard Stop", () => {
     const decision = decide(
       input({ contextPercent: 42 }),
@@ -167,6 +317,51 @@ describe("signals and renderer", () => {
       baselineNote: "usually Stop-like for you"
     });
     expect(renderStatusLine(decision, 120)).toContain("why: test loop: past runs ended badly");
+  });
+
+  it("uses unrecovered validation history for hard test-loop Stop wording", () => {
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        failedToolResults: 3,
+        repeatedFailures: [{ toolName: "Bash", purpose: "tests", count: 3 }]
+      }),
+      {
+        baseline: {
+          scenarios: {
+            validation_command_loop: { seen: 8, recentSeen: 6, confidence: "high" }
+          },
+          validation: {
+            tests: {
+              calls: 30,
+              failures: 18,
+              failureRate: 0.6,
+              recovered: 2,
+              unrecovered: 8,
+              recoveryRate: 0.2,
+              averageFailuresBeforeRecovery: 2,
+              medianFailuresBeforeRecovery: 2,
+              p75FailuresBeforeRecovery: 3,
+              fivePlusFailuresBeforeRecovery: 0
+            }
+          },
+          outcomes: {
+            stopLike: { validationLoopUnrecovered: 8 }
+          }
+        }
+      }
+    );
+
+    expect(decision).toMatchObject({
+      state: "Stop",
+      reasonCode: "repeated_tool_failure",
+      diagnosisCode: "validation_command_loop",
+      diagnosis: "test loop: usually unrecovered after 3x",
+      baselineNote: "recent test loops were usually unrecovered after 3 failures",
+      action: "inspect first failure"
+    });
+    expect(renderStatusLine(decision, 140)).toContain("why: test loop: usually unrecovered after 3x");
+    expect(formatWhy(decision)).toContain("Baseline: recent test loops were usually unrecovered after 3 failures.");
   });
 
   it("explains baseline influence in why without raw details", () => {

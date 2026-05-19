@@ -47,6 +47,7 @@ export interface TranscriptSummary {
   repeatedFailures: ToolFailureSummary[];
   editTestLoopFailures: number;
   hasUnvalidatedEdits: boolean;
+  unvalidatedEditToolSteps?: number;
   validationRecovered: boolean;
   compactionEvents: number;
   usage: TokenUsage;
@@ -76,10 +77,17 @@ export interface DecisionEvidence {
 
 export interface BaselineScenarioSummary {
   seen: number;
+  recentSeen?: number;
   confidence?: DecisionConfidence;
 }
 
 export interface DecisionPersonalBaseline {
+  recent?: {
+    windowKind?: "newest_files";
+    windowSize?: number;
+    transcriptFilesScanned?: number;
+    sessionsSeen?: number;
+  };
   scenarios?: Partial<Record<string, BaselineScenarioSummary>>;
   outcomes?: {
     healthyLike?: Partial<Record<string, number>>;
@@ -87,6 +95,43 @@ export interface DecisionPersonalBaseline {
     stopLike?: Partial<Record<string, number>>;
   };
   rates?: Partial<Record<string, number>>;
+  validation?: Partial<
+    Record<
+      "tests" | "lint" | "typecheck" | "build",
+      {
+        calls?: number;
+        failures?: number;
+        failureRate?: number;
+        recovered?: number;
+        unrecovered?: number;
+        recoveryRate?: number;
+        averageFailuresBeforeRecovery?: number;
+        medianFailuresBeforeRecovery?: number;
+        p75FailuresBeforeRecovery?: number;
+        fivePlusFailuresBeforeRecovery?: number;
+      }
+    >
+  >;
+  editValidation?: {
+    editsFollowedByValidation?: number;
+    editsWithoutValidation?: number;
+    editWithoutValidationRate?: number;
+    medianToolStepsFromEditToValidation?: number;
+    p75ToolStepsFromEditToValidation?: number;
+  };
+  toolCategories?: Partial<
+    Record<
+      string,
+      {
+        calls?: number;
+        failures?: number;
+        repeatedFailureSessions?: number;
+        recovered?: number;
+        unrecovered?: number;
+        recoveryRate?: number;
+      }
+    >
+  >;
 }
 
 export interface Decision {

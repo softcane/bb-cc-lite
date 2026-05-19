@@ -7,6 +7,8 @@ export interface DecideOptions {
   baseline?: DecisionPersonalBaseline;
 }
 
+type ValidationPurpose = "tests" | "lint" | "typecheck" | "build";
+
 export function decide(
   input: StatusLineInput,
   transcript: TranscriptSummary,
@@ -41,18 +43,25 @@ export function decide(
     .sort((a, b) => b.count - a.count)[0];
   if (repeatedFailure) {
     const runningTests = repeatedFailure.toolName === "Bash" && repeatedFailure.purpose === "tests";
+    const baselineUnrecoveredTestLoop = runningTests && supportsUnrecoveredTestLoopStop(options.baseline);
     const baselineStopLike = runningTests && supportsValidationLoopStop(options.baseline);
     return baseDecision({
       state: "Stop",
       reasonCode: "repeated_tool_failure",
       diagnosisCode: runningTests ? "validation_command_loop" : "tool_failure_repeated",
       diagnosis: runningTests
-        ? baselineStopLike
+        ? baselineUnrecoveredTestLoop
+          ? "test loop: usually unrecovered after 3x"
+          : baselineStopLike
           ? "test loop: past runs ended badly"
           : `test loop: failed ${repeatedFailure.count}x`
         : undefined,
       confidence: "high",
-      baselineNote: baselineStopLike ? "usually Stop-like for you" : undefined,
+      baselineNote: baselineUnrecoveredTestLoop
+        ? "recent test loops were usually unrecovered after 3 failures"
+        : baselineStopLike
+          ? "usually Stop-like for you"
+          : undefined,
       primaryEvidence: `${repeatedFailure.toolName} failed ${repeatedFailure.count}x${runningTests ? " running tests" : ""}`,
       impact: runningTests ? "Claude is retrying a broken test loop" : "Claude is retrying the same failing tool",
       action: runningTests
@@ -92,12 +101,22 @@ export function decide(
     .sort((a, b) => b.count - a.count)[0];
   if (earlyRepeatedFailure) {
     const runningTests = earlyRepeatedFailure.toolName === "Bash" && earlyRepeatedFailure.purpose === "tests";
+    const validationPurpose = validationPurposeForFailure(earlyRepeatedFailure);
+    const quickRecovery = validationPurpose ? supportsQuickValidationRecovery(options.baseline, validationPurpose) : false;
+    const validationLabel = validationPurpose || "validation";
+    const validationFailureLabel = validationPurpose === "tests" ? "test" : validationLabel;
     return baseDecision({
       state: "Careful",
       reasonCode: "tool_failure_repeated",
+      diagnosisCode: validationPurpose ? "validation_command_loop" : "tool_failure_repeated",
+      diagnosis: quickRecovery ? `${validationLabel} failed twice; usually recovers after one fix` : undefined,
+      confidence: quickRecovery ? "medium" : undefined,
+      baselineNote: quickRecovery ? `${validationFailureLabel} failures usually recovered after one focused fix` : undefined,
       primaryEvidence: `${earlyRepeatedFailure.toolName} failed ${earlyRepeatedFailure.count}x${runningTests ? " running tests" : ""}`,
       impact: runningTests ? "Tests are failing repeatedly" : "A tool is starting to repeat failures",
-      action: runningTests
+      action: quickRecovery
+        ? "inspect first failure"
+        : runningTests
         ? "pause and inspect the failing test before another retry"
         : `inspect the failing ${earlyRepeatedFailure.toolName} step before another retry`,
       input,
@@ -162,12 +181,14 @@ export function decide(
   }
 
   if (transcript.hasUnvalidatedEdits) {
+    const unusualEditLag = hasUnusualEditValidationLag(transcript, options.baseline);
     return baseDecision({
       state: "Careful",
       reasonCode: "edit_without_validation",
       diagnosisCode: "edit_without_validation",
-      diagnosis: "edits not checked yet",
+      diagnosis: unusualEditLag ? "edit lag unusual for you" : "edits not checked yet",
       confidence: "medium",
+      baselineNote: unusualEditLag ? "this edit has gone longer than your usual validation lag" : undefined,
       primaryEvidence: "edits not validated",
       impact: "A successful edit has not been checked by validation yet",
       action: "run focused check",
@@ -373,11 +394,65 @@ function isReadHeavyCurrentSession(transcript: TranscriptSummary): boolean {
 function supportsReadHeavyHealthy(baseline: DecisionPersonalBaseline | undefined): boolean {
   const scenario = baseline?.scenarios?.read_heavy_debugging;
   const healthyCount = baseline?.outcomes?.healthyLike?.readHeavyNoFailure || 0;
-  return Boolean(scenario && scenario.seen >= 3 && scenario.confidence !== "low" && healthyCount > 0);
+  const recentSessionsSeen = baseline?.recent?.sessionsSeen || 0;
+  const recentSeen = scenario?.recentSeen;
+  const recentHistoryIsEnough = recentSessionsSeen >= 3;
+  const recentSupportsHealthy = recentSeen !== undefined && recentSeen >= 3;
+  const allTimeSupportsHealthy = !recentHistoryIsEnough && (scenario?.seen || 0) >= 3;
+  return Boolean(scenario && (recentSupportsHealthy || allTimeSupportsHealthy) && scenario.confidence !== "low" && healthyCount > 0);
 }
 
 function supportsValidationLoopStop(baseline: DecisionPersonalBaseline | undefined): boolean {
   const scenario = baseline?.scenarios?.validation_command_loop;
   const stopCount = baseline?.outcomes?.stopLike?.validationLoopUnrecovered || 0;
   return Boolean(scenario && scenario.seen >= 3 && scenario.confidence !== "low" && stopCount > 0);
+}
+
+function supportsUnrecoveredTestLoopStop(baseline: DecisionPersonalBaseline | undefined): boolean {
+  const scenario = baseline?.scenarios?.validation_command_loop;
+  const tests = baseline?.validation?.tests;
+  const unrecovered = tests?.unrecovered || 0;
+  const recovered = tests?.recovered || 0;
+  const recentSeen = scenario?.recentSeen || 0;
+  return Boolean(
+    scenario &&
+      recentSeen >= 3 &&
+      scenario.confidence !== "low" &&
+      unrecovered >= 3 &&
+      unrecovered > recovered &&
+      (tests?.recoveryRate || 0) <= 0.5
+  );
+}
+
+function validationPurposeForFailure(failure: { toolName: string; purpose?: string }): ValidationPurpose | undefined {
+  if (failure.toolName !== "Bash") {
+    return undefined;
+  }
+  return failure.purpose === "tests" || failure.purpose === "lint" || failure.purpose === "typecheck" || failure.purpose === "build"
+    ? failure.purpose
+    : undefined;
+}
+
+function supportsQuickValidationRecovery(
+  baseline: DecisionPersonalBaseline | undefined,
+  purpose: ValidationPurpose
+): boolean {
+  const aggregate = baseline?.validation?.[purpose];
+  const recovered = aggregate?.recovered || 0;
+  const unrecovered = aggregate?.unrecovered || 0;
+  const recoveryTotal = recovered + unrecovered;
+  return Boolean(
+    aggregate &&
+      recoveryTotal >= 5 &&
+      recovered >= 3 &&
+      (aggregate.recoveryRate || 0) >= 0.75 &&
+      (aggregate.medianFailuresBeforeRecovery || 0) <= 1
+  );
+}
+
+function hasUnusualEditValidationLag(transcript: TranscriptSummary, baseline: DecisionPersonalBaseline | undefined): boolean {
+  const currentLag = transcript.unvalidatedEditToolSteps;
+  const p75 = baseline?.editValidation?.p75ToolStepsFromEditToValidation || 0;
+  const followed = baseline?.editValidation?.editsFollowedByValidation || 0;
+  return currentLag !== undefined && followed >= 5 && p75 > 0 && currentLag > p75;
 }

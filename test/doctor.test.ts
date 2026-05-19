@@ -123,7 +123,7 @@ describe("doctor", () => {
       schema: "bb-cc-lite.baseline.v1",
       version: 1,
       createdAt: "2026-05-19T12:00:00.000Z",
-      updatedAt: rawPathSentinel,
+      updatedAt: "2026-05-19T12:00:00.000Z",
       source: {
         kind: "local_transcript_scan",
         transcriptFilesScanned: 4,
@@ -177,6 +177,43 @@ describe("doctor", () => {
         repeatedFailureRate: 0,
         validationFailureRate: 0,
         cacheWritesHighRate: 0
+      },
+      recent: {
+        windowKind: "newest_files",
+        windowSize: 100,
+        transcriptFilesScanned: 3,
+        sessionsSeen: 3
+      },
+      validation: {
+        tests: {
+          calls: 4,
+          failures: 1,
+          failureRate: 0.25,
+          recovered: 1,
+          unrecovered: 0,
+          recoveryRate: 1,
+          averageFailuresBeforeRecovery: 1,
+          medianFailuresBeforeRecovery: 1,
+          p75FailuresBeforeRecovery: 1,
+          fivePlusFailuresBeforeRecovery: 0
+        }
+      },
+      editValidation: {
+        editsFollowedByValidation: 2,
+        editsWithoutValidation: 1,
+        editWithoutValidationRate: 0.3333,
+        medianToolStepsFromEditToValidation: 2,
+        p75ToolStepsFromEditToValidation: 3
+      },
+      toolCategories: {
+        "Bash:tests": {
+          calls: 4,
+          failures: 1,
+          repeatedFailureSessions: 0,
+          recovered: 1,
+          unrecovered: 0,
+          recoveryRate: 1
+        }
       }
     });
 
@@ -192,6 +229,9 @@ describe("doctor", () => {
     expect(baseline.message).toContain("3 sessions");
     expect(baseline.message).toContain("4 transcript files");
     expect(baseline.message).toContain("derived aggregate data only");
+    expect(baseline.message).toContain("recent newest_files window 3/100");
+    expect(baseline.message).toContain("validation categories: tests");
+    expect(baseline.message).toContain("tool categories: Bash:tests");
     expect(baseline.message).not.toContain(rawPathSentinel);
   });
 
