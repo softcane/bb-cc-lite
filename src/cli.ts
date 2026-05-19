@@ -1,15 +1,11 @@
 #!/usr/bin/env node
 import { formatDoctorChecks, runDoctor } from "./doctor.js";
-import { mergeHookSummary, parseHookPayload } from "./hooks.js";
-import { hashValue } from "./paths.js";
-import { estimateCostUsd, loadPricing } from "./pricing.js";
-import { renderStatusLine } from "./renderer.js";
-import { decide } from "./signals.js";
+import { parseHookPayload } from "./hook-payload.js";
 import { installStatusLine, uninstallStatusLine, type SettingsScope } from "./settings.js";
-import { parseStatusLineInput, readStdin, mergeUsage } from "./status-input.js";
-import { hookSummary, latestDecision, recordDecision, recordHookEvent } from "./store.js";
-import { parseTranscriptTail } from "./transcript.js";
-import type { Decision } from "./types.js";
+import { readStdin } from "./status-input.js";
+import { createStatusLine } from "./statusline.js";
+import { recordHookEvent } from "./store.js";
+import { formatWhy, getWhyDecision } from "./why.js";
 
 interface ParsedArgs {
   command: string;
@@ -87,32 +83,7 @@ async function commandUninstall(args: ParsedArgs): Promise<void> {
 async function commandStatusLine(): Promise<void> {
   try {
     const raw = await readStdin();
-    const input = parseStatusLineInput(raw);
-    const sessionKey = hashValue(input.sessionId);
-    const transcript = mergeHookSummary(
-      await parseTranscriptTail(input.transcriptPath),
-      sessionKey
-        ? await hookSummary(sessionKey)
-        : {
-            failedToolResults: 0,
-            toolCalls: 0,
-            compactionEvents: 0,
-            repeatedFailures: []
-          }
-    );
-    const usage = mergeUsage(input.usage, transcript.usage);
-    if (input.costUsd === undefined) {
-      const estimated = estimateCostUsd(input.model.id || input.model.displayName, usage, await loadPricing());
-      if (estimated !== undefined) {
-        input.costUsd = estimated;
-        input.costSource = "estimated";
-      }
-    }
-    const previous = sessionKey ? await latestDecision(sessionKey) : undefined;
-    const decision = decide(input, transcript, { previous });
-    await recordDecision(decision);
-    const width = input.terminalWidth || process.stdout.columns;
-    process.stdout.write(`${renderStatusLine(decision, width)}\n`);
+    process.stdout.write(`${await createStatusLine(raw, process.stdout.columns)}\n`);
   } catch {
     process.stdout.write("bb: Careful | statusline crashed | run bb-cc-lite doctor\n");
   }
@@ -132,8 +103,7 @@ async function commandHook(args: ParsedArgs): Promise<void> {
 }
 
 async function commandWhy(args: ParsedArgs): Promise<void> {
-  const sessionKey = stringFlag(args, "session") ? hashValue(stringFlag(args, "session")) : undefined;
-  const decision = await latestDecision(sessionKey);
+  const decision = await getWhyDecision({ sessionId: stringFlag(args, "session") });
   if (args.flags.json) {
     console.log(JSON.stringify(decision || null, null, 2));
     return;
@@ -157,18 +127,6 @@ async function commandDoctor(args: ParsedArgs): Promise<void> {
   if (checks.some((check) => check.level === "FAIL")) {
     process.exitCode = 1;
   }
-}
-
-function formatWhy(decision: Decision): string {
-  const cost =
-    decision.costUsd === undefined
-      ? ""
-      : `\nCost evidence: ${decision.costSource === "estimated" ? "estimated " : ""}$${decision.costUsd.toFixed(4)}.`;
-  return [
-    `Last decision: ${decision.state}.`,
-    `Reason: ${decision.primaryEvidence}. ${decision.impact}.`,
-    `Next action: ${decision.action}.${cost}`
-  ].join("\n");
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -216,7 +174,7 @@ function printHelp(): void {
 Usage:
   bb-cc-lite install [--scope local|project|user] [--replace] [--hooks]
   bb-cc-lite statusline
-  bb-cc-lite why [--json]
+  bb-cc-lite why [--session <id>] [--json]
   bb-cc-lite doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing]
   bb-cc-lite uninstall [--scope local|project|user]
 `);

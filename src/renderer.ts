@@ -1,14 +1,14 @@
-import type { Decision } from "./types.js";
+import type { DecisionPresentation } from "./decision-presentation.js";
 
 const DEFAULT_WIDTH = 120;
 const RESET = "\u001b[0m";
-const COLORS: Record<Decision["state"], string> = {
+const COLORS: Record<DecisionPresentation["state"], string> = {
   Healthy: "\u001b[32m",
   Careful: "\u001b[33m",
   Stop: "\u001b[1;31m"
 };
 
-export function renderStatusLine(decision: Decision, width?: number): string {
+export function renderStatusLine(decision: DecisionPresentation, width?: number): string {
   const terminalWidth = Math.max(20, Math.floor(width || DEFAULT_WIDTH));
   const candidates = decision.state === "Stop" ? stopCandidates(decision) : defaultCandidates(decision);
 
@@ -21,7 +21,7 @@ export function renderStatusLine(decision: Decision, width?: number): string {
   return colorizeState(truncate(joinParts(candidates.at(-1) || [`bb: ${decision.state}`]), terminalWidth), decision.state);
 }
 
-function defaultCandidates(decision: Decision): string[][] {
+function defaultCandidates(decision: DecisionPresentation): string[][] {
   const evidence = decision.evidence.map((item) => item.label);
   return [
     [`bb: ${decision.state}`, ...evidence, decision.action],
@@ -30,7 +30,7 @@ function defaultCandidates(decision: Decision): string[][] {
   ];
 }
 
-function stopCandidates(decision: Decision): string[][] {
+function stopCandidates(decision: DecisionPresentation): string[][] {
   const costEvidence = decision.evidence.filter((item) => item.detail).map((item) => item.label);
   const fullWhy =
     decision.impact && decision.impact !== decision.primaryEvidence
@@ -71,7 +71,7 @@ function sanitizeLinePart(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f]+/gu, " ").replace(/\s+/gu, " ").trim();
 }
 
-function colorizeState(value: string, state: Decision["state"]): string {
+function colorizeState(value: string, state: DecisionPresentation["state"]): string {
   if (process.env.NO_COLOR || process.env.BB_CC_LITE_COLOR === "0") {
     return value;
   }

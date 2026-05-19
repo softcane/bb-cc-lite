@@ -1,4 +1,4 @@
-import { hashValue } from "./paths.js";
+import { sessionKeyFromId } from "./session.js";
 import { mergeUsage } from "./status-input.js";
 import type { Decision, StatusLineInput, StoredDecision, TokenUsage, TranscriptSummary } from "./types.js";
 
@@ -14,7 +14,7 @@ export function decide(
   const now = new Date().toISOString();
   const usage = mergeUsage(input.usage, transcript.usage);
   const contextPercent = input.contextPercent;
-  const sessionKey = hashValue(input.sessionId);
+  const sessionKey = sessionKeyFromId(input.sessionId);
   const costUsd = input.costUsd;
   const costSource = input.costSource;
 

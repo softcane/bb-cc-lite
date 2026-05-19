@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmod, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { SAFE_HOOK_EVENTS } from "./hooks.js";
+import { SAFE_HOOK_EVENTS } from "./hook-payload.js";
 import { appHome, backupDir, cliPath, quoteShell } from "./paths.js";
 
 export type SettingsScope = "local" | "project" | "user";

@@ -1,15 +1,9 @@
-import { open, stat } from "node:fs/promises";
-import { basename } from "node:path";
 import { asRecord, extractUsage, mergeUsage, stringField } from "./status-input.js";
+import { classifyResultPurpose, classifyToolPurpose, isEditTool, safeToolName } from "./tool-metadata.js";
+import { readTranscriptTail, type ReadTranscriptTailOptions } from "./transcript-reader.js";
 import type { ToolFailureSummary, TokenUsage, TranscriptSummary } from "./types.js";
 
-export interface ParseTranscriptOptions {
-  maxBytes?: number;
-}
-
-const DEFAULT_MAX_BYTES = 512 * 1024;
-const TEST_COMMAND_RE =
-  /\b(npm|pnpm|yarn|bun)\s+(run\s+)?(test|vitest|jest)|\b(vitest|jest|mocha|pytest|cargo\s+test|go\s+test|rspec|playwright\s+test)\b/i;
+export type ParseTranscriptOptions = ReadTranscriptTailOptions;
 
 interface ToolMeta {
   name: string;
@@ -20,28 +14,11 @@ export async function parseTranscriptTail(
   transcriptPath: string | undefined,
   options: ParseTranscriptOptions = {}
 ): Promise<TranscriptSummary> {
-  if (!transcriptPath) {
+  const tail = await readTranscriptTail(transcriptPath, options);
+  if (!tail.pathReadable) {
     return emptySummary(false);
   }
-
-  try {
-    const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
-    const fileStat = await stat(transcriptPath);
-    const bytesRead = Math.min(fileStat.size, maxBytes);
-    const start = Math.max(0, fileStat.size - bytesRead);
-    const handle = await open(transcriptPath, "r");
-    try {
-      const buffer = Buffer.alloc(bytesRead);
-      await handle.read(buffer, 0, bytesRead, start);
-      const text = buffer.toString("utf8");
-      const lines = trimPartialFirstLine(text, start).split(/\r?\n/).filter(Boolean);
-      return parseTranscriptLines(lines, bytesRead);
-    } finally {
-      await handle.close();
-    }
-  } catch {
-    return emptySummary(false);
-  }
+  return parseTranscriptLines(tail.lines, tail.bytesRead);
 }
 
 export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLength(lines.join("\n"))): TranscriptSummary {
@@ -82,11 +59,11 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
       toolCalls += 1;
       if (toolUse.id) {
         toolById.set(toolUse.id, {
-          name: safeToolName(toolUse.name),
-          purpose: classifyToolPurpose(toolUse.name, toolUse.input)
+          name: safeToolName(toolUse.name, { basenameOnly: true }),
+          purpose: classifyToolPurpose(toolUse.name, toolUse.input, { basenameOnly: true })
         });
       }
-      if (isEditTool(toolUse.name)) {
+      if (isEditTool(toolUse.name, { basenameOnly: true })) {
         recentEditBeforeTest = true;
       }
     }
@@ -98,7 +75,9 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
       failedToolResults += 1;
       const meta =
         (toolResult.toolUseId ? toolById.get(toolResult.toolUseId) : undefined) ||
-        (toolResult.toolName ? { name: safeToolName(toolResult.toolName), purpose: undefined } : undefined) ||
+        (toolResult.toolName
+          ? { name: safeToolName(toolResult.toolName, { basenameOnly: true }), purpose: undefined }
+          : undefined) ||
         { name: "tool", purpose: undefined };
       const purpose = toolResult.purpose || meta.purpose;
       const key = `${meta.name}:${purpose || ""}`;
@@ -143,14 +122,6 @@ function emptySummary(pathReadable: boolean): TranscriptSummary {
     compactionEvents: 0,
     usage: {}
   };
-}
-
-function trimPartialFirstLine(text: string, start: number): string {
-  if (start === 0) {
-    return text;
-  }
-  const newline = text.indexOf("\n");
-  return newline === -1 ? "" : text.slice(newline + 1);
 }
 
 function extractToolUses(entry: Record<string, unknown>): Array<{ id?: string; name: string; input?: unknown }> {
@@ -225,37 +196,6 @@ function truthyError(value: Record<string, unknown>): boolean {
   }
   const exitCode = value.exit_code ?? value.exitCode;
   return typeof exitCode === "number" && exitCode !== 0;
-}
-
-function classifyToolPurpose(toolName: string, input: unknown): string | undefined {
-  if (safeToolName(toolName) !== "Bash") {
-    return undefined;
-  }
-  const command = stringField(asRecord(input)?.command);
-  if (command && TEST_COMMAND_RE.test(command)) {
-    return "tests";
-  }
-  return undefined;
-}
-
-function classifyResultPurpose(part: Record<string, unknown>): string | undefined {
-  const title = stringField(part.title) || stringField(part.summary);
-  if (title && /test/i.test(title)) {
-    return "tests";
-  }
-  return undefined;
-}
-
-function isEditTool(toolName: string): boolean {
-  return /^(Edit|MultiEdit|Write|NotebookEdit)$/u.test(safeToolName(toolName));
-}
-
-function safeToolName(toolName: string | undefined): string {
-  if (!toolName) {
-    return "tool";
-  }
-  const base = basename(toolName);
-  return /^[A-Za-z][A-Za-z0-9_-]{0,32}$/u.test(base) ? base : "tool";
 }
 
 function isCompactionEvent(entry: Record<string, unknown>): boolean {
