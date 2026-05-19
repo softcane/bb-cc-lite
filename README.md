@@ -8,8 +8,6 @@ Claude Code does not always fail loudly. Sometimes it loops, fills context, spen
 
 ![bb-cc-lite statusline examples](./assets/statusline-demo.gif)
 
-The demo above is generated from real `bb-cc-lite statusline` output.
-
 ## Install
 
 ```bash
