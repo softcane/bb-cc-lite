@@ -209,4 +209,59 @@ describe("optional Claude Code hooks", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("clears repeated hook failure findings after the same tool purpose succeeds", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-recovery-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      const sessionId = "session-alpha";
+      const sessionKey = hashValue(sessionId);
+      for (let count = 0; count < 3; count += 1) {
+        const event = parseHookPayload(
+          JSON.stringify({
+            session_id: sessionId,
+            hook_event_name: "PostToolUseFailure",
+            tool_name: "Bash",
+            tool_input: {
+              command: "npm test"
+            }
+          })
+        );
+        if (!event) {
+          throw new Error("expected hook event");
+        }
+        await recordHookEvent(event, storePath);
+      }
+
+      const success = parseHookPayload(
+        JSON.stringify({
+          session_id: sessionId,
+          hook_event_name: "PostToolUse",
+          tool_name: "Bash",
+          tool_input: {
+            command: "npm test"
+          }
+        })
+      );
+      if (!success) {
+        throw new Error("expected hook event");
+      }
+      await recordHookEvent(success, storePath);
+
+      const summary = await hookSummary(sessionKey, storePath);
+
+      expect(summary).toMatchObject({
+        failedToolResults: 3,
+        toolCalls: 4,
+        repeatedFailures: []
+      });
+      const decision = decide(input({ sessionId, contextPercent: 42 }), mergeHookSummary(transcript(), summary));
+      expect(decision).toMatchObject({
+        state: "Healthy",
+        reasonCode: "healthy"
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });

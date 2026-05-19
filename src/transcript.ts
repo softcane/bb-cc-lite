@@ -69,10 +69,6 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
     }
 
     for (const toolResult of extractToolResults(entry)) {
-      if (!toolResult.isError) {
-        continue;
-      }
-      failedToolResults += 1;
       const meta =
         (toolResult.toolUseId ? toolById.get(toolResult.toolUseId) : undefined) ||
         (toolResult.toolName
@@ -81,6 +77,11 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
         { name: "tool", purpose: undefined };
       const purpose = toolResult.purpose || meta.purpose;
       const key = `${meta.name}:${purpose || ""}`;
+      if (!toolResult.isError) {
+        failureCounts.delete(key);
+        continue;
+      }
+      failedToolResults += 1;
       const existing = failureCounts.get(key);
       failureCounts.set(key, {
         toolName: meta.name,

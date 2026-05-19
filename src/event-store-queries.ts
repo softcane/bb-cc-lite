@@ -31,7 +31,7 @@ export async function hookSummary(
       failedToolResults += 1;
       toolCalls += 1;
       const toolName = event.toolName || "tool";
-      const key = `${toolName}:${event.purpose || ""}`;
+      const key = failureKey(toolName, event.purpose);
       const existing = failures.get(key);
       failures.set(key, {
         toolName,
@@ -40,6 +40,7 @@ export async function hookSummary(
       });
     } else if (event.kind === "tool_success") {
       toolCalls += 1;
+      failures.delete(failureKey(event.toolName || "tool", event.purpose));
     } else if (event.kind === "tool_batch") {
       toolCalls += event.toolCount || 0;
     } else if (event.kind === "compaction") {
@@ -54,4 +55,8 @@ export async function hookSummary(
     repeatedFailures: [...failures.values()].filter((failure) => failure.count >= 2),
     latestTimestamp
   };
+}
+
+function failureKey(toolName: string, purpose?: string): string {
+  return `${toolName}:${purpose || ""}`;
 }

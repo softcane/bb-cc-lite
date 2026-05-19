@@ -55,6 +55,52 @@ describe("parseTranscriptLines", () => {
     });
     expectNoPrivacySentinels(summary);
   });
+
+  it("clears repeated failure findings after the same tool purpose succeeds", () => {
+    const lines = [
+      ...failedBashTestPair(1),
+      ...failedBashTestPair(2),
+      ...failedBashTestPair(3),
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:07.000Z",
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "bash-test-success",
+              name: "Bash",
+              input: {
+                command: "npm test"
+              }
+            }
+          ]
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:08.000Z",
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "bash-test-success",
+              is_error: false,
+              content: "tests passed"
+            }
+          ]
+        }
+      })
+    ];
+
+    const summary = parseTranscriptLines(lines);
+
+    expect(summary.failedToolResults).toBe(3);
+    expect(summary.toolCalls).toBe(4);
+    expect(summary.repeatedFailures).toEqual([]);
+  });
 });
 
 describe("parseTranscriptTail", () => {
@@ -87,3 +133,40 @@ describe("parseTranscriptTail", () => {
     });
   });
 });
+
+function failedBashTestPair(index: number): string[] {
+  return [
+    JSON.stringify({
+      timestamp: `2026-02-03T00:00:0${index}.000Z`,
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: `bash-test-${index}`,
+            name: "Bash",
+            input: {
+              command: "npm test"
+            }
+          }
+        ]
+      }
+    }),
+    JSON.stringify({
+      timestamp: `2026-02-03T00:00:1${index}.000Z`,
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: `bash-test-${index}`,
+            is_error: true,
+            content: "tests failed"
+          }
+        ]
+      }
+    })
+  ];
+}
