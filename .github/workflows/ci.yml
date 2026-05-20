@@ -5,15 +5,19 @@ on:
   push:
     branches:
       - main
-      - master
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     name: Node ${{ matrix.node-version }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     strategy:
       fail-fast: false
@@ -24,16 +28,21 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Audit dependency signatures
+        run: npm audit signatures
 
       - name: Typecheck
         run: npm run typecheck
@@ -56,20 +65,48 @@ jobs:
           tarball="$(find "$pack_dir" -name 'bb-cc-lite-*.tgz' -print -quit)"
           npx -y --package "$tarball" bb-cc-lite --help
 
-      - name: Smoke install, hooks, statusline, why, doctor, uninstall
+      - name: Prepare smoke sandbox
         shell: bash
         run: |
           set -euo pipefail
           qa_root="$(mktemp -d)"
           mkdir -p "$qa_root/project" "$qa_root/home" "$qa_root/app"
-          export BB_CC_LITE_HOME="$qa_root/app"
-          export BB_CC_LITE_STORE="$qa_root/app/events.json"
+          {
+            printf 'QA_ROOT=%s\n' "$qa_root"
+            printf 'BB_CC_LITE_HOME=%s\n' "$qa_root/app"
+            printf 'BB_CC_LITE_STORE=%s\n' "$qa_root/app/events.json"
+          } >> "$GITHUB_ENV"
 
-          node dist/cli.js install --scope local --project "$qa_root/project" --home "$qa_root/home" --hooks
+      - name: Smoke install
+        run: node dist/cli.js install --scope local --project "$QA_ROOT/project" --home "$QA_ROOT/home" --hooks
+
+      - name: Smoke hook ingestion first failure
+        shell: bash
+        run: |
+          set -euo pipefail
           printf '%s\n' '{"session_id":"ci-smoke","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"npm test"}}' | node dist/cli.js hook --bb-cc-lite-hook PostToolUseFailure
+
+      - name: Smoke hook ingestion repeated failure
+        shell: bash
+        run: |
+          set -euo pipefail
           printf '%s\n' '{"session_id":"ci-smoke","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"npm test"}}' | node dist/cli.js hook --bb-cc-lite-hook PostToolUseFailure
+
+      - name: Smoke statusline
+        shell: bash
+        run: |
+          set -euo pipefail
           printf '%s\n' '{"session_id":"ci-smoke","model":{"id":"claude-sonnet-4-5"},"terminal_width":140}' | node dist/cli.js statusline
-          node dist/cli.js why --session ci-smoke
-          node dist/cli.js doctor --scope local --project "$qa_root/project" --home "$qa_root/home"
-          node dist/cli.js uninstall --scope local --project "$qa_root/project" --home "$qa_root/home"
-          test ! -e "$qa_root/project/.claude/settings.local.json"
+
+      - name: Smoke why
+        run: node dist/cli.js why --session ci-smoke
+
+      - name: Smoke doctor
+        run: node dist/cli.js doctor --scope local --project "$QA_ROOT/project" --home "$QA_ROOT/home"
+
+      - name: Smoke uninstall
+        run: node dist/cli.js uninstall --scope local --project "$QA_ROOT/project" --home "$QA_ROOT/home"
+
+      - name: Verify smoke uninstall cleanup
+        shell: bash
+        run: test ! -e "$QA_ROOT/project/.claude/settings.local.json"

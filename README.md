@@ -19,7 +19,13 @@ bb-cc-lite install --scope local --hooks
 
 Restart Claude Code in the project. The status line appears at the bottom.
 
-Install replaces the current Claude Code `statusLine` and saves a backup for uninstall. `--hooks` is optional, but gives faster loop detection.
+Install preserves an existing Claude Code `statusLine` unless you pass `--replace`. `--hooks` is optional, but gives faster loop detection.
+
+To replace an existing status line:
+
+```bash
+bb-cc-lite install --scope local --replace --hooks
+```
 
 Prefer not to install globally? Prefix commands with `npx --yes bb-cc-lite`.
 
@@ -54,6 +60,15 @@ bb-cc-lite uninstall --scope local
 By default, install builds a small local baseline from your Claude Code history. It helps the line tell the difference between normal research, recoverable failures, and patterns that usually waste time for you.
 
 Hard `Stop` rules still win. The baseline only changes wording, priority, and confidence.
+
+Default learning bounds:
+
+| Setting | Default |
+|---|---:|
+| Max transcript files | 1,500 |
+| Max bytes per transcript | 1 MiB |
+| Scan budget | 30 seconds |
+| Recent window | newest 100 sessions |
 
 Skip it:
 

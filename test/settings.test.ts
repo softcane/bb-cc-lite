@@ -114,7 +114,32 @@ describe("settings install and uninstall", () => {
     );
   });
 
-  it("replaces a custom statusLine by default and backs it up", async () => {
+  it("preserves a custom statusLine by default and asks for --replace", async () => {
+    const dirs = mustHaveWorkspace(workspace);
+    const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
+    const existing = {
+      cleanupPeriodDays: 7,
+      statusLine: {
+        type: "command",
+        command: "custom-bb-cc-lite-wrapper"
+      }
+    };
+    await writeJson(target.settingsPath, existing);
+
+    const refused = await installStatusLine({
+      projectDir: dirs.projectDir,
+      homeDir: dirs.homeDir,
+      cliFilePath: await createFakeRuntime(dirs.root)
+    });
+
+    expect(refused.status).toBe("refused");
+    expect(refused.backupId).toBeUndefined();
+    expect(refused.message).toContain("pass --replace");
+    await expect(readJson(target.settingsPath)).resolves.toEqual(existing);
+    await expect(pathExists(join(dirs.appHome, "bin", "statusline"))).resolves.toBe(false);
+  });
+
+  it("replaces a custom statusLine with --replace and backs it up", async () => {
     const dirs = mustHaveWorkspace(workspace);
     const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
     const existing = {
@@ -129,6 +154,7 @@ describe("settings install and uninstall", () => {
     const replaced = await installStatusLine({
       projectDir: dirs.projectDir,
       homeDir: dirs.homeDir,
+      replace: true,
       cliFilePath: await createFakeRuntime(dirs.root)
     });
     const settings = await readJson<{ cleanupPeriodDays: number; statusLine: { command: string } }>(target.settingsPath);
@@ -162,6 +188,7 @@ describe("settings install and uninstall", () => {
     const result = await installStatusLine({
       projectDir: dirs.projectDir,
       homeDir: dirs.homeDir,
+      replace: true,
       cliFilePath: await createFakeRuntime(dirs.root)
     });
 

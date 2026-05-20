@@ -32,7 +32,7 @@ export interface UninstallOptions {
 }
 
 export interface InstallResult {
-  status: "installed" | "updated";
+  status: "installed" | "updated" | "refused";
   target: SettingsTarget;
   message: string;
   command?: string;
@@ -105,6 +105,14 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
   const targetRead = await readSettings(target.settingsPath);
   const existing = targetRead.settings.statusLine;
   const existingHooks = targetRead.settings.hooks;
+
+  if (existing && !isBbStatusLine(existing) && !options.replace) {
+    return {
+      status: "refused",
+      target,
+      message: `Existing Claude statusLine found in ${describeSettingsTarget(target)}; pass --replace to replace it with bb-cc-lite.`
+    };
+  }
 
   const launchers = await ensureRuntimeLaunchers(options.cliFilePath || cliPath(), target.homeDir);
   const statusLine = {

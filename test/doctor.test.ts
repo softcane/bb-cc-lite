@@ -129,7 +129,7 @@ describe("doctor", () => {
         transcriptFilesScanned: 4,
         sessionsSeen: 3,
         malformedLines: 1,
-        maxBytesPerTranscript: 524288
+        maxBytesPerTranscript: 1048576
       },
       privacy: {
         rawPromptsStored: false,

@@ -18,8 +18,8 @@ import {
 import { readTranscriptTail } from "./transcript-reader.js";
 import type { DecisionPersonalBaseline, FailureEpisodeSummary } from "./types.js";
 
-const DEFAULT_MAX_FILES = 500;
-const DEFAULT_MAX_BYTES_PER_TRANSCRIPT = 512 * 1024;
+const DEFAULT_MAX_FILES = 1500;
+const DEFAULT_MAX_BYTES_PER_TRANSCRIPT = 1024 * 1024;
 const DEFAULT_HOLDOUT_RATIO = 0.2;
 
 export interface HistoricalReplayOptions {
