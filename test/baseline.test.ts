@@ -583,6 +583,45 @@ describe("personal baseline builder", () => {
     }
   });
 
+  it("does not count MCP results with validation-like titles as Bash validation baseline data", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-mcp-purpose-"));
+    try {
+      const claudeProjectsDir = join(tempDir, ".claude", "projects");
+      const projectDir = join(claudeProjectsDir, "project");
+      await mkdir(projectDir, { recursive: true });
+      const rawMcpName = "mcp__privateServer__testRunner";
+
+      await writeJsonl(join(projectDir, "mcp-title.jsonl"), [
+        toolUse("mcp-fail", rawMcpName, { query: "private" }),
+        toolResultWithTitle("mcp-fail", true, "tests failed", "mcp failed"),
+        toolUse("mcp-pass", rawMcpName, { query: "private" }),
+        toolResultWithTitle("mcp-pass", false, "tests passed", "mcp passed")
+      ]);
+
+      const result = await buildBaseline({
+        claudeProjectsDir,
+        appHomePath: join(tempDir, "app-home"),
+        now: new Date("2026-05-19T10:00:00.000Z")
+      });
+
+      expect(result.baseline.validation?.tests).toMatchObject({
+        calls: 0,
+        failures: 0,
+        recovered: 0,
+        unrecovered: 0
+      });
+      expect(result.baseline.toolCategories?.MCP).toMatchObject({
+        calls: 2,
+        failures: 1,
+        recovered: 1,
+        unrecovered: 0
+      });
+      expect(JSON.stringify(result.baseline)).not.toContain(rawMcpName);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("learns weak outcome aggregates without storing raw private transcript data", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-builder-"));
     try {
@@ -818,6 +857,24 @@ function toolResult(toolUseId: string, isError: boolean, content: string): unkno
           type: "tool_result",
           tool_use_id: toolUseId,
           is_error: isError,
+          content
+        }
+      ]
+    }
+  };
+}
+
+function toolResultWithTitle(toolUseId: string, isError: boolean, title: string, content: string): unknown {
+  return {
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: toolUseId,
+          is_error: isError,
+          title,
           content
         }
       ]

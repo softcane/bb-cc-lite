@@ -315,9 +315,9 @@ function summarizeSession(lines: string[]): SessionCounters {
     for (const toolResult of extractToolResults(entry)) {
       const meta = resolveMeta(toolResult, toolById);
       const key = failureKey(meta);
-      const validationCategory = validationCategoryForPurpose(meta.purpose);
+      const validationCategory = meta.name === "Bash" ? validationCategoryForPurpose(meta.purpose) : undefined;
       const toolCategory = safeToolCategory(meta);
-      const isValidation = meta.name === "Bash" && validationCategory !== undefined;
+      const isValidation = validationCategory !== undefined;
       toolResultStep += 1;
       session.toolResults += 1;
       if (toolCategory) {
@@ -476,9 +476,10 @@ function resolveMeta(
 ): ToolMeta {
   const byId = toolResult.toolUseId ? toolById.get(toolResult.toolUseId) : undefined;
   if (byId) {
-    return { ...byId, purpose: toolResult.purpose || byId.purpose };
+    return { ...byId, purpose: byId.name === "Bash" ? toolResult.purpose || byId.purpose : byId.purpose };
   }
-  return { ...metaFromToolName(toolResult.toolName, undefined), purpose: toolResult.purpose };
+  const meta = metaFromToolName(toolResult.toolName, undefined);
+  return { ...meta, purpose: meta.name === "Bash" ? toolResult.purpose : meta.purpose };
 }
 
 function isValidationPurpose(purpose: string | undefined): boolean {

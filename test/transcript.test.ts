@@ -446,6 +446,16 @@ describe("parseTranscriptLines", () => {
     expectNoPrivacySentinels(summary);
   });
 
+  it("does not attach Bash validation purpose labels to MCP results with validation-like titles", () => {
+    const rawMcpName = "mcp__privateServer__testRunner";
+    const summary = parseTranscriptLines(mcpToolPairs(rawMcpName, [true, true], 0, "tests failed"));
+
+    expect(summary.repeatedFailures).toEqual([
+      { toolName: "MCP tool", category: "MCP", identityHash: expect.any(String), count: 2 }
+    ]);
+    expect(JSON.stringify(summary)).not.toContain(rawMcpName);
+  });
+
   it("stops after the same MCP tool fails three times without exposing the raw name", () => {
     const rawMcpName = "mcp__privateServer__failingLookup";
     const decision = decide(input({ contextPercent: 42 }), parseTranscriptLines(mcpToolPairs(rawMcpName, [true, true, true])));
@@ -572,7 +582,7 @@ function failedBashCommandPair(index: number, command: string): string[] {
   ];
 }
 
-function mcpToolPairs(rawName: string, results: boolean[], offset = 0): string[] {
+function mcpToolPairs(rawName: string, results: boolean[], offset = 0, title?: string): string[] {
   return results.flatMap((isError, index) => {
     const id = `mcp-${offset + index}`;
     return [
@@ -603,6 +613,7 @@ function mcpToolPairs(rawName: string, results: boolean[], offset = 0): string[]
               type: "tool_result",
               tool_use_id: id,
               is_error: isError,
+              title,
               content: isError ? privacySentinels[1] : "safe derived success"
             }
           ]

@@ -110,7 +110,7 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
           ? metaFromToolName(toolResult.toolName)
           : undefined) ||
         { name: "tool", purpose: undefined, isEdit: false, isReadSearch: false };
-      const purpose = toolResult.purpose || meta.purpose;
+      const purpose = meta.name === "Bash" ? toolResult.purpose || meta.purpose : meta.purpose;
       const key = failureKey(meta, purpose);
       const isValidation = meta.name === "Bash" && isValidationPurpose(purpose);
       if (!toolResult.isError) {
