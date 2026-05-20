@@ -62,7 +62,7 @@ describe("CLI behavior characterization", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain("Installed bb-cc-lite statusLine");
-      expect(result.stdout).toContain("Skipped personal baseline learning because --no-learn was passed.");
+      expect(result.stdout).toContain("Personal baseline skipped (--no-learn).");
       await expect(pathExists(join(workspace.appHome, "baseline.json"))).resolves.toBe(false);
     } finally {
       await removeTempWorkspace(workspace);
@@ -82,12 +82,10 @@ describe("CLI behavior characterization", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
-      expect(result.stdout).toContain("personalizes the statusline from your past Claude sessions by default");
-      expect(result.stdout).toContain("It reads local Claude JSONL once.");
-      expect(result.stdout).toContain("Built personal baseline from 1 sessions.");
-      expect(result.stdout).toContain(
-        "No prompts, assistant text, commands, command args, outputs, paths, file contents, transcript paths, workspace paths, raw session ids, or per-session rows were stored."
-      );
+      expect(result.stdout).toContain("Installed bb-cc-lite statusLine");
+      expect(result.stdout).toContain("Personal baseline ready (1 sessions).");
+      expect(result.stdout).not.toContain("It reads local Claude JSONL once.");
+      expect(result.stdout).not.toContain("No prompts, assistant text");
 
       const baselinePath = join(workspace.appHome, "baseline.json");
       await expect(pathExists(baselinePath)).resolves.toBe(true);
@@ -121,7 +119,7 @@ describe("CLI behavior characterization", () => {
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain("Replaced existing Claude statusLine with bb-cc-lite");
       expect(result.stdout).toContain("Previous settings were backed up.");
-      expect(result.stdout).toContain("Built personal baseline from 1 sessions.");
+      expect(result.stdout).toContain("Personal baseline ready (1 sessions).");
       const settings = JSON.parse(await readFile(settingsPath, "utf8")) as { statusLine?: { command?: string } };
       expect(settings.statusLine?.command).toContain(join(workspace.appHome, "bin", "statusline"));
       await expect(pathExists(join(workspace.appHome, "baseline.json"))).resolves.toBe(true);

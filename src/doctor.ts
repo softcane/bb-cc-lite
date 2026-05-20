@@ -38,14 +38,6 @@ export interface PersonalBaselineResult {
   message: string;
 }
 
-export const PERSONAL_BASELINE_DISCLOSURE = `bb-cc-lite personalizes the statusline from your past Claude sessions by default.
-
-It reads local Claude JSONL once.
-It stores only counts, rates, weak outcome labels, pattern labels, recovery aggregates, and coarse categories.
-It does not store prompts, assistant text, commands, command args, tool output, paths, file contents, transcript paths, workspace paths, raw session ids, or per-session rows.
-
-Use --no-learn to skip this.`;
-
 export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
   checks.push(checkNodeVersion());
@@ -189,11 +181,7 @@ export async function clearPersonalBaseline(
 
 function formatBuiltBaselineMessage(value: unknown): string {
   const sessionsSeen = sessionsSeenFrom(value);
-  return [
-    `Built personal baseline from ${sessionsSeen} sessions.`,
-    "Stored only counts, rates, weak outcome labels, pattern labels, recovery aggregates, and coarse categories.",
-    "No prompts, assistant text, commands, command args, outputs, paths, file contents, transcript paths, workspace paths, raw session ids, or per-session rows were stored."
-  ].join("\n");
+  return `Personal baseline ready (${sessionsSeen} sessions).`;
 }
 
 function formatBaselineSummaryMessage(value: unknown, summary?: unknown): string {

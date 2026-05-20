@@ -3,7 +3,6 @@ import {
   buildPersonalBaseline,
   clearPersonalBaseline,
   formatDoctorChecks,
-  PERSONAL_BASELINE_DISCLOSURE,
   runDoctor
 } from "./doctor.js";
 import { parseHookPayload } from "./hook-payload.js";
@@ -69,14 +68,10 @@ async function commandInstall(args: ParsedArgs): Promise<void> {
     homeDir: stringFlag(args, "home")
   });
   console.log(result.message);
-  if (result.command) {
-    console.log(`Command: ${result.command}`);
-  }
   if (!shouldLearn) {
-    console.log("Skipped personal baseline learning because --no-learn was passed.");
+    console.log("Personal baseline skipped (--no-learn).");
     return;
   }
-  console.log(PERSONAL_BASELINE_DISCLOSURE);
   const baseline = await buildPersonalBaseline({ homeDir: stringFlag(args, "home") });
   console.log(baseline.message);
 }
@@ -204,10 +199,9 @@ Usage:
   bb-cc-lite uninstall [--scope local|project|user] [--force]
 
 Learning:
-  install builds a local personal baseline from Claude JSONL by default.
+  install builds a small local baseline by default.
   install replaces an existing Claude statusLine and backs it up for uninstall.
-  learning scans newest eligible JSONL first with capped 512 KiB tails and bounded reads.
-  --no-learn skips that scan.
+  --no-learn skips baseline creation.
   doctor --baseline shows a safe aggregate summary, including recent and validation categories.
   doctor --build-baseline refreshes the baseline.
   doctor --clear-baseline and unlearn remove only the baseline.
