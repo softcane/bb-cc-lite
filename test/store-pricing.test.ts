@@ -32,6 +32,7 @@ function transcript(overrides: Partial<TranscriptSummary> = {}): TranscriptSumma
     hasUnvalidatedEdits: false,
     validationRecovered: false,
     compactionEvents: 0,
+    postCompactionActivity: 0,
     usage: {},
     ...overrides
   };

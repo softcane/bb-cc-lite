@@ -163,7 +163,7 @@ export function decide(
     });
   }
 
-  if (transcript.compactionEvents > 0) {
+  if (hasOpenCompactionBoundary(transcript)) {
     return baseDecision({
       state: "Careful",
       reasonCode: "compaction_boundary",
@@ -202,7 +202,7 @@ export function decide(
     });
   }
 
-  if (cacheWritesHigh(usage)) {
+  if (cacheWritesHigh(cacheRiskUsage(input.usage, transcript))) {
     return baseDecision({
       state: "Careful",
       reasonCode: "cache_writes_high",
@@ -375,6 +375,27 @@ function cacheWritesHigh(usage: TokenUsage): boolean {
   return writes >= 10_000 && reads < writes * 0.2;
 }
 
+function cacheRiskUsage(inputUsage: TokenUsage, transcript: TranscriptSummary): TokenUsage {
+  if (hasCacheUsage(inputUsage)) {
+    return inputUsage;
+  }
+  return hasFreshTranscriptCacheUsage(transcript) ? transcript.latestUsage || {} : {};
+}
+
+function hasFreshTranscriptCacheUsage(transcript: TranscriptSummary): boolean {
+  if (!transcript.latestUsage || !hasCacheUsage(transcript.latestUsage)) {
+    return false;
+  }
+  if (!transcript.latestTimestamp || !transcript.latestUsageTimestamp) {
+    return true;
+  }
+  return transcript.latestUsageTimestamp >= transcript.latestTimestamp;
+}
+
+function hasCacheUsage(usage: TokenUsage): boolean {
+  return usage.cacheCreationInputTokens !== undefined || usage.cacheReadInputTokens !== undefined;
+}
+
 function cacheWarm(usage: TokenUsage): boolean {
   const reads = usage.cacheReadInputTokens || 0;
   const writes = usage.cacheCreationInputTokens || 0;
@@ -389,6 +410,10 @@ function isReadHeavyCurrentSession(transcript: TranscriptSummary): boolean {
     transcript.failedToolResults === 0 &&
     !transcript.hasUnvalidatedEdits
   );
+}
+
+function hasOpenCompactionBoundary(transcript: TranscriptSummary): boolean {
+  return transcript.compactionEvents > 0 && transcript.postCompactionActivity === 0;
 }
 
 function supportsReadHeavyHealthy(baseline: DecisionPersonalBaseline | undefined): boolean {

@@ -14,8 +14,10 @@ export async function hookSummary(
   failedToolResults: number;
   toolCalls: number;
   compactionEvents: number;
+  postCompactionActivity: number;
   repeatedFailures: ToolFailureSummary[];
   latestTimestamp?: string;
+  latestCompactionTimestamp?: string;
 }> {
   const store = await readStore(storePath);
   const events = store.hookEvents.filter((event) => !sessionKey || event.sessionKey === sessionKey);
@@ -23,10 +25,13 @@ export async function hookSummary(
   let failedToolResults = 0;
   let toolCalls = 0;
   let compactionEvents = 0;
+  let postCompactionActivity = 0;
   let latestTimestamp: string | undefined;
+  let latestCompactionTimestamp: string | undefined;
 
   for (const event of events) {
     latestTimestamp = !latestTimestamp || event.timestamp > latestTimestamp ? event.timestamp : latestTimestamp;
+    const isCompaction = event.kind === "compaction";
     if (event.kind === "tool_failure") {
       failedToolResults += 1;
       toolCalls += 1;
@@ -43,8 +48,13 @@ export async function hookSummary(
       failures.delete(failureKey(event.toolName || "tool", event.purpose));
     } else if (event.kind === "tool_batch") {
       toolCalls += event.toolCount || 0;
-    } else if (event.kind === "compaction") {
+    } else if (isCompaction) {
       compactionEvents += 1;
+      postCompactionActivity = 0;
+      latestCompactionTimestamp = event.timestamp;
+    }
+    if (!isCompaction && compactionEvents > 0) {
+      postCompactionActivity += 1;
     }
   }
 
@@ -52,8 +62,10 @@ export async function hookSummary(
     failedToolResults,
     toolCalls,
     compactionEvents,
+    postCompactionActivity,
     repeatedFailures: [...failures.values()].filter((failure) => failure.count >= 2),
-    latestTimestamp
+    latestTimestamp,
+    latestCompactionTimestamp
   };
 }
 

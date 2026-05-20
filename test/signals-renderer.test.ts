@@ -28,6 +28,7 @@ function transcript(overrides: Partial<TranscriptSummary> = {}): TranscriptSumma
     hasUnvalidatedEdits: false,
     validationRecovered: false,
     compactionEvents: 0,
+    postCompactionActivity: 0,
     usage: {},
     ...overrides
   };
@@ -394,6 +395,12 @@ describe("signals and renderer", () => {
       action: "ask Claude to restate current goal and next 3 steps"
     });
 
+    const completedCompaction = decide(input(), transcript({ compactionEvents: 1, postCompactionActivity: 1 }));
+    expect(completedCompaction).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy"
+    });
+
     const cacheRisk = decide(
       input({
         usage: {
@@ -407,6 +414,46 @@ describe("signals and renderer", () => {
       state: "Careful",
       reasonCode: "cache_writes_high",
       primaryEvidence: "cache writes high"
+    });
+
+    const currentTranscriptCacheRisk = decide(
+      input(),
+      transcript({
+        usage: {
+          cacheCreationInputTokens: 50_000,
+          cacheReadInputTokens: 100
+        },
+        latestUsage: {
+          cacheCreationInputTokens: 50_000,
+          cacheReadInputTokens: 100
+        },
+        latestUsageTimestamp: "2026-02-03T00:00:01.000Z",
+        latestTimestamp: "2026-02-03T00:00:01.000Z"
+      })
+    );
+    expect(currentTranscriptCacheRisk).toMatchObject({
+      state: "Careful",
+      reasonCode: "cache_writes_high"
+    });
+
+    const staleTranscriptCacheRisk = decide(
+      input(),
+      transcript({
+        usage: {
+          cacheCreationInputTokens: 50_000,
+          cacheReadInputTokens: 100
+        },
+        latestUsage: {
+          cacheCreationInputTokens: 50_000,
+          cacheReadInputTokens: 100
+        },
+        latestUsageTimestamp: "2026-02-03T00:00:01.000Z",
+        latestTimestamp: "2026-02-03T00:00:02.000Z"
+      })
+    );
+    expect(staleTranscriptCacheRisk).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy"
     });
   });
 

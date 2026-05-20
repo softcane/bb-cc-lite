@@ -38,6 +38,7 @@ function transcript(overrides: Partial<TranscriptSummary> = {}): TranscriptSumma
     hasUnvalidatedEdits: false,
     validationRecovered: false,
     compactionEvents: 0,
+    postCompactionActivity: 0,
     usage: {},
     ...overrides
   };
@@ -260,6 +261,114 @@ describe("optional Claude Code hooks", () => {
       });
       const decision = decide(input({ sessionId, contextPercent: 42 }), mergeHookSummary(transcript(), summary));
       expect(decision).toMatchObject({
+        state: "Healthy",
+        reasonCode: "healthy"
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("clears hook compaction when the transcript has later activity", () => {
+    const summary = mergeHookSummary(
+      transcript({
+        latestTimestamp: "2026-02-03T00:00:02.000Z"
+      }),
+      {
+        failedToolResults: 0,
+        toolCalls: 0,
+        compactionEvents: 1,
+        postCompactionActivity: 0,
+        repeatedFailures: [],
+        latestTimestamp: "2026-02-03T00:00:01.000Z",
+        latestCompactionTimestamp: "2026-02-03T00:00:01.000Z"
+      }
+    );
+
+    expect(summary).toMatchObject({
+      compactionEvents: 1,
+      postCompactionActivity: 1
+    });
+    expect(decide(input(), summary)).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy"
+    });
+  });
+
+  it("keeps a newer transcript compaction open despite older hook activity", () => {
+    const summary = mergeHookSummary(
+      transcript({
+        compactionEvents: 1,
+        postCompactionActivity: 0,
+        latestTimestamp: "2026-02-03T00:00:03.000Z",
+        latestCompactionTimestamp: "2026-02-03T00:00:03.000Z"
+      }),
+      {
+        failedToolResults: 0,
+        toolCalls: 1,
+        compactionEvents: 1,
+        postCompactionActivity: 1,
+        repeatedFailures: [],
+        latestTimestamp: "2026-02-03T00:00:02.000Z",
+        latestCompactionTimestamp: "2026-02-03T00:00:01.000Z"
+      }
+    );
+
+    expect(summary).toMatchObject({
+      compactionEvents: 1,
+      postCompactionActivity: 0
+    });
+    expect(decide(input(), summary)).toMatchObject({
+      state: "Careful",
+      reasonCode: "compaction_boundary"
+    });
+  });
+
+  it("clears hook-derived compaction warning after later hook activity", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-compaction-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      const sessionId = "session-alpha";
+      const sessionKey = hashValue(sessionId);
+      const compact = parseHookPayload(
+        JSON.stringify({
+          session_id: sessionId,
+          hook_event_name: "PostCompact"
+        })
+      );
+      if (!compact) {
+        throw new Error("expected compact event");
+      }
+      await recordHookEvent(compact, storePath);
+
+      const openBoundarySummary = await hookSummary(sessionKey, storePath);
+      expect(openBoundarySummary).toMatchObject({
+        compactionEvents: 1,
+        postCompactionActivity: 0
+      });
+      expect(decide(input({ sessionId }), mergeHookSummary(transcript(), openBoundarySummary))).toMatchObject({
+        state: "Careful",
+        reasonCode: "compaction_boundary"
+      });
+
+      const success = parseHookPayload(
+        JSON.stringify({
+          session_id: sessionId,
+          hook_event_name: "PostToolUse",
+          tool_name: "Read"
+        })
+      );
+      if (!success) {
+        throw new Error("expected tool event");
+      }
+      await recordHookEvent(success, storePath);
+
+      const completedSummary = await hookSummary(sessionKey, storePath);
+      expect(completedSummary).toMatchObject({
+        compactionEvents: 1,
+        postCompactionActivity: 1
+      });
+      expect(decide(input({ sessionId }), mergeHookSummary(transcript(), completedSummary))).toMatchObject({
         state: "Healthy",
         reasonCode: "healthy"
       });

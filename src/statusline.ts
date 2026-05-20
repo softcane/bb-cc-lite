@@ -13,6 +13,7 @@ const EMPTY_HOOK_SUMMARY = {
   failedToolResults: 0,
   toolCalls: 0,
   compactionEvents: 0,
+  postCompactionActivity: 0,
   repeatedFailures: []
 };
 

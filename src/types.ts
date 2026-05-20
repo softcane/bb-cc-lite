@@ -50,8 +50,12 @@ export interface TranscriptSummary {
   unvalidatedEditToolSteps?: number;
   validationRecovered: boolean;
   compactionEvents: number;
+  postCompactionActivity: number;
   usage: TokenUsage;
+  latestUsage?: TokenUsage;
+  latestUsageTimestamp?: string;
   latestTimestamp?: string;
+  latestCompactionTimestamp?: string;
 }
 
 export type HookEventKind = "tool_success" | "tool_failure" | "tool_batch" | "compaction" | "stop" | "session_end";

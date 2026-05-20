@@ -160,6 +160,76 @@ describe("parseTranscriptLines", () => {
     expectNoPrivacySentinels(checked);
   });
 
+  it("treats successful lint, typecheck, and build commands as edit validation", () => {
+    for (const command of ["npm run lint", "npm run typecheck", "npm run build"]) {
+      const summary = parseTranscriptLines([
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "tool_use", id: "edit-1", name: "Edit", input: { file_path: "/secret/path.ts" } }]
+          }
+        }),
+        JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "edit-1", is_error: false, content: "edited private file" }]
+          }
+        }),
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "tool_use", id: "check-1", name: "Bash", input: { command } }]
+          }
+        }),
+        JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "check-1", is_error: false, content: "validation passed" }]
+          }
+        })
+      ]);
+
+      expect(summary.hasUnvalidatedEdits, command).toBe(false);
+      expectNoPrivacySentinels(summary);
+    }
+  });
+
+  it("tracks latest usage separately from max usage across the transcript tail", () => {
+    const summary = parseTranscriptLines([
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:01.000Z",
+        type: "assistant",
+        usage: {
+          cache_creation_input_tokens: 50_000,
+          cache_read_input_tokens: 100
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:02.000Z",
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "later normal activity" }]
+        }
+      })
+    ]);
+
+    expect(summary.usage).toMatchObject({
+      cacheCreationInputTokens: 50_000,
+      cacheReadInputTokens: 100
+    });
+    expect(summary.latestUsage).toMatchObject({
+      cacheCreationInputTokens: 50_000,
+      cacheReadInputTokens: 100
+    });
+    expect(summary.latestUsageTimestamp).toBe("2026-02-03T00:00:01.000Z");
+    expect(summary.latestTimestamp).toBe("2026-02-03T00:00:02.000Z");
+  });
+
   it("tracks safe tool-step lag after an unvalidated edit", () => {
     const summary = parseTranscriptLines([
       JSON.stringify({
@@ -234,6 +304,35 @@ describe("parseTranscriptLines", () => {
 
     expect(summary.validationRecovered).toBe(true);
     expect(summary.repeatedFailures).toEqual([]);
+  });
+
+  it("keeps compaction as an open boundary only until later activity appears", () => {
+    const summary = parseTranscriptLines([
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:01.000Z",
+        type: "PostCompact"
+      }),
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:02.000Z",
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "read-1", name: "Read", input: { file_path: "/secret/path.ts" } }]
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:03.000Z",
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "read-1", is_error: false, content: "private content" }]
+        }
+      })
+    ]);
+
+    expect(summary.compactionEvents).toBe(1);
+    expect(summary.postCompactionActivity).toBe(2);
+    expectNoPrivacySentinels(summary);
   });
 
   it("clears stale edit-test loop failures after validation recovers", () => {

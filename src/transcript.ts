@@ -37,8 +37,12 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
   let failedToolResults = 0;
   let malformedLines = 0;
   let compactionEvents = 0;
+  let postCompactionActivity = 0;
   let usage: TokenUsage = {};
+  let latestUsage: TokenUsage | undefined;
+  let latestUsageTimestamp: string | undefined;
   let latestTimestamp: string | undefined;
+  let latestCompactionTimestamp: string | undefined;
 
   for (const line of lines) {
     let parsed: unknown;
@@ -55,14 +59,26 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
       continue;
     }
 
-    latestTimestamp = stringField(entry.timestamp) || latestTimestamp;
-    usage = mergeUsage(usage, extractUsage(entry), extractUsage(asRecord(entry.message)));
+    const entryTimestamp = stringField(entry.timestamp);
+    latestTimestamp = entryTimestamp || latestTimestamp;
+    const entryUsage = mergeUsage(extractUsage(entry), extractUsage(asRecord(entry.message)));
+    usage = mergeUsage(usage, entryUsage);
+    if (hasUsage(entryUsage)) {
+      latestUsage = entryUsage;
+      latestUsageTimestamp = entryTimestamp || latestUsageTimestamp;
+    }
+    const toolUses = extractToolUses(entry);
+    const toolResults = extractToolResults(entry);
 
     if (isCompactionEvent(entry)) {
       compactionEvents += 1;
+      postCompactionActivity = 0;
+      latestCompactionTimestamp = entryTimestamp || latestCompactionTimestamp;
+    } else if (compactionEvents > 0 && isPostCompactionActivity(entry, toolUses, toolResults)) {
+      postCompactionActivity += 1;
     }
 
-    for (const toolUse of extractToolUses(entry)) {
+    for (const toolUse of toolUses) {
       toolCalls += 1;
       if (isReadLikeTool(toolUse.name)) {
         readToolCalls += 1;
@@ -80,7 +96,7 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
       }
     }
 
-    for (const toolResult of extractToolResults(entry)) {
+    for (const toolResult of toolResults) {
       toolResultStep += 1;
       const meta =
         (toolResult.toolUseId ? toolById.get(toolResult.toolUseId) : undefined) ||
@@ -90,12 +106,13 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
         { name: "tool", purpose: undefined, isEdit: false };
       const purpose = toolResult.purpose || meta.purpose;
       const key = `${meta.name}:${purpose || ""}`;
+      const isValidation = meta.name === "Bash" && isValidationPurpose(purpose);
       if (!toolResult.isError) {
         failureCounts.delete(key);
         if (meta.isEdit) {
           hasUnvalidatedEdits = true;
           unvalidatedEditStep = toolResultStep;
-        } else if (meta.name === "Bash" && purpose === "tests") {
+        } else if (isValidation) {
           if (validationFailedSinceSuccess) {
             validationRecovered = true;
           }
@@ -118,7 +135,7 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
         editTestLoopFailures += 1;
         recentEditBeforeTest = false;
       }
-      if (meta.name === "Bash" && purpose === "tests") {
+      if (isValidation) {
         validationFailedSinceSuccess = true;
       }
     }
@@ -139,8 +156,12 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
       hasUnvalidatedEdits && unvalidatedEditStep !== undefined ? toolResultStep - unvalidatedEditStep : undefined,
     validationRecovered,
     compactionEvents,
+    postCompactionActivity,
     usage,
-    latestTimestamp
+    latestUsage,
+    latestUsageTimestamp,
+    latestTimestamp,
+    latestCompactionTimestamp
   };
 }
 
@@ -158,12 +179,27 @@ function emptySummary(pathReadable: boolean): TranscriptSummary {
     hasUnvalidatedEdits: false,
     validationRecovered: false,
     compactionEvents: 0,
+    postCompactionActivity: 0,
     usage: {}
   };
 }
 
 function isReadLikeTool(toolName: string): boolean {
   return /^(Read|Grep|Glob|LS|WebFetch|WebSearch)$/u.test(safeToolName(toolName, { basenameOnly: true }));
+}
+
+function isValidationPurpose(purpose: string | undefined): boolean {
+  return purpose === "tests" || purpose === "lint" || purpose === "typecheck" || purpose === "build";
+}
+
+function hasUsage(usage: TokenUsage): boolean {
+  return (
+    usage.inputTokens !== undefined ||
+    usage.outputTokens !== undefined ||
+    usage.cacheCreationInputTokens !== undefined ||
+    usage.cacheReadInputTokens !== undefined ||
+    usage.totalTokens !== undefined
+  );
 }
 
 function extractToolUses(entry: Record<string, unknown>): Array<{ id?: string; name: string; input?: unknown }> {
@@ -249,4 +285,27 @@ function isCompactionEvent(entry: Record<string, unknown>): boolean {
   const role = stringField(message?.role) || stringField(entry.role);
   const content = typeof entry.content === "string" ? entry.content : typeof message?.content === "string" ? message.content : "";
   return role === "system" && /\b(compact|compaction)\b/i.test(content);
+}
+
+function isPostCompactionActivity(
+  entry: Record<string, unknown>,
+  toolUses: Array<{ id?: string; name: string; input?: unknown }>,
+  toolResults: Array<{ toolUseId?: string; toolName?: string; isError: boolean; purpose?: string }>
+): boolean {
+  if (toolUses.length > 0 || toolResults.length > 0) {
+    return true;
+  }
+  const message = asRecord(entry.message);
+  const role = stringField(message?.role) || stringField(entry.role);
+  return (role === "assistant" || role === "user") && hasContent(entry.content ?? message?.content);
+}
+
+function hasContent(value: unknown): boolean {
+  if (typeof value === "string") {
+    return value.length > 0;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  return Boolean(asRecord(value));
 }
