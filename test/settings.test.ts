@@ -34,6 +34,7 @@ describe("settings install and uninstall", () => {
   it("installs a local statusLine and runtime launcher in temp directories", async () => {
     const dirs = mustHaveWorkspace(workspace);
     const cliFilePath = await createFakeRuntime(dirs.root);
+    const version = await packageVersion();
 
     const result = await installStatusLine({
       projectDir: dirs.projectDir,
@@ -43,7 +44,7 @@ describe("settings install and uninstall", () => {
 
     const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
     const launcherPath = join(dirs.appHome, "bin", "statusline");
-    const stableCliPath = join(dirs.appHome, "versions", "0.1.1", "dist", "cli.js");
+    const stableCliPath = join(dirs.appHome, "versions", version, "dist", "cli.js");
     const settings = await readJson<{ statusLine: { type: string; command: string; padding: number } }>(target.settingsPath);
     const launcher = await readFile(launcherPath, "utf8");
     const copiedRuntime = await readFile(stableCliPath, "utf8");
@@ -52,6 +53,7 @@ describe("settings install and uninstall", () => {
     expect(result.target).toEqual(target);
     expect(result.command).toBe(quoteShell(launcherPath));
     const manifestText = await readFile(join(dirs.appHome, "backups", result.backupId as string, "manifest.json"), "utf8");
+    expect(manifestText).toContain(`"packageVersion": "${version}"`);
     expect(manifestText).toContain("settingsPathHash");
     expect(manifestText).toContain("projectDirHash");
     expect(manifestText).not.toContain(dirs.projectDir);
@@ -71,6 +73,7 @@ describe("settings install and uninstall", () => {
   it("installs optional safe hooks without enabling prompt-capture hooks", async () => {
     const dirs = mustHaveWorkspace(workspace);
     const cliFilePath = await createFakeRuntime(dirs.root);
+    const version = await packageVersion();
 
     const result = await installStatusLine({
       projectDir: dirs.projectDir,
@@ -81,7 +84,7 @@ describe("settings install and uninstall", () => {
 
     const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
     const hookLauncherPath = join(dirs.appHome, "bin", "hook");
-    const stableCliPath = join(dirs.appHome, "versions", "0.1.1", "dist", "cli.js");
+    const stableCliPath = join(dirs.appHome, "versions", version, "dist", "cli.js");
     const settings = await readJson<{
       hooks: Record<string, Array<{ matcher: string; hooks: Array<{ command: string; args: string[]; async: boolean; timeout: number }> }>>;
     }>(target.settingsPath);
@@ -405,6 +408,14 @@ function mustHaveWorkspace(workspace: TempWorkspace | undefined): TempWorkspace 
     throw new Error("test workspace was not initialized");
   }
   return workspace;
+}
+
+async function packageVersion(): Promise<string> {
+  const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as { version?: unknown };
+  if (typeof pkg.version !== "string") {
+    throw new Error("package.json is missing a string version");
+  }
+  return pkg.version;
 }
 
 async function createFakeRuntime(root: string): Promise<string> {

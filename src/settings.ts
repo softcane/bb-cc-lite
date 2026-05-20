@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { chmod, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -72,7 +73,19 @@ interface BackupManifest {
   state: "active" | "uninstalled";
 }
 
-const PACKAGE_VERSION = "0.1.1";
+const PACKAGE_VERSION = readPackageVersion();
+
+function readPackageVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: unknown };
+    if (typeof pkg.version === "string" && pkg.version.trim().length > 0) {
+      return pkg.version;
+    }
+  } catch {
+    // Copied statusline runtimes do not need package metadata for rendering.
+  }
+  return "0.0.0-dev";
+}
 
 export function resolveSettingsTarget(options: InstallOptions | UninstallOptions = {}): SettingsTarget {
   const scope = options.scope || "local";
