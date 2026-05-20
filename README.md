@@ -10,24 +10,46 @@ Claude Code can look busy while it is doing the wrong thing: retrying the same b
 
 ![bb-cc-lite statusline examples](./assets/statusline-demo.gif)
 
+## Requirements
+
+- Node.js 20 or newer
+- Claude Code with status line support
+
 ## Install
 
 ```bash
-npm install -g bb-cc-lite
-bb-cc-lite install --scope local --hooks
+npx --yes bb-cc-lite install --scope local --hooks
 ```
 
 Restart Claude Code in the project. The status line appears at the bottom.
 
 Install preserves an existing Claude Code `statusLine` unless you pass `--replace`. `--hooks` is optional, but gives faster loop detection.
 
+To uninstall:
+
+```bash
+npx --yes bb-cc-lite uninstall --scope local
+```
+
+Prefer a global install?
+
+```bash
+npm install -g bb-cc-lite
+bb-cc-lite install --scope local --hooks
+```
+
 To replace an existing status line:
 
 ```bash
-bb-cc-lite install --scope local --replace --hooks
+npx --yes bb-cc-lite install --scope local --replace --hooks
 ```
 
-Prefer not to install globally? Prefix commands with `npx --yes bb-cc-lite`.
+## What It Catches
+
+- Blind retry loops where the same command or test fails repeatedly without fix evidence.
+- Long stretches of editing without a focused check.
+- Context pressure before the session gets too full to reason clearly.
+- Cost and cache signals that make a stuck session easier to spot.
 
 ## What It Shows
 
@@ -47,44 +69,10 @@ bb: Stop | why: test loop rarely recovered after 3 failures | do: stop retrying 
 ```bash
 bb-cc-lite why
 bb-cc-lite doctor
-bb-cc-lite doctor --baseline
-bb-cc-lite doctor --replay-baseline
-bb-cc-lite unlearn
 bb-cc-lite uninstall --scope local
 ```
 
-`why` explains the latest statusline decision. `doctor` checks the install. `unlearn` removes the personal baseline. `uninstall` restores the previous Claude Code status line when a backup exists.
-
-## Personal Baseline
-
-By default, install builds a small local baseline from your Claude Code history. It helps the line tell the difference between normal research, recoverable failures, and patterns that usually waste time for you.
-
-Hard `Stop` rules still win. The baseline only changes wording, priority, and confidence.
-
-Default learning bounds:
-
-| Setting | Default |
-|---|---:|
-| Max transcript files | 1,500 |
-| Max bytes per transcript | 1 MiB |
-| Scan budget | 30 seconds |
-| Recent window | newest 100 sessions |
-
-Skip it:
-
-```bash
-bb-cc-lite install --scope local --no-learn
-```
-
-Rebuild or inspect it:
-
-```bash
-bb-cc-lite doctor --build-baseline
-bb-cc-lite doctor --baseline
-bb-cc-lite doctor --replay-baseline
-```
-
-`doctor --replay-baseline` builds a baseline from older local sessions, replays newer holdout sessions, and prints aggregate-only QA metrics such as Stop precision, false Stops, missed unrecovered loops, blind retry precision, low-sample suppressions, and category coverage.
+`why` explains the latest statusline decision. `doctor` checks the install. `uninstall` restores the previous Claude Code status line when a backup exists.
 
 ## Privacy
 
