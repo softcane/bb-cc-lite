@@ -100,7 +100,7 @@ export function safeToolName(toolName: string | undefined, options: SafeToolName
     return "tool";
   }
   const candidate = rawToolNameCandidate(toolName, options) || "";
-  return /^[A-Za-z][A-Za-z0-9_-]{0,32}$/u.test(candidate) ? candidate : "tool";
+  return APPROVED_BUILT_IN_TOOL_NAMES.has(candidate) ? candidate : "tool";
 }
 
 function rawToolNameCandidate(toolName: string | undefined, options: SafeToolNameOptions): string | undefined {
@@ -113,3 +113,20 @@ function rawToolNameCandidate(toolName: string | undefined, options: SafeToolNam
 function isMcpToolName(toolName: string): boolean {
   return toolName.startsWith("mcp__");
 }
+
+const APPROVED_BUILT_IN_TOOL_NAMES = new Set([
+  "Bash",
+  "Edit",
+  "ExitPlanMode",
+  "Glob",
+  "Grep",
+  "LS",
+  "MultiEdit",
+  "NotebookEdit",
+  "Read",
+  "Task",
+  "TodoWrite",
+  "WebFetch",
+  "WebSearch",
+  "Write"
+]);

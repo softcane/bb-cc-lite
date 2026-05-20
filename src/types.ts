@@ -38,6 +38,41 @@ export interface ToolFailureSummary {
   identityHash?: string;
 }
 
+export type FailureRecoveryCategory =
+  | "tests"
+  | "lint"
+  | "typecheck"
+  | "build"
+  | "read"
+  | "grep"
+  | "glob"
+  | "ls"
+  | "edit"
+  | "mcp"
+  | "tool";
+
+export interface FailureEpisodeSummary {
+  identity: string;
+  category: FailureRecoveryCategory;
+  label: string;
+  attemptCount: number;
+  recovered: boolean;
+  activeEnded: boolean;
+  blindRetryFailureCount: number;
+  meaningfulIntervention?: Array<"edit" | "validation_success" | "same_failure_success">;
+  identityHash?: string;
+}
+
+export interface BlindRetrySummary {
+  category: FailureRecoveryCategory;
+  label: string;
+  attemptCount: number;
+  recovered: boolean;
+  activeEnded: boolean;
+  blindRetryFailureCount: number;
+  identityHash?: string;
+}
+
 export interface TranscriptSummary {
   pathReadable: boolean;
   bytesRead: number;
@@ -47,6 +82,8 @@ export interface TranscriptSummary {
   readToolCalls: number;
   failedToolResults: number;
   repeatedFailures: ToolFailureSummary[];
+  failureEpisodes?: FailureEpisodeSummary[];
+  blindRetry?: BlindRetrySummary;
   editTestLoopFailures: number;
   hasUnvalidatedEdits: boolean;
   unvalidatedEditToolSteps?: number;
@@ -137,6 +174,38 @@ export interface DecisionPersonalBaseline {
         recovered?: number;
         unrecovered?: number;
         recoveryRate?: number;
+      }
+    >
+  >;
+  failureRecovery?: Partial<
+    Record<
+      FailureRecoveryCategory,
+      {
+        episodes?: number;
+        recovered?: number;
+        unrecovered?: number;
+        activeEnded?: number;
+        recoveryRate?: number;
+        medianAttemptsBeforeRecovery?: number;
+        p75AttemptsBeforeRecovery?: number;
+        blindRetryEpisodes?: number;
+        blindRetryRecovered?: number;
+        blindRetryUnrecovered?: number;
+        confidence?: DecisionConfidence;
+      }
+    >
+  >;
+  blindRetry?: Partial<
+    Record<
+      FailureRecoveryCategory,
+      {
+        episodes?: number;
+        recovered?: number;
+        unrecovered?: number;
+        recoveryRate?: number;
+        carefulLikeEpisodes?: number;
+        stopLikeEpisodes?: number;
+        confidence?: DecisionConfidence;
       }
     >
   >;

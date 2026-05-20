@@ -257,13 +257,53 @@ describe("CLI behavior characterization", () => {
     }
   });
 
+  it("statusline degrades safely with corrupt or sparse baselines", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const env = cliEnv(workspace);
+      const transcriptPath = join(workspace.root, "transcripts", "with-intervention.jsonl");
+      await writeTranscript(transcriptPath, repeatedFailedTestWithEditInterventionTranscript());
+      await writeFile(join(workspace.appHome, "baseline.json"), "{not-json", "utf8");
+
+      const corrupt = await runCli(["statusline"], {
+        env,
+        input: statusInput({
+          session_id: "session-corrupt-baseline",
+          transcript_path: transcriptPath,
+          terminal_width: 180
+        })
+      });
+      expect(corrupt.exitCode).toBe(0);
+      expect(corrupt.stdout).toContain("bb: Careful");
+      expect(corrupt.stdout).toContain("Bash failed 2x running tests");
+      expect(corrupt.stdout).not.toContain("usually recovers");
+
+      await writeJson(join(workspace.appHome, "baseline.json"), sparseRecoveryBaseline());
+      const sparse = await runCli(["statusline"], {
+        env,
+        input: statusInput({
+          session_id: "session-sparse-baseline",
+          transcript_path: transcriptPath,
+          terminal_width: 180
+        })
+      });
+      expect(sparse.exitCode).toBe(0);
+      expect(sparse.stdout).toContain("bb: Careful");
+      expect(sparse.stdout).toContain("Bash failed 2x running tests");
+      expect(sparse.stdout).not.toContain("usually recovers");
+      expectNoPrivacySentinels(corrupt.stdout, sparse.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
   it("explains extended baseline recovery influence through statusline and why safely", async () => {
     const workspace = await createTempWorkspace();
     try {
       const env = cliEnv(workspace);
       await writeJson(join(workspace.appHome, "baseline.json"), recoveryBaseline());
       const transcriptPath = join(workspace.root, "transcripts", "two-test-failures.jsonl");
-      await writeTranscript(transcriptPath, repeatedFailedTestTranscript(2));
+      await writeTranscript(transcriptPath, repeatedFailedTestWithEditInterventionTranscript());
 
       const statusline = await runCli(["statusline"], {
         env,
@@ -277,7 +317,7 @@ describe("CLI behavior characterization", () => {
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stderr).toBe("");
       expect(statusline.stdout).toContain("bb: Careful");
-      expect(statusline.stdout).toContain("tests failed twice; usually recovers after one fix");
+      expect(statusline.stdout).toContain("tests failed twice; usually recovers after one focused fix");
 
       const why = await runCli(["why"], { env });
       expect(why.stdout).toContain("Baseline: test failures usually recovered after one focused fix.");
@@ -340,8 +380,8 @@ describe("CLI behavior characterization", () => {
 
       expect(stop.exitCode).toBe(0);
       expect(stop.stdout).toContain("bb: Stop");
-      expect(stop.stdout).toContain("why: test loop: failed 3x");
-      expect(stop.stdout).toContain("do: inspect first failure");
+      expect(stop.stdout).toContain("why: blind retry loop: same failure 3x without fix evidence");
+      expect(stop.stdout).toContain("do: stop and inspect first failure");
 
       const latest = await runCli(["statusline"], {
         env,
@@ -364,15 +404,17 @@ describe("CLI behavior characterization", () => {
       const whyStop = await runCli(["why", "--session", stopSessionId], { env });
       expect(whyStop.exitCode).toBe(0);
       expect(whyStop.stdout).toContain("Last decision: Stop.");
-      expect(whyStop.stdout).toContain("Reason: Bash failed 3x running tests. Claude is retrying a broken test loop.");
-      expect(whyStop.stdout).toContain("Next action: inspect first failure.");
+      expect(whyStop.stdout).toContain(
+        "Reason: same test failed 3x without fix evidence. Claude is retrying the same failure without meaningful intervention."
+      );
+      expect(whyStop.stdout).toContain("Next action: stop and inspect first failure.");
 
       const whyJson = await runCli(["why", "--session", stopSessionId, "--json"], { env });
       expect(whyJson.exitCode).toBe(0);
       expect(JSON.parse(whyJson.stdout)).toMatchObject({
         state: "Stop",
-        reasonCode: "repeated_tool_failure",
-        primaryEvidence: "Bash failed 3x running tests"
+        reasonCode: "blind_retry_loop",
+        primaryEvidence: "same test failed 3x without fix evidence"
       });
 
       const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
@@ -402,20 +444,22 @@ describe("CLI behavior characterization", () => {
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stderr).toBe("");
       expect(statusline.stdout).toContain(
-        "bb: Stop | why: MCP tool failed 3x; Claude is retrying the same failing MCP tool | do: inspect MCP server/tool config before more retries"
+        "bb: Stop | why: blind retry loop: same failure 3x without fix evidence"
       );
 
       const why = await runCli(["why"], { env });
       expect(why.exitCode).toBe(0);
-      expect(why.stdout).toContain("Reason: MCP tool failed 3x. Claude is retrying the same failing MCP tool.");
-      expect(why.stdout).toContain("Next action: inspect MCP server/tool config before more retries.");
+      expect(why.stdout).toContain(
+        "Reason: same MCP tool failed 3x without fix evidence. Claude is retrying the same failure without meaningful intervention."
+      );
+      expect(why.stdout).toContain("Next action: stop and inspect first failure.");
 
       const whyJson = await runCli(["why", "--json"], { env });
       expect(whyJson.exitCode).toBe(0);
       expect(JSON.parse(whyJson.stdout)).toMatchObject({
         state: "Stop",
-        reasonCode: "repeated_tool_failure",
-        primaryEvidence: "MCP tool failed 3x"
+        reasonCode: "blind_retry_loop",
+        primaryEvidence: "same MCP tool failed 3x without fix evidence"
       });
 
       const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
@@ -451,7 +495,7 @@ describe("CLI behavior characterization", () => {
           terminal_width: 180
         },
         transcript: repeatedFailedTestTranscript(2),
-        expected: ["bb: Careful", "Bash failed 2x running tests", "pause and inspect the failing test before another retry"]
+        expected: ["bb: Careful", "retry looks blind: same test failed twice", "inspect first failure"]
       },
       {
         name: "three repeated failed test commands",
@@ -462,8 +506,8 @@ describe("CLI behavior characterization", () => {
         transcript: repeatedFailedTestTranscript(3),
         expected: [
           "bb: Stop",
-          "why: test loop: failed 3x",
-          "do: inspect first failure"
+          "why: blind retry loop: same failure 3x without fix evidence",
+          "do: stop and inspect first failure"
         ]
       },
       {
@@ -611,6 +655,48 @@ function repeatedFailedTestTranscript(count: number): string[] {
       }
     })
   ]);
+}
+
+function repeatedFailedTestWithEditInterventionTranscript(): string[] {
+  const firstFailure = repeatedFailedTestTranscript(1);
+  const secondFailure = repeatedFailedTestTranscript(1).map((line) => line.replaceAll("bash-test-1", "bash-test-after-edit"));
+  return [
+    ...firstFailure,
+    JSON.stringify({
+      timestamp: "2026-05-19T00:00:30.000Z",
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "edit-between-tests",
+            name: "Edit",
+            input: {
+              file_path: privacySentinels[4],
+              new_string: privacySentinels[3]
+            }
+          }
+        ]
+      }
+    }),
+    JSON.stringify({
+      timestamp: "2026-05-19T00:00:31.000Z",
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "edit-between-tests",
+            is_error: false,
+            content: "edited"
+          }
+        ]
+      }
+    }),
+    ...secondFailure
+  ];
 }
 
 function repeatedFailedMcpTranscript(rawMcpName: string, count: number): string[] {
@@ -766,6 +852,27 @@ function recoveryBaseline(): Record<string, unknown> {
         medianFailuresBeforeRecovery: 1,
         p75FailuresBeforeRecovery: 1,
         fivePlusFailuresBeforeRecovery: 0
+      }
+    }
+  };
+}
+
+function sparseRecoveryBaseline(): Record<string, unknown> {
+  return {
+    ...readHeavyBaseline(),
+    failureRecovery: {
+      tests: {
+        episodes: 4,
+        recovered: 4,
+        unrecovered: 0,
+        activeEnded: 0,
+        recoveryRate: 1,
+        medianAttemptsBeforeRecovery: 1,
+        p75AttemptsBeforeRecovery: 1,
+        blindRetryEpisodes: 0,
+        blindRetryRecovered: 0,
+        blindRetryUnrecovered: 0,
+        confidence: "low"
       }
     }
   };

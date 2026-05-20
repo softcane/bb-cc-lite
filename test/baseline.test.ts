@@ -112,6 +112,14 @@ describe("personal baseline storage", () => {
           "Bash:tests": toolCategoryAggregate(),
           MCP: toolCategoryAggregate(),
           Read: toolCategoryAggregate()
+        },
+        failureRecovery: {
+          tests: failureRecoveryAggregate(),
+          mcp: failureRecoveryAggregate()
+        },
+        blindRetry: {
+          tests: blindRetryAggregate(),
+          mcp: blindRetryAggregate()
         }
       };
       await writeFile(targetPath, `${JSON.stringify(baseline)}\n`, "utf8");
@@ -158,6 +166,33 @@ describe("personal baseline storage", () => {
             tests: {
               ...validationAggregate(),
               filePath: "/private/path/BB_CC_LITE_RAW_PATH_SENTINEL.ts"
+            }
+          }
+        })}\n`,
+        "utf8"
+      );
+      await expect(readBaseline(targetPath)).resolves.toBeUndefined();
+
+      await writeFile(
+        targetPath,
+        `${JSON.stringify({
+          ...sampleBaseline(),
+          failureRecovery: {
+            "mcp__privateServer__rawTool": failureRecoveryAggregate()
+          }
+        })}\n`,
+        "utf8"
+      );
+      await expect(readBaseline(targetPath)).resolves.toBeUndefined();
+
+      await writeFile(
+        targetPath,
+        `${JSON.stringify({
+          ...sampleBaseline(),
+          blindRetry: {
+            tests: {
+              ...blindRetryAggregate(),
+              rawCommand: "npm test -- BB_CC_LITE_RAW_COMMAND_SENTINEL"
             }
           }
         })}\n`,
@@ -512,6 +547,30 @@ describe("personal baseline builder", () => {
         unrecovered: 0,
         recoveryRate: 1
       });
+      expect(result.baseline.failureRecovery?.tests).toMatchObject({
+        episodes: 1,
+        recovered: 1,
+        unrecovered: 0,
+        recoveryRate: 1,
+        medianAttemptsBeforeRecovery: 2,
+        blindRetryEpisodes: 1,
+        blindRetryRecovered: 1,
+        confidence: "low"
+      });
+      expect(result.baseline.failureRecovery?.build).toMatchObject({
+        episodes: 1,
+        recovered: 0,
+        unrecovered: 1,
+        recoveryRate: 0
+      });
+      expect(result.baseline.blindRetry?.tests).toMatchObject({
+        episodes: 1,
+        recovered: 1,
+        unrecovered: 0,
+        recoveryRate: 1,
+        carefulLikeEpisodes: 1,
+        stopLikeEpisodes: 0
+      });
       expect(result.baseline.toolCategories?.["Bash:build"]).toMatchObject({
         calls: 1,
         failures: 1,
@@ -685,6 +744,7 @@ describe("personal baseline builder", () => {
         rawCommandsStored: false,
         rawFileContentsStored: false,
         rawSessionIdsStored: false,
+        rawMcpNamesStored: false,
         perSessionRowsStored: false
       });
       expect(result.baseline).toMatchObject({
@@ -807,6 +867,34 @@ function toolCategoryAggregate(): Record<string, number> {
     recovered: 1,
     unrecovered: 1,
     recoveryRate: 0.5
+  };
+}
+
+function failureRecoveryAggregate(): Record<string, number | string> {
+  return {
+    episodes: 6,
+    recovered: 5,
+    unrecovered: 1,
+    activeEnded: 1,
+    recoveryRate: 0.8333,
+    medianAttemptsBeforeRecovery: 2,
+    p75AttemptsBeforeRecovery: 2,
+    blindRetryEpisodes: 2,
+    blindRetryRecovered: 1,
+    blindRetryUnrecovered: 1,
+    confidence: "medium"
+  };
+}
+
+function blindRetryAggregate(): Record<string, number | string> {
+  return {
+    episodes: 2,
+    recovered: 1,
+    unrecovered: 1,
+    recoveryRate: 0.5,
+    carefulLikeEpisodes: 2,
+    stopLikeEpisodes: 1,
+    confidence: "low"
   };
 }
 

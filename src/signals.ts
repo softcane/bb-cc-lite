@@ -1,5 +1,6 @@
 import { sessionKeyFromId } from "./session.js";
 import { mergeUsage } from "./status-input.js";
+import { recoveryInsight } from "./recovery-stats.js";
 import type { Decision, DecisionPersonalBaseline, StatusLineInput, StoredDecision, TokenUsage, TranscriptSummary } from "./types.js";
 
 export interface DecideOptions {
@@ -38,30 +39,59 @@ export function decide(
     });
   }
 
+  if (transcript.blindRetry && transcript.blindRetry.blindRetryFailureCount >= 3) {
+    const blindRetry = transcript.blindRetry;
+    return baseDecision({
+      state: "Stop",
+      reasonCode: "blind_retry_loop",
+      diagnosisCode: "blind_retry_loop",
+      diagnosis: `blind retry loop: same failure ${blindRetry.blindRetryFailureCount}x without fix evidence`,
+      confidence: "high",
+      primaryEvidence: `same ${blindRetry.label} failed ${blindRetry.blindRetryFailureCount}x without fix evidence`,
+      impact: "Claude is retrying the same failure without meaningful intervention",
+      action: "stop and inspect first failure",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
   const repeatedFailure = transcript.repeatedFailures
     .filter((item) => item.count >= 3)
     .sort((a, b) => b.count - a.count)[0];
   if (repeatedFailure) {
     const runningTests = repeatedFailure.toolName === "Bash" && repeatedFailure.purpose === "tests";
     const mcpFailure = isMcpFailure(repeatedFailure);
-    const baselineUnrecoveredTestLoop = runningTests && supportsUnrecoveredTestLoopStop(options.baseline);
+    const validationPurpose = validationPurposeForFailure(repeatedFailure);
+    const baselineInsight = validationPurpose
+      ? recoveryInsight(options.baseline, validationPurpose, repeatedFailure.count)
+      : mcpFailure
+        ? recoveryInsight(options.baseline, "mcp", repeatedFailure.count)
+        : undefined;
+    const baselineUnrecoveredLoop = baselineInsight?.kind === "usually_unrecovered";
     const baselineStopLike = runningTests && supportsValidationLoopStop(options.baseline);
     return baseDecision({
       state: "Stop",
       reasonCode: "repeated_tool_failure",
       diagnosisCode: runningTests ? "validation_command_loop" : mcpFailure ? "mcp_tool_failure_repeated" : "tool_failure_repeated",
       diagnosis: mcpFailure
-        ? `MCP tool failed ${repeatedFailure.count}x`
+        ? baselineUnrecoveredLoop && baselineInsight
+          ? baselineInsight.diagnosis
+          : `MCP tool failed ${repeatedFailure.count}x`
         : runningTests
-        ? baselineUnrecoveredTestLoop
-          ? "test loop: usually unrecovered after 3x"
+        ? baselineUnrecoveredLoop && baselineInsight
+          ? baselineInsight.diagnosis
           : baselineStopLike
           ? "test loop: past runs ended badly"
           : `test loop: failed ${repeatedFailure.count}x`
         : undefined,
-      confidence: "high",
-      baselineNote: baselineUnrecoveredTestLoop
-        ? "recent test loops were usually unrecovered after 3 failures"
+      confidence: baselineInsight?.confidence || "high",
+      baselineNote: baselineUnrecoveredLoop && baselineInsight
+        ? baselineInsight.baselineNote
         : baselineStopLike
           ? "usually Stop-like for you"
           : undefined,
@@ -72,9 +102,13 @@ export function decide(
           ? "Claude is retrying a broken test loop"
           : "Claude is retrying the same failing tool",
       action: mcpFailure
-        ? "inspect MCP server/tool config before more retries"
+        ? baselineUnrecoveredLoop
+          ? "stop retrying and inspect first failure"
+          : "inspect MCP server/tool config before more retries"
         : runningTests
-        ? "inspect first failure"
+        ? baselineUnrecoveredLoop
+          ? "stop retrying and inspect first failure"
+          : "inspect first failure"
         : repeatedFailure.toolName === "Bash"
           ? "fix the failing command manually, then ask Claude to rerun only that command"
           : `inspect the failing ${repeatedFailure.toolName} step manually before more retries`,
@@ -105,6 +139,27 @@ export function decide(
     });
   }
 
+  if (transcript.blindRetry && transcript.blindRetry.blindRetryFailureCount >= 2) {
+    const blindRetry = transcript.blindRetry;
+    return baseDecision({
+      state: "Careful",
+      reasonCode: "blind_retry",
+      diagnosisCode: "blind_retry_loop",
+      diagnosis: `retry looks blind: same ${blindRetry.label} failed twice`,
+      confidence: "medium",
+      primaryEvidence: `same ${blindRetry.label} failed twice without fix evidence`,
+      impact: "Claude retried without a successful edit or validation in between",
+      action: "inspect first failure",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
   const earlyRepeatedFailure = transcript.repeatedFailures
     .filter((item) => item.count >= 2)
     .sort((a, b) => b.count - a.count)[0];
@@ -112,9 +167,12 @@ export function decide(
     const runningTests = earlyRepeatedFailure.toolName === "Bash" && earlyRepeatedFailure.purpose === "tests";
     const mcpFailure = isMcpFailure(earlyRepeatedFailure);
     const validationPurpose = validationPurposeForFailure(earlyRepeatedFailure);
-    const quickRecovery = validationPurpose ? supportsQuickValidationRecovery(options.baseline, validationPurpose) : false;
-    const validationLabel = validationPurpose || "validation";
-    const validationFailureLabel = validationPurpose === "tests" ? "test" : validationLabel;
+    const baselineInsight = validationPurpose
+      ? recoveryInsight(options.baseline, validationPurpose, earlyRepeatedFailure.count)
+      : mcpFailure
+        ? recoveryInsight(options.baseline, "mcp", earlyRepeatedFailure.count)
+        : undefined;
+    const quickRecovery = baselineInsight?.kind === "usually_recovers";
     return baseDecision({
       state: "Careful",
       reasonCode: "tool_failure_repeated",
@@ -122,10 +180,10 @@ export function decide(
       diagnosis: mcpFailure
         ? `MCP tool failed ${earlyRepeatedFailure.count}x`
         : quickRecovery
-          ? `${validationLabel} failed twice; usually recovers after one fix`
+          ? baselineInsight.diagnosis
           : undefined,
-      confidence: quickRecovery ? "medium" : undefined,
-      baselineNote: quickRecovery ? `${validationFailureLabel} failures usually recovered after one focused fix` : undefined,
+      confidence: quickRecovery ? baselineInsight.confidence : undefined,
+      baselineNote: quickRecovery ? baselineInsight.baselineNote : undefined,
       primaryEvidence: repeatedFailureEvidence(earlyRepeatedFailure),
       impact: mcpFailure
         ? "Claude is retrying the same failing MCP tool"
@@ -450,23 +508,7 @@ function supportsReadHeavyHealthy(baseline: DecisionPersonalBaseline | undefined
 function supportsValidationLoopStop(baseline: DecisionPersonalBaseline | undefined): boolean {
   const scenario = baseline?.scenarios?.validation_command_loop;
   const stopCount = baseline?.outcomes?.stopLike?.validationLoopUnrecovered || 0;
-  return Boolean(scenario && scenario.seen >= 3 && scenario.confidence !== "low" && stopCount > 0);
-}
-
-function supportsUnrecoveredTestLoopStop(baseline: DecisionPersonalBaseline | undefined): boolean {
-  const scenario = baseline?.scenarios?.validation_command_loop;
-  const tests = baseline?.validation?.tests;
-  const unrecovered = tests?.unrecovered || 0;
-  const recovered = tests?.recovered || 0;
-  const recentSeen = scenario?.recentSeen || 0;
-  return Boolean(
-    scenario &&
-      recentSeen >= 3 &&
-      scenario.confidence !== "low" &&
-      unrecovered >= 3 &&
-      unrecovered > recovered &&
-      (tests?.recoveryRate || 0) <= 0.5
-  );
+  return Boolean(scenario && scenario.seen >= 5 && scenario.confidence !== "low" && stopCount >= 5);
 }
 
 function validationPurposeForFailure(failure: { toolName: string; purpose?: string }): ValidationPurpose | undefined {
@@ -486,23 +528,6 @@ function repeatedFailureEvidence(failure: { toolName: string; purpose?: string; 
   return `${isMcpFailure(failure) ? "MCP tool" : failure.toolName} failed ${failure.count}x${
     failure.toolName === "Bash" && failure.purpose === "tests" ? " running tests" : ""
   }`;
-}
-
-function supportsQuickValidationRecovery(
-  baseline: DecisionPersonalBaseline | undefined,
-  purpose: ValidationPurpose
-): boolean {
-  const aggregate = baseline?.validation?.[purpose];
-  const recovered = aggregate?.recovered || 0;
-  const unrecovered = aggregate?.unrecovered || 0;
-  const recoveryTotal = recovered + unrecovered;
-  return Boolean(
-    aggregate &&
-      recoveryTotal >= 5 &&
-      recovered >= 3 &&
-      (aggregate.recoveryRate || 0) >= 0.75 &&
-      (aggregate.medianFailuresBeforeRecovery || 0) <= 1
-  );
 }
 
 function hasUnusualEditValidationLag(transcript: TranscriptSummary, baseline: DecisionPersonalBaseline | undefined): boolean {

@@ -1,5 +1,6 @@
 import { readStore } from "./event-store-persistence.js";
-import type { StoredDecision, ToolFailureSummary } from "./types.js";
+import { safeToolResultEventFromHookEvent, summarizeBlindRetry, summarizeFailureEpisodes } from "./failure-episodes.js";
+import type { BlindRetrySummary, StoredDecision, ToolFailureSummary } from "./types.js";
 
 export async function latestDecision(sessionKey?: string, storePath?: string): Promise<StoredDecision | undefined> {
   const store = await readStore(storePath);
@@ -16,11 +17,13 @@ export async function hookSummary(
   compactionEvents: number;
   postCompactionActivity: number;
   repeatedFailures: ToolFailureSummary[];
+  blindRetry?: BlindRetrySummary;
   latestTimestamp?: string;
   latestCompactionTimestamp?: string;
 }> {
   const store = await readStore(storePath);
   const events = store.hookEvents.filter((event) => !sessionKey || event.sessionKey === sessionKey);
+  const safeEvents = events.flatMap((event) => safeToolResultEventFromHookEvent(event) ?? []);
   const failures = new Map<string, ToolFailureSummary>();
   let failedToolResults = 0;
   let toolCalls = 0;
@@ -60,6 +63,7 @@ export async function hookSummary(
     compactionEvents,
     postCompactionActivity,
     repeatedFailures: [...failures.values()].filter((failure) => failure.count >= 2),
+    blindRetry: summarizeBlindRetry(summarizeFailureEpisodes(safeEvents)),
     latestTimestamp,
     latestCompactionTimestamp
   };

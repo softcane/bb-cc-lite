@@ -311,6 +311,48 @@ describe("doctor", () => {
     expect(serialized).not.toContain("BB_CC_LITE_RAW_COMMAND_SENTINEL");
     expect(serialized).not.toContain("BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL");
   });
+
+  it("reports aggregate-only historical replay metrics", async () => {
+    const dirs = mustHaveWorkspace(workspace);
+    const olderPath = join(dirs.homeDir, ".claude", "projects", "sample", "older.jsonl");
+    const newerPath = join(dirs.homeDir, ".claude", "projects", "sample", "newer.jsonl");
+    await writeTranscript(olderPath, [
+      ...failedBashValidation("older-1"),
+      ...failedBashValidation("older-2"),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", id: "older-pass", name: "Bash", input: { command: "npm test" } }]
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        message: {
+          content: [{ type: "tool_result", tool_use_id: "older-pass", is_error: false, content: "BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL" }]
+        }
+      })
+    ]);
+    await writeTranscript(newerPath, [
+      ...failedBashValidation("newer-1"),
+      ...failedBashValidation("newer-2"),
+      ...failedBashValidation("newer-3")
+    ]);
+
+    const checks = await runDoctor({
+      projectDir: dirs.projectDir,
+      homeDir: dirs.homeDir,
+      appHomePath: dirs.appHome,
+      replayBaseline: true
+    });
+
+    const replay = findCheck(checks, "baseline-replay");
+    expect(replay.message).toContain("holdout sessions");
+    expect(replay.message).toContain("evaluated failure episodes");
+    expect(replay.message).toContain("category coverage");
+    expect(replay.message).not.toContain(dirs.homeDir);
+    expect(replay.message).not.toContain("npm test");
+    expect(replay.message).not.toContain("BB_CC_LITE_RAW");
+  });
 });
 
 function findCheck(checks: DoctorCheck[], name: string): DoctorCheck {
@@ -338,4 +380,21 @@ async function createFakeRuntime(root: string): Promise<string> {
 async function writeTranscript(path: string, lines: string[]): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${lines.join("\n")}\n`, "utf8");
+}
+
+function failedBashValidation(id: string): string[] {
+  return [
+    JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [{ type: "tool_use", id, name: "Bash", input: { command: "npm test -- BB_CC_LITE_RAW_COMMAND_SENTINEL" } }]
+      }
+    }),
+    JSON.stringify({
+      type: "user",
+      message: {
+        content: [{ type: "tool_result", tool_use_id: id, is_error: true, content: "BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL" }]
+      }
+    })
+  ];
 }

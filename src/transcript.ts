@@ -1,4 +1,5 @@
 import { asRecord, extractUsage, mergeUsage, stringField } from "./status-input.js";
+import { extractFailureEpisodesFromTranscriptLines, summarizeBlindRetry } from "./failure-episodes.js";
 import { classifyResultPurpose, classifyToolIdentity } from "./tool-metadata.js";
 import { readTranscriptTail, type ReadTranscriptTailOptions } from "./transcript-reader.js";
 import type { ToolFailureSummary, TokenUsage, TranscriptSummary } from "./types.js";
@@ -26,6 +27,8 @@ export async function parseTranscriptTail(
 }
 
 export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLength(lines.join("\n"))): TranscriptSummary {
+  const failureEpisodes = extractFailureEpisodesFromTranscriptLines(lines);
+  const blindRetry = summarizeBlindRetry(failureEpisodes);
   const toolById = new Map<string, ToolMeta>();
   const failureCounts = new Map<string, ToolFailureSummary>();
   let recentEditBeforeTest = false;
@@ -152,6 +155,8 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
     readToolCalls,
     failedToolResults,
     repeatedFailures: [...failureCounts.values()].filter((item) => item.count >= 2),
+    failureEpisodes,
+    blindRetry,
     editTestLoopFailures,
     hasUnvalidatedEdits,
     unvalidatedEditToolSteps:

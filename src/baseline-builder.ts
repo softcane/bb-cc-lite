@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { readdir, stat } from "node:fs/promises";
 import { baselinePath } from "./paths.js";
+import { extractFailureEpisodesFromTranscriptLines } from "./failure-episodes.js";
 import { asRecord, extractUsage, mergeUsage, stringField } from "./status-input.js";
 import { classifyResultPurpose, classifyToolIdentity } from "./tool-metadata.js";
 import { readTranscriptTail } from "./transcript-reader.js";
@@ -14,6 +15,15 @@ import {
   type ValidationCategory,
   writeBaseline
 } from "./baseline.js";
+import {
+  blindRetryAggregatesFromCounters,
+  addFailureEpisodeToRecoveryCounters,
+  emptyRecoveryBuildCounters,
+  mergeRecoveryBuildCounters,
+  recoveryAggregatesFromCounters,
+  type FailureRecoveryCategory,
+  type RecoveryBuildCounters
+} from "./recovery-stats.js";
 import type { TokenUsage } from "./types.js";
 
 const DEFAULT_MAX_FILES = 500;
@@ -69,6 +79,7 @@ interface BuildCounters {
   validation: Record<ValidationCategory, ValidationBuildCounters>;
   editValidation: EditValidationBuildCounters;
   toolCategories: Partial<Record<SafeToolCategory, ToolCategoryBuildCounters>>;
+  failureRecovery: Record<FailureRecoveryCategory, RecoveryBuildCounters>;
 }
 
 interface TranscriptCandidate {
@@ -107,6 +118,7 @@ interface SessionCounters {
   validation: Record<ValidationCategory, ValidationBuildCounters>;
   editValidation: EditValidationBuildCounters;
   toolCategories: Partial<Record<SafeToolCategory, ToolCategoryBuildCounters>>;
+  failureRecovery: Record<FailureRecoveryCategory, RecoveryBuildCounters>;
 }
 
 interface ValidationBuildCounters {
@@ -272,6 +284,7 @@ function addSessionCounters(counters: BuildCounters, session: SessionCounters, i
   mergeValidationCounters(counters.validation, session.validation);
   mergeEditValidationCounters(counters.editValidation, session.editValidation);
   mergeToolCategoryCounters(counters.toolCategories, session.toolCategories);
+  mergeRecoveryBuildCounters(counters.failureRecovery, session.failureRecovery);
 }
 
 function summarizeSession(lines: string[]): SessionCounters {
@@ -405,7 +418,18 @@ function summarizeSession(lines: string[]): SessionCounters {
     }
   }
 
+  addFailureEpisodeCounters(session.failureRecovery, extractFailureEpisodesFromTranscriptLines(lines));
+
   return session;
+}
+
+function addFailureEpisodeCounters(
+  target: Record<FailureRecoveryCategory, RecoveryBuildCounters>,
+  episodes: ReturnType<typeof extractFailureEpisodesFromTranscriptLines>
+): void {
+  for (const episode of episodes) {
+    addFailureEpisodeToRecoveryCounters(target, episode);
+  }
 }
 
 function extractToolUses(entry: Record<string, unknown>): Array<{ id?: string; name: string; input?: unknown }> {
@@ -673,6 +697,7 @@ function baselineFromCounters(
       rawCommandsStored: false,
       rawFileContentsStored: false,
       rawSessionIdsStored: false,
+      rawMcpNamesStored: false,
       perSessionRowsStored: false
     },
     recent: {
@@ -707,7 +732,9 @@ function baselineFromCounters(
     },
     validation: validationAggregatesFromCounters(counters.validation),
     editValidation: editValidationFromCounters(counters.editValidation),
-    toolCategories: toolCategoryAggregatesFromCounters(counters.toolCategories)
+    toolCategories: toolCategoryAggregatesFromCounters(counters.toolCategories),
+    failureRecovery: recoveryAggregatesFromCounters(counters.failureRecovery),
+    blindRetry: blindRetryAggregatesFromCounters(counters.failureRecovery)
   };
 }
 
@@ -789,7 +816,8 @@ function emptyCounters(): BuildCounters {
     },
     validation: emptyValidationCounters(),
     editValidation: emptyEditValidationCounters(),
-    toolCategories: {}
+    toolCategories: {},
+    failureRecovery: emptyRecoveryBuildCounters()
   };
 }
 
@@ -815,7 +843,8 @@ function emptySessionCounters(): SessionCounters {
     repeatedFailure: false,
     validation: emptyValidationCounters(),
     editValidation: emptyEditValidationCounters(),
-    toolCategories: {}
+    toolCategories: {},
+    failureRecovery: emptyRecoveryBuildCounters()
   };
 }
 

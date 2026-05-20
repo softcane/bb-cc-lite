@@ -8,6 +8,7 @@ export function mergeHookSummary(
     compactionEvents: number;
     postCompactionActivity: number;
     repeatedFailures: TranscriptSummary["repeatedFailures"];
+    blindRetry?: TranscriptSummary["blindRetry"];
     latestTimestamp?: string;
     latestCompactionTimestamp?: string;
   }
@@ -27,11 +28,25 @@ export function mergeHookSummary(
     toolCalls: Math.max(transcript.toolCalls, hookData.toolCalls),
     failedToolResults: Math.max(transcript.failedToolResults, hookData.failedToolResults),
     repeatedFailures: [...repeatedFailures.values()].filter((failure) => failure.count >= 2),
+    blindRetry: strongestBlindRetry(transcript.blindRetry, hookData.blindRetry),
     compactionEvents: Math.max(transcript.compactionEvents, hookData.compactionEvents),
     postCompactionActivity: mergedPostCompactionActivity(transcript, hookData, latestTimestamp, latestCompactionTimestamp),
     latestTimestamp,
     latestCompactionTimestamp
   };
+}
+
+function strongestBlindRetry(
+  first: TranscriptSummary["blindRetry"],
+  second: TranscriptSummary["blindRetry"]
+): TranscriptSummary["blindRetry"] {
+  if (!first) {
+    return second;
+  }
+  if (!second) {
+    return first;
+  }
+  return second.blindRetryFailureCount > first.blindRetryFailureCount ? second : first;
 }
 
 function failureKey(failure: TranscriptSummary["repeatedFailures"][number]): string {

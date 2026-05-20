@@ -412,6 +412,26 @@ describe("parseTranscriptLines", () => {
     expectNoPrivacySentinels(summary);
   });
 
+  it("does not leak alphanumeric unknown tool names into summaries or statusline decisions", () => {
+    const rawUnknownToolName = "PrivateCustomerLookupTool";
+    const summary = parseTranscriptLines([
+      ...toolPair("private-1", rawUnknownToolName, true, { private_query: "BB_CC_LITE_RAW_PROMPT_SENTINEL" }),
+      ...toolPair("private-2", rawUnknownToolName, true, { private_query: "BB_CC_LITE_RAW_PROMPT_SENTINEL" })
+    ]);
+    const decision = decide(input({ contextPercent: 42 }), summary);
+    const rendered = renderStatusLine(decision, 180);
+
+    expect(summary.repeatedFailures).toEqual([{ toolName: "tool", count: 2 }]);
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "blind_retry",
+      primaryEvidence: "same tool failed twice without fix evidence"
+    });
+    expect(JSON.stringify(summary)).not.toContain(rawUnknownToolName);
+    expect(rendered).not.toContain(rawUnknownToolName);
+    expectNoPrivacySentinels(summary);
+  });
+
   it("counts a successful MCP tool call without warning or leaking the raw name", () => {
     const rawMcpName = "mcp__privateServer__lookupCustomer";
     const summary = parseTranscriptLines(mcpToolPairs(rawMcpName, [false]));
@@ -437,11 +457,11 @@ describe("parseTranscriptLines", () => {
     ]);
     expect(decision).toMatchObject({
       state: "Careful",
-      reasonCode: "tool_failure_repeated",
-      primaryEvidence: "MCP tool failed 2x",
-      action: "inspect the failing MCP step before another retry"
+      reasonCode: "blind_retry",
+      primaryEvidence: "same MCP tool failed twice without fix evidence",
+      action: "inspect first failure"
     });
-    expect(rendered).toContain("bb: Careful | MCP tool failed 2x | inspect the failing MCP step before another retry");
+    expect(rendered).toContain("bb: Careful | retry looks blind: same MCP tool failed twice | inspect first failure");
     expect(rendered).not.toContain(rawMcpName);
     expectNoPrivacySentinels(summary);
   });
@@ -463,13 +483,13 @@ describe("parseTranscriptLines", () => {
 
     expect(decision).toMatchObject({
       state: "Stop",
-      reasonCode: "repeated_tool_failure",
-      primaryEvidence: "MCP tool failed 3x",
-      impact: "Claude is retrying the same failing MCP tool",
-      action: "inspect MCP server/tool config before more retries"
+      reasonCode: "blind_retry_loop",
+      primaryEvidence: "same MCP tool failed 3x without fix evidence",
+      impact: "Claude is retrying the same failure without meaningful intervention",
+      action: "stop and inspect first failure"
     });
     expect(rendered).toContain(
-      "bb: Stop | why: MCP tool failed 3x; Claude is retrying the same failing MCP tool | do: inspect MCP server/tool config before more retries"
+      "bb: Stop | why: blind retry loop: same failure 3x without fix evidence"
     );
     expect(rendered).not.toContain(rawMcpName);
   });
@@ -575,6 +595,41 @@ function failedBashCommandPair(index: number, command: string): string[] {
             tool_use_id: `bash-test-${index}`,
             is_error: true,
             content: "tests failed"
+          }
+        ]
+      }
+    })
+  ];
+}
+
+function toolPair(id: string, name: string, isError: boolean, input: Record<string, unknown>): string[] {
+  return [
+    JSON.stringify({
+      timestamp: "2026-02-03T00:00:00.000Z",
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id,
+            name,
+            input
+          }
+        ]
+      }
+    }),
+    JSON.stringify({
+      timestamp: "2026-02-03T00:00:01.000Z",
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: id,
+            is_error: isError,
+            content: privacySentinels[1]
           }
         ]
       }

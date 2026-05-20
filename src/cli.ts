@@ -137,6 +137,7 @@ async function commandDoctor(args: ParsedArgs): Promise<void> {
     transcriptPath: stringFlag(args, "transcript"),
     refreshPricing: Boolean(args.flags["refresh-pricing"]),
     buildBaseline: Boolean(args.flags["build-baseline"]),
+    replayBaseline: Boolean(args.flags["replay-baseline"]),
     showBaseline: Boolean(args.flags.baseline),
     clearBaseline: Boolean(args.flags["clear-baseline"])
   });
@@ -194,7 +195,7 @@ Usage:
   bb-cc-lite statusline
   bb-cc-lite why [--session <id>] [--json]
   bb-cc-lite doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing]
-                    [--baseline] [--build-baseline] [--clear-baseline]
+                    [--baseline] [--build-baseline] [--replay-baseline] [--clear-baseline]
   bb-cc-lite unlearn
   bb-cc-lite uninstall [--scope local|project|user] [--force]
 
@@ -204,6 +205,7 @@ Learning:
   --no-learn skips baseline creation.
   doctor --baseline shows a safe aggregate summary, including recent and validation categories.
   doctor --build-baseline refreshes the baseline.
+  doctor --replay-baseline evaluates aggregate holdout metrics from local JSONL history.
   doctor --clear-baseline and unlearn remove only the baseline.
 `);
 }

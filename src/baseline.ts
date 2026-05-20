@@ -1,6 +1,7 @@
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { baselinePath } from "./paths.js";
+import type { BlindRetryAggregate, FailureRecoveryAggregate, FailureRecoveryCategory } from "./recovery-stats.js";
 
 export const BASELINE_SCHEMA = "bb-cc-lite.baseline.v1";
 export const BASELINE_VERSION = 1;
@@ -68,6 +69,7 @@ export interface PersonalBaseline {
     rawCommandsStored: false;
     rawFileContentsStored?: false;
     rawSessionIdsStored?: false;
+    rawMcpNamesStored?: false;
     perSessionRowsStored: false;
   };
   recent?: {
@@ -125,6 +127,8 @@ export interface PersonalBaseline {
     p75ToolStepsFromEditToValidation: number;
   };
   toolCategories?: Partial<Record<SafeToolCategory, ToolCategoryAggregate>>;
+  failureRecovery?: Partial<Record<FailureRecoveryCategory, FailureRecoveryAggregate>>;
+  blindRetry?: Partial<Record<FailureRecoveryCategory, BlindRetryAggregate>>;
 }
 
 interface BaselineScenario {
@@ -205,6 +209,8 @@ function isPersonalBaseline(value: unknown): value is PersonalBaseline {
   const validation = root.validation === undefined ? undefined : asRecord(root.validation);
   const editValidation = root.editValidation === undefined ? undefined : asRecord(root.editValidation);
   const toolCategories = root.toolCategories === undefined ? undefined : asRecord(root.toolCategories);
+  const failureRecovery = root.failureRecovery === undefined ? undefined : asRecord(root.failureRecovery);
+  const blindRetry = root.blindRetry === undefined ? undefined : asRecord(root.blindRetry);
 
   return (
     isIsoTimestamp(root.createdAt) &&
@@ -218,7 +224,9 @@ function isPersonalBaseline(value: unknown): value is PersonalBaseline {
     isRates(rates) &&
     (root.validation === undefined || isValidationAggregates(validation)) &&
     (root.editValidation === undefined || isEditValidation(editValidation)) &&
-    (root.toolCategories === undefined || isToolCategories(toolCategories))
+    (root.toolCategories === undefined || isToolCategories(toolCategories)) &&
+    (root.failureRecovery === undefined || isFailureRecoveryAggregates(failureRecovery)) &&
+    (root.blindRetry === undefined || isBlindRetryAggregates(blindRetry))
   );
 }
 
@@ -262,6 +270,7 @@ function isPrivacy(value: Record<string, unknown> | undefined): boolean {
     value.rawCommandsStored === false &&
     (value.rawFileContentsStored === undefined || value.rawFileContentsStored === false) &&
     (value.rawSessionIdsStored === undefined || value.rawSessionIdsStored === false) &&
+    (value.rawMcpNamesStored === undefined || value.rawMcpNamesStored === false) &&
     value.perSessionRowsStored === false
   );
 }
@@ -398,6 +407,54 @@ function isToolCategoryAggregate(value: Record<string, unknown> | undefined): bo
   );
 }
 
+function isFailureRecoveryAggregates(value: Record<string, unknown> | undefined): boolean {
+  return (
+    value !== undefined &&
+    Object.keys(value).every((key) => FAILURE_RECOVERY_CATEGORY_KEYS.has(key)) &&
+    Object.values(value).every((aggregate) => isFailureRecoveryAggregate(asRecord(aggregate)))
+  );
+}
+
+function isFailureRecoveryAggregate(value: Record<string, unknown> | undefined): boolean {
+  return (
+    value !== undefined &&
+    hasOnlyKeys(value, FAILURE_RECOVERY_AGGREGATE_KEYS) &&
+    isNonNegativeInteger(value.episodes) &&
+    isNonNegativeInteger(value.recovered) &&
+    isNonNegativeInteger(value.unrecovered) &&
+    isNonNegativeInteger(value.activeEnded) &&
+    isRate(value.recoveryRate) &&
+    isNonNegativeInteger(value.medianAttemptsBeforeRecovery) &&
+    isNonNegativeInteger(value.p75AttemptsBeforeRecovery) &&
+    isNonNegativeInteger(value.blindRetryEpisodes) &&
+    isNonNegativeInteger(value.blindRetryRecovered) &&
+    isNonNegativeInteger(value.blindRetryUnrecovered) &&
+    isConfidence(value.confidence)
+  );
+}
+
+function isBlindRetryAggregates(value: Record<string, unknown> | undefined): boolean {
+  return (
+    value !== undefined &&
+    Object.keys(value).every((key) => FAILURE_RECOVERY_CATEGORY_KEYS.has(key)) &&
+    Object.values(value).every((aggregate) => isBlindRetryAggregate(asRecord(aggregate)))
+  );
+}
+
+function isBlindRetryAggregate(value: Record<string, unknown> | undefined): boolean {
+  return (
+    value !== undefined &&
+    hasOnlyKeys(value, BLIND_RETRY_AGGREGATE_KEYS) &&
+    isNonNegativeInteger(value.episodes) &&
+    isNonNegativeInteger(value.recovered) &&
+    isNonNegativeInteger(value.unrecovered) &&
+    isRate(value.recoveryRate) &&
+    isNonNegativeInteger(value.carefulLikeEpisodes) &&
+    isNonNegativeInteger(value.stopLikeEpisodes) &&
+    isConfidence(value.confidence)
+  );
+}
+
 function isConfidence(value: unknown): value is BaselineConfidence {
   return value === "low" || value === "medium" || value === "high";
 }
@@ -476,7 +533,9 @@ const ROOT_KEYS = new Set([
   "rates",
   "validation",
   "editValidation",
-  "toolCategories"
+  "toolCategories",
+  "failureRecovery",
+  "blindRetry"
 ]);
 const SOURCE_KEYS = new Set([
   "kind",
@@ -499,6 +558,7 @@ const PRIVACY_KEYS = new Set([
   "rawCommandsStored",
   "rawFileContentsStored",
   "rawSessionIdsStored",
+  "rawMcpNamesStored",
   "perSessionRowsStored"
 ]);
 const RECENT_KEYS = new Set(["windowKind", "windowSize", "transcriptFilesScanned", "sessionsSeen"]);
@@ -558,6 +618,41 @@ const SAFE_TOOL_CATEGORY_KEYS = new Set([
   "MCP"
 ]);
 const TOOL_CATEGORY_AGGREGATE_KEYS = new Set(["calls", "failures", "repeatedFailureSessions", "recovered", "unrecovered", "recoveryRate"]);
+const FAILURE_RECOVERY_CATEGORY_KEYS = new Set([
+  "tests",
+  "lint",
+  "typecheck",
+  "build",
+  "read",
+  "grep",
+  "glob",
+  "ls",
+  "edit",
+  "mcp",
+  "tool"
+]);
+const FAILURE_RECOVERY_AGGREGATE_KEYS = new Set([
+  "episodes",
+  "recovered",
+  "unrecovered",
+  "activeEnded",
+  "recoveryRate",
+  "medianAttemptsBeforeRecovery",
+  "p75AttemptsBeforeRecovery",
+  "blindRetryEpisodes",
+  "blindRetryRecovered",
+  "blindRetryUnrecovered",
+  "confidence"
+]);
+const BLIND_RETRY_AGGREGATE_KEYS = new Set([
+  "episodes",
+  "recovered",
+  "unrecovered",
+  "recoveryRate",
+  "carefulLikeEpisodes",
+  "stopLikeEpisodes",
+  "confidence"
+]);
 
 const FORBIDDEN_RAW_DATA_KEYS = new Set([
   "args",
@@ -591,6 +686,8 @@ const FORBIDDEN_RAW_DATA_KEYS = new Set([
   "rawPrompts",
   "rawSessionId",
   "rawSessionIds",
+  "rawMcpName",
+  "rawMcpNames",
   "rawToolOutput",
   "rawToolOutputs",
   "sessionId",

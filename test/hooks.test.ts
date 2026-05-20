@@ -118,6 +118,27 @@ describe("optional Claude Code hooks", () => {
     expectNoPrivacySentinels(event);
   });
 
+  it("sanitizes alphanumeric unknown hook tool names instead of treating them as safe built-ins", () => {
+    const rawUnknownToolName = "PrivateCustomerLookupTool";
+    const event = parseHookPayload(
+      JSON.stringify({
+        session_id: "session-alpha",
+        hook_event_name: "PostToolUseFailure",
+        tool_name: rawUnknownToolName,
+        tool_input: {
+          private_query: privacySentinels[0]
+        }
+      })
+    );
+
+    expect(event).toMatchObject({
+      kind: "tool_failure",
+      toolName: "tool"
+    });
+    expect(JSON.stringify(event)).not.toContain(rawUnknownToolName);
+    expectNoPrivacySentinels(event);
+  });
+
   it("stores hook events without raw prompt or tool-output sentinels", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-privacy-"));
     try {
@@ -216,8 +237,8 @@ describe("optional Claude Code hooks", () => {
       const careful = decide(input({ sessionId }), mergeHookSummary(transcript(), carefulSummary));
       expect(careful).toMatchObject({
         state: "Careful",
-        reasonCode: "tool_failure_repeated",
-        primaryEvidence: "Bash failed 2x running tests"
+        reasonCode: "blind_retry",
+        primaryEvidence: "same test failed twice without fix evidence"
       });
 
       const thirdEvent = parseHookPayload(
@@ -239,8 +260,8 @@ describe("optional Claude Code hooks", () => {
       const stop = decide(input({ sessionId }), mergeHookSummary(transcript(), stopSummary));
       expect(stop).toMatchObject({
         state: "Stop",
-        reasonCode: "repeated_tool_failure",
-        primaryEvidence: "Bash failed 3x running tests"
+        reasonCode: "blind_retry_loop",
+        primaryEvidence: "same test failed 3x without fix evidence"
       });
       expect(await hookSummary(hashValue("other-session"), storePath)).toMatchObject({
         failedToolResults: 0,
@@ -279,9 +300,9 @@ describe("optional Claude Code hooks", () => {
       const careful = decide(input({ sessionId }), mergeHookSummary(transcript(), carefulSummary));
       expect(careful).toMatchObject({
         state: "Careful",
-        reasonCode: "tool_failure_repeated",
-        primaryEvidence: "MCP tool failed 2x",
-        action: "inspect the failing MCP step before another retry"
+        reasonCode: "blind_retry",
+        primaryEvidence: "same MCP tool failed twice without fix evidence",
+        action: "inspect first failure"
       });
 
       const thirdEvent = parseHookPayload(
@@ -300,9 +321,9 @@ describe("optional Claude Code hooks", () => {
       const stop = decide(input({ sessionId }), mergeHookSummary(transcript(), stopSummary));
       expect(stop).toMatchObject({
         state: "Stop",
-        reasonCode: "repeated_tool_failure",
-        primaryEvidence: "MCP tool failed 3x",
-        action: "inspect MCP server/tool config before more retries"
+        reasonCode: "blind_retry_loop",
+        primaryEvidence: "same MCP tool failed 3x without fix evidence",
+        action: "stop and inspect first failure"
       });
 
       const storeText = await readFile(storePath, "utf8");

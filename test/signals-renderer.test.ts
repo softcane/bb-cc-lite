@@ -85,6 +85,58 @@ describe("signals and renderer", () => {
     });
   });
 
+  it("prefers blind retry wording over generic repeated failure at Careful and Stop", () => {
+    const careful = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        failedToolResults: 2,
+        repeatedFailures: [{ toolName: "Bash", purpose: "tests", count: 2 }],
+        blindRetry: {
+          category: "tests",
+          label: "test",
+          attemptCount: 2,
+          recovered: false,
+          activeEnded: true,
+          blindRetryFailureCount: 2
+        }
+      })
+    );
+
+    expect(careful).toMatchObject({
+      state: "Careful",
+      reasonCode: "blind_retry",
+      diagnosis: "retry looks blind: same test failed twice",
+      primaryEvidence: "same test failed twice without fix evidence",
+      action: "inspect first failure"
+    });
+    expect(renderStatusLine(careful, 140)).toContain("retry looks blind: same test failed twice");
+
+    const stop = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        failedToolResults: 3,
+        repeatedFailures: [{ toolName: "Bash", purpose: "tests", count: 3 }],
+        blindRetry: {
+          category: "tests",
+          label: "test",
+          attemptCount: 3,
+          recovered: false,
+          activeEnded: true,
+          blindRetryFailureCount: 3
+        }
+      })
+    );
+
+    expect(stop).toMatchObject({
+      state: "Stop",
+      reasonCode: "blind_retry_loop",
+      diagnosis: "blind retry loop: same failure 3x without fix evidence",
+      primaryEvidence: "same test failed 3x without fix evidence",
+      action: "stop and inspect first failure"
+    });
+    expect(renderStatusLine(stop, 160)).toContain("why: blind retry loop: same failure 3x without fix evidence");
+  });
+
   it("renders the required Careful MCP wording without raw tool names", () => {
     const rawMcpName = "mcp__privateServer__failingLookup";
     const decision = decide(
@@ -164,11 +216,11 @@ describe("signals and renderer", () => {
     expect(decision).toMatchObject({
       state: "Careful",
       reasonCode: "tool_failure_repeated",
-      diagnosis: "tests failed twice; usually recovers after one fix",
+      diagnosis: "tests failed twice; usually recovers after one focused fix",
       baselineNote: "test failures usually recovered after one focused fix",
       action: "inspect first failure"
     });
-    expect(renderStatusLine(decision, 140)).toContain("tests failed twice; usually recovers after one fix");
+    expect(renderStatusLine(decision, 140)).toContain("tests failed twice; usually recovers after one focused fix");
     expect(formatWhy(decision)).toContain("Baseline: test failures usually recovered after one focused fix.");
   });
 
@@ -202,7 +254,7 @@ describe("signals and renderer", () => {
     expect(decision).toMatchObject({
       state: "Careful",
       reasonCode: "tool_failure_repeated",
-      diagnosis: "typecheck failed twice; usually recovers after one fix",
+      diagnosis: "typecheck failed twice; usually recovers after one focused fix",
       baselineNote: "typecheck failures usually recovered after one focused fix",
       action: "inspect first failure"
     });
@@ -406,12 +458,12 @@ describe("signals and renderer", () => {
       state: "Stop",
       reasonCode: "repeated_tool_failure",
       diagnosisCode: "validation_command_loop",
-      diagnosis: "test loop: usually unrecovered after 3x",
-      baselineNote: "recent test loops were usually unrecovered after 3 failures",
-      action: "inspect first failure"
+      diagnosis: "test loop rarely recovered after 3 failures",
+      baselineNote: "test loops rarely recovered after 3 failures",
+      action: "stop retrying and inspect first failure"
     });
-    expect(renderStatusLine(decision, 140)).toContain("why: test loop: usually unrecovered after 3x");
-    expect(formatWhy(decision)).toContain("Baseline: recent test loops were usually unrecovered after 3 failures.");
+    expect(renderStatusLine(decision, 140)).toContain("why: test loop rarely recovered after 3 failures");
+    expect(formatWhy(decision)).toContain("Baseline: test loops rarely recovered after 3 failures.");
   });
 
   it("explains baseline influence in why without raw details", () => {

@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { join } from "node:path";
 import { clearBaseline as clearBaselineFile, readBaseline, summarizeBaseline } from "./baseline.js";
 import { buildBaseline } from "./baseline-builder.js";
+import { evaluateHistoricalReplay, formatHistoricalReplayMetrics } from "./historical-replay.js";
 import { baselinePath, pricingCachePath } from "./paths.js";
 import { refreshPricing } from "./pricing.js";
 import {
@@ -24,6 +25,7 @@ export interface DoctorOptions {
   showBaseline?: boolean;
   clearBaseline?: boolean;
   buildBaseline?: boolean;
+  replayBaseline?: boolean;
   appHomePath?: string;
 }
 
@@ -101,6 +103,9 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorChec
   if (options.showBaseline) {
     await addBaselineSummaryCheck(checks, options);
   }
+  if (options.replayBaseline) {
+    await addBaselineReplayCheck(checks, options);
+  }
   await addLiteLLMChecks(checks, options.refreshPricing || false);
   return checks;
 }
@@ -150,6 +155,23 @@ async function addBaselineSummaryCheck(checks: DoctorCheck[], options: DoctorOpt
     name: "baseline",
     message: "no readable personal baseline found; run doctor --build-baseline to create one"
   });
+}
+
+async function addBaselineReplayCheck(checks: DoctorCheck[], options: DoctorOptions): Promise<void> {
+  try {
+    const metrics = await evaluateHistoricalReplay({ homeDir: options.homeDir });
+    checks.push({
+      level: metrics.holdoutSessions > 0 ? "OK" : "WARN",
+      name: "baseline-replay",
+      message: formatHistoricalReplayMetrics(metrics)
+    });
+  } catch {
+    checks.push({
+      level: "WARN",
+      name: "baseline-replay",
+      message: "could not evaluate local Claude JSONL history"
+    });
+  }
 }
 
 export async function buildPersonalBaseline(
@@ -203,6 +225,8 @@ function extendedBaselineSummary(value: unknown): string {
     recent?: { windowKind?: unknown; windowSize?: unknown; sessionsSeen?: unknown };
     validation?: Record<string, unknown>;
     toolCategories?: Record<string, unknown>;
+    failureRecovery?: Record<string, unknown>;
+    blindRetry?: Record<string, unknown>;
   };
   const parts: string[] = [];
   const recent = baseline.recent;
@@ -221,6 +245,14 @@ function extendedBaselineSummary(value: unknown): string {
   const toolCategories = baseline.toolCategories ? Object.keys(baseline.toolCategories).sort() : [];
   if (toolCategories.length > 0) {
     parts.push(`tool categories: ${toolCategories.join(", ")}`);
+  }
+  const recoveryCategories = baseline.failureRecovery ? Object.keys(baseline.failureRecovery).sort() : [];
+  if (recoveryCategories.length > 0) {
+    parts.push(`recovery categories: ${recoveryCategories.join(", ")}`);
+  }
+  const blindRetryCategories = baseline.blindRetry ? Object.keys(baseline.blindRetry).sort() : [];
+  if (blindRetryCategories.length > 0) {
+    parts.push(`blind retry categories: ${blindRetryCategories.join(", ")}`);
   }
   return parts.length > 0 ? `; ${parts.join("; ")}` : "";
 }

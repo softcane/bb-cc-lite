@@ -14,7 +14,8 @@ const EMPTY_HOOK_SUMMARY = {
   toolCalls: 0,
   compactionEvents: 0,
   postCompactionActivity: 0,
-  repeatedFailures: []
+  repeatedFailures: [],
+  blindRetry: undefined
 };
 
 export async function createStatusLine(rawInput: string, terminalColumns?: number): Promise<string> {

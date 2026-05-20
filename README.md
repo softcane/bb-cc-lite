@@ -28,8 +28,10 @@ Prefer not to install globally? Prefix commands with `npx --yes bb-cc-lite`.
 ```text
 bb: Healthy | ctx 42% | $0.18 | cache warm | continue normally
 bb: Careful | edits not checked yet | run focused check
+bb: Careful | retry looks blind: same test failed twice | inspect first failure
 bb: Careful | tests failed twice; usually recovers after one fix | inspect first failure
-bb: Stop | why: test loop: usually unrecovered after 3x | do: inspect first failure
+bb: Stop | why: blind retry loop: same failure 3x without fix evidence | do: stop and inspect first failure
+bb: Stop | why: test loop rarely recovered after 3 failures | do: stop retrying and inspect first failure
 ```
 
 `Healthy` means keep going. `Careful` means slow down and verify. `Stop` means take over before Claude burns more turns.
@@ -40,6 +42,7 @@ bb: Stop | why: test loop: usually unrecovered after 3x | do: inspect first fail
 bb-cc-lite why
 bb-cc-lite doctor
 bb-cc-lite doctor --baseline
+bb-cc-lite doctor --replay-baseline
 bb-cc-lite unlearn
 bb-cc-lite uninstall --scope local
 ```
@@ -63,12 +66,15 @@ Rebuild or inspect it:
 ```bash
 bb-cc-lite doctor --build-baseline
 bb-cc-lite doctor --baseline
+bb-cc-lite doctor --replay-baseline
 ```
+
+`doctor --replay-baseline` builds a baseline from older local sessions, replays newer holdout sessions, and prints aggregate-only QA metrics such as Stop precision, false Stops, missed unrecovered loops, blind retry precision, low-sample suppressions, and category coverage.
 
 ## Privacy
 
 Everything stays local. `bb-cc-lite` does not upload transcripts, prompts, tool output, shell output, file contents, API keys, or raw Claude session ids.
 
-It stores derived data only: counts, rates, reason codes, cost/context numbers, weak pattern labels, and hashed session keys.
+It stores derived data only: counts, rates, percentiles, confidence labels, reason codes, cost/context numbers, weak pattern labels, and hashed session keys.
 
 LiteLLM is used only as public pricing data for cost estimates. `bb-cc-lite` does not run a proxy, gateway, dashboard, or message router.
