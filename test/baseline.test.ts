@@ -85,7 +85,7 @@ describe("personal baseline storage", () => {
         ...sampleBaseline(),
         source: {
           ...sampleBaseline().source,
-          maxFiles: 500,
+          maxFiles: 1500,
           scanStrategy: "mtime_desc_bounded_parallel",
           parallelism: 8
         },
@@ -251,14 +251,25 @@ describe("personal baseline builder", () => {
       const projectDir = join(claudeProjectsDir, "project");
       await mkdir(projectDir, { recursive: true });
 
-      await expect(buildBaseline({ claudeProjectsDir, appHomePath: join(tempDir, "empty-app") })).resolves.toMatchObject({
-        written: false,
+      const emptyAppHome = join(tempDir, "empty-app");
+      await expect(buildBaseline({ claudeProjectsDir, appHomePath: emptyAppHome })).resolves.toMatchObject({
+        written: true,
         baseline: {
           source: {
             transcriptFilesScanned: 0,
             sessionsSeen: 0,
-            malformedLines: 0
+            malformedLines: 0,
+            maxFiles: 1500,
+            maxBytesPerTranscript: 1048576
           }
+        }
+      });
+      await expect(readBaseline(join(emptyAppHome, "baseline.json"))).resolves.toMatchObject({
+        source: {
+          transcriptFilesScanned: 0,
+          sessionsSeen: 0,
+          maxFiles: 1500,
+          maxBytesPerTranscript: 1048576
         }
       });
 
@@ -792,7 +803,7 @@ function sampleBaseline(): PersonalBaseline {
       transcriptFilesScanned: 0,
       sessionsSeen: 0,
       malformedLines: 0,
-      maxBytesPerTranscript: 524288
+      maxBytesPerTranscript: 1048576
     },
     privacy: {
       rawPromptsStored: false,

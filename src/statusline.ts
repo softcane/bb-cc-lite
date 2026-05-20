@@ -1,5 +1,6 @@
 import { mergeHookSummary } from "./hook-summary.js";
 import { readBaseline } from "./baseline.js";
+import { maybeTriggerBaselineRefresh, type MaybeTriggerBaselineRefreshOptions } from "./baseline-refresh.js";
 import { toDecisionPresentation } from "./decision-presentation.js";
 import { estimateCostUsd, loadPricing } from "./pricing.js";
 import { renderStatusLine } from "./renderer.js";
@@ -18,7 +19,15 @@ const EMPTY_HOOK_SUMMARY = {
   blindRetry: undefined
 };
 
-export async function createStatusLine(rawInput: string, terminalColumns?: number): Promise<string> {
+export interface CreateStatusLineOptions {
+  baselineRefresh?: Omit<MaybeTriggerBaselineRefreshOptions, "baseline">;
+}
+
+export async function createStatusLine(
+  rawInput: string,
+  terminalColumns?: number,
+  options: CreateStatusLineOptions = {}
+): Promise<string> {
   const input = parseStatusLineInput(rawInput);
   const sessionKey = sessionKeyFromId(input.sessionId);
   const transcript = mergeHookSummary(
@@ -36,7 +45,9 @@ export async function createStatusLine(rawInput: string, terminalColumns?: numbe
   }
 
   const previous = sessionKey ? await latestDecision(sessionKey) : undefined;
-  const decision = decide(input, transcript, { previous, baseline: await readBaseline() });
+  const baseline = await readBaseline();
+  const decision = decide(input, transcript, { previous, baseline });
   await recordDecision(decision);
+  await maybeTriggerBaselineRefresh({ ...options.baselineRefresh, baseline });
   return renderStatusLine(toDecisionPresentation(decision), input.terminalWidth || terminalColumns);
 }

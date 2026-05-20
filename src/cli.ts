@@ -5,6 +5,7 @@ import {
   formatDoctorChecks,
   runDoctor
 } from "./doctor.js";
+import { runBaselineRefresh } from "./baseline-refresh.js";
 import { parseHookPayload } from "./hook-payload.js";
 import { installStatusLine, uninstallStatusLine, type SettingsScope } from "./settings.js";
 import { readStdin } from "./status-input.js";
@@ -39,6 +40,9 @@ async function main(): Promise<void> {
     case "doctor":
       await commandDoctor(args);
       break;
+    case "baseline-refresh":
+      await commandBaselineRefresh(args);
+      break;
     case "hook":
       await commandHook(args);
       break;
@@ -68,6 +72,10 @@ async function commandInstall(args: ParsedArgs): Promise<void> {
     homeDir: stringFlag(args, "home")
   });
   console.log(result.message);
+  if (result.status === "refused") {
+    process.exitCode = 1;
+    return;
+  }
   if (!shouldLearn) {
     console.log("Personal baseline skipped (--no-learn).");
     return;
@@ -100,6 +108,25 @@ async function commandStatusLine(): Promise<void> {
     process.stdout.write(`${await createStatusLine(raw, process.stdout.columns)}\n`);
   } catch {
     process.stdout.write("bb: Careful | statusline crashed | run bb-cc-lite doctor\n");
+  }
+}
+
+async function commandBaselineRefresh(args: ParsedArgs): Promise<void> {
+  const quiet = Boolean(args.flags.quiet);
+  const result = await runBaselineRefresh({ homeDir: stringFlag(args, "home") });
+  if (!quiet) {
+    if (result.ok && result.skipped === "disabled") {
+      console.log("Personal baseline auto refresh disabled.");
+    } else if (result.ok && result.skipped === "locked") {
+      console.log("Personal baseline refresh already running.");
+    } else if (result.ok) {
+      console.log("Personal baseline refreshed.");
+    } else {
+      console.log("Could not refresh personal baseline.");
+    }
+  }
+  if (!result.ok) {
+    process.exitCode = 1;
   }
 }
 
@@ -201,7 +228,7 @@ Usage:
 
 Learning:
   install builds a small local baseline by default.
-  install replaces an existing Claude statusLine and backs it up for uninstall.
+  install preserves an existing Claude statusLine unless --replace is passed.
   --no-learn skips baseline creation.
   doctor --baseline shows a safe aggregate summary, including recent and validation categories.
   doctor --build-baseline refreshes the baseline.

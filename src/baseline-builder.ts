@@ -26,9 +26,9 @@ import {
 } from "./recovery-stats.js";
 import type { TokenUsage } from "./types.js";
 
-const DEFAULT_MAX_FILES = 500;
-const DEFAULT_MAX_BYTES_PER_TRANSCRIPT = 512 * 1024;
-const SCAN_BUDGET_MS = 5_000;
+const DEFAULT_MAX_FILES = 1500;
+const DEFAULT_MAX_BYTES_PER_TRANSCRIPT = 1024 * 1024;
+const SCAN_BUDGET_MS = 30_000;
 const TRANSCRIPT_READ_CONCURRENCY = 8;
 const RECENT_WINDOW_SIZE = 100;
 const VALIDATION_CATEGORIES: ValidationCategory[] = ["tests", "lint", "typecheck", "build"];
@@ -168,10 +168,8 @@ export async function buildBaseline(options: BuildBaselineOptions = {}): Promise
   }
 
   const baseline = baselineFromCounters(counters, { maxFiles, maxBytesPerTranscript }, options.now ?? new Date());
-  const written = baseline.source.transcriptFilesScanned > 0;
-  if (written) {
-    await writeBaseline(baseline, options.appHomePath ? join(options.appHomePath, "baseline.json") : baselinePath(homeDir));
-  }
+  await writeBaseline(baseline, options.appHomePath ? join(options.appHomePath, "baseline.json") : baselinePath(homeDir));
+  const written = true;
   return { baseline, written };
 }
 
