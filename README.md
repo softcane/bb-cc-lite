@@ -16,6 +16,8 @@ npx bb-cc-lite install --scope local
 
 Restart Claude Code in the project. The line appears at the bottom.
 
+The statusline runtime is installed into Claude settings; the `npx` install does not add a global `bb-cc-lite` command to your shell. Run later CLI commands through `npx bb-cc-lite ...`, or install globally with `npm install -g bb-cc-lite` if you want bare `bb-cc-lite ...` commands.
+
 Install replaces any existing Claude Code `statusLine` by default and stores a backup so `uninstall` can restore it. It also builds a local personal baseline by default after it installs the statusline. It reads bounded local Claude Code JSONL once, newest eligible files first, extracts aggregate patterns from past sessions, and stores a small `baseline.json` under the `bb-cc-lite` app home. Use `--no-learn` to install the statusline without scanning old JSONL:
 
 ```bash
@@ -47,7 +49,7 @@ bb: Stop | why: test loop: usually unrecovered after 3x | do: inspect first fail
 ## Why
 
 ```bash
-bb-cc-lite why
+npx bb-cc-lite why
 ```
 
 ```text
@@ -59,7 +61,7 @@ Next action: inspect first failure.
 By default, `why` explains the latest recorded decision. To inspect a specific Claude Code session, pass its session id:
 
 ```bash
-bb-cc-lite why --session <session-id>
+npx bb-cc-lite why --session <session-id>
 ```
 
 `why` may mention when the personal baseline influenced wording or priority, including safe recovery and edit-lag explanations recorded by the statusline. It reads only the derived local event store; it does not reopen old transcripts to expose raw content.
@@ -71,10 +73,10 @@ bb-cc-lite why --session <session-id>
 Refresh, inspect, or clear the baseline:
 
 ```bash
-bb-cc-lite doctor --build-baseline
-bb-cc-lite doctor --baseline
-bb-cc-lite doctor --clear-baseline
-bb-cc-lite unlearn
+npx bb-cc-lite doctor --build-baseline
+npx bb-cc-lite doctor --baseline
+npx bb-cc-lite doctor --clear-baseline
+npx bb-cc-lite unlearn
 ```
 
 `doctor --baseline` prints a safe aggregate summary, including recent window, validation category, and safe tool category names when present. `doctor --clear-baseline` and `unlearn` remove only `baseline.json`.
@@ -92,10 +94,10 @@ LiteLLM is used only as public pricing data for cost estimates. `bb-cc-lite` doe
 ## Undo
 
 ```bash
-bb-cc-lite doctor
-bb-cc-lite doctor --clear-baseline
-bb-cc-lite unlearn
-bb-cc-lite uninstall --scope local
+npx bb-cc-lite doctor
+npx bb-cc-lite doctor --clear-baseline
+npx bb-cc-lite unlearn
+npx bb-cc-lite uninstall --scope local
 ```
 
 Install backs up the previous Claude Code `statusLine` before replacing it.
