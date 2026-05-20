@@ -34,6 +34,8 @@ export interface ToolFailureSummary {
   toolName: string;
   count: number;
   purpose?: string;
+  category?: "MCP";
+  identityHash?: string;
 }
 
 export interface TranscriptSummary {
@@ -67,6 +69,8 @@ export interface DerivedHookEvent {
   hookEventName: string;
   toolName?: string;
   purpose?: string;
+  category?: "MCP";
+  identityHash?: string;
   toolCount?: number;
 }
 

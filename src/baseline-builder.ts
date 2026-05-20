@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { readdir, stat } from "node:fs/promises";
 import { baselinePath } from "./paths.js";
 import { asRecord, extractUsage, mergeUsage, stringField } from "./status-input.js";
-import { isEditTool, safeToolName } from "./tool-metadata.js";
+import { classifyResultPurpose, classifyToolIdentity } from "./tool-metadata.js";
 import { readTranscriptTail } from "./transcript-reader.js";
 import {
   type BaselineConfidence,
@@ -22,7 +22,18 @@ const SCAN_BUDGET_MS = 5_000;
 const TRANSCRIPT_READ_CONCURRENCY = 8;
 const RECENT_WINDOW_SIZE = 100;
 const VALIDATION_CATEGORIES: ValidationCategory[] = ["tests", "lint", "typecheck", "build"];
-const SAFE_TOOL_CATEGORIES: SafeToolCategory[] = ["Bash:tests", "Bash:lint", "Bash:typecheck", "Bash:build", "Read", "Grep", "Glob", "LS", "Edit"];
+const SAFE_TOOL_CATEGORIES: SafeToolCategory[] = [
+  "Bash:tests",
+  "Bash:lint",
+  "Bash:typecheck",
+  "Bash:build",
+  "Read",
+  "Grep",
+  "Glob",
+  "LS",
+  "Edit",
+  "MCP"
+];
 
 export interface BuildBaselineOptions {
   homeDir?: string;
@@ -68,6 +79,8 @@ interface TranscriptCandidate {
 interface ToolMeta {
   name: string;
   purpose?: string;
+  category?: "MCP";
+  identityHash?: string;
   isEdit: boolean;
   isReadSearch: boolean;
 }
@@ -290,13 +303,7 @@ function summarizeSession(lines: string[]): SessionCounters {
 
     for (const toolUse of extractToolUses(entry)) {
       session.toolCalls += 1;
-      const name = safeToolName(toolUse.name, { basenameOnly: true });
-      const meta = {
-        name,
-        purpose: classifyPurpose(name, toolUse.input),
-        isEdit: isEditTool(name, { basenameOnly: true }),
-        isReadSearch: isReadSearchTool(name)
-      };
+      const meta = metaFromToolName(toolUse.name, toolUse.input);
       if (meta.isReadSearch) {
         session.readSearchToolCalls += 1;
       }
@@ -307,7 +314,7 @@ function summarizeSession(lines: string[]): SessionCounters {
 
     for (const toolResult of extractToolResults(entry)) {
       const meta = resolveMeta(toolResult, toolById);
-      const key = `${meta.name}:${meta.purpose || "general"}`;
+      const key = failureKey(meta);
       const validationCategory = validationCategoryForPurpose(meta.purpose);
       const toolCategory = safeToolCategory(meta);
       const isValidation = meta.name === "Bash" && validationCategory !== undefined;
@@ -471,47 +478,7 @@ function resolveMeta(
   if (byId) {
     return { ...byId, purpose: toolResult.purpose || byId.purpose };
   }
-  const name = safeToolName(toolResult.toolName, { basenameOnly: true });
-  return {
-    name,
-    purpose: toolResult.purpose,
-    isEdit: isEditTool(name, { basenameOnly: true }),
-    isReadSearch: isReadSearchTool(name)
-  };
-}
-
-function classifyPurpose(toolName: string, input: unknown): string | undefined {
-  if (toolName !== "Bash") {
-    return undefined;
-  }
-  const command = stringField(asRecord(input)?.command);
-  if (!command) {
-    return undefined;
-  }
-  if (/\b(npm|pnpm|yarn|bun)\s+(run\s+)?test\b|\b(vitest|jest|mocha|pytest|cargo\s+test|go\s+test|rspec|playwright\s+test)\b/i.test(command)) {
-    return "tests";
-  }
-  if (/\b(npm|pnpm|yarn|bun)\s+(run\s+)?lint\b|\b(eslint|ruff|flake8|cargo\s+clippy)\b/i.test(command)) {
-    return "lint";
-  }
-  if (/\b(npm|pnpm|yarn|bun)\s+(run\s+)?typecheck\b|\btsc\s+--noEmit\b|\bmypy\b/i.test(command)) {
-    return "typecheck";
-  }
-  if (/\b(npm|pnpm|yarn|bun)\s+(run\s+)?(build|compile)\b|\b(tsc|vite\s+build|cargo\s+build|go\s+build)\b/i.test(command)) {
-    return "build";
-  }
-  if (/^\s*git\b/i.test(command)) {
-    return "git";
-  }
-  return undefined;
-}
-
-function classifyResultPurpose(part: Record<string, unknown>): string | undefined {
-  const title = stringField(part.title) || stringField(part.summary);
-  if (title && /test/i.test(title)) {
-    return "tests";
-  }
-  return undefined;
+  return { ...metaFromToolName(toolResult.toolName, undefined), purpose: toolResult.purpose };
 }
 
 function isValidationPurpose(purpose: string | undefined): boolean {
@@ -523,6 +490,9 @@ function validationCategoryForPurpose(purpose: string | undefined): ValidationCa
 }
 
 function safeToolCategory(meta: ToolMeta): SafeToolCategory | undefined {
+  if (meta.category === "MCP") {
+    return "MCP";
+  }
   if (meta.name === "Bash") {
     const category = validationCategoryForPurpose(meta.purpose);
     return category ? (`Bash:${category}` as SafeToolCategory) : undefined;
@@ -536,8 +506,20 @@ function safeToolCategory(meta: ToolMeta): SafeToolCategory | undefined {
   return undefined;
 }
 
-function isReadSearchTool(toolName: string): boolean {
-  return toolName === "Read" || toolName === "Grep" || toolName === "Glob" || toolName === "LS";
+function metaFromToolName(toolName: string | undefined, input: unknown): ToolMeta {
+  const identity = classifyToolIdentity(toolName, input, { basenameOnly: true });
+  return {
+    name: identity.displayName,
+    purpose: identity.purpose,
+    category: identity.category,
+    identityHash: identity.identityHash,
+    isEdit: identity.isEdit,
+    isReadSearch: identity.isReadSearch && (identity.displayName === "Read" || identity.displayName === "Grep" || identity.displayName === "Glob" || identity.displayName === "LS")
+  };
+}
+
+function failureKey(meta: Pick<ToolMeta, "name" | "purpose" | "category" | "identityHash">): string {
+  return meta.category === "MCP" && meta.identityHash ? `MCP:${meta.identityHash}` : `${meta.name}:${meta.purpose || "general"}`;
 }
 
 function truthyError(value: Record<string, unknown>): boolean {
@@ -681,9 +663,15 @@ function baselineFromCounters(
     },
     privacy: {
       rawPromptsStored: false,
+      rawAssistantTextStored: false,
       rawToolOutputStored: false,
+      rawShellOutputStored: false,
       rawPathsStored: false,
+      rawTranscriptPathsStored: false,
+      rawWorkspacePathsStored: false,
       rawCommandsStored: false,
+      rawFileContentsStored: false,
+      rawSessionIdsStored: false,
       perSessionRowsStored: false
     },
     recent: {

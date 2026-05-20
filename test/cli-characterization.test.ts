@@ -382,6 +382,53 @@ describe("CLI behavior characterization", () => {
     }
   });
 
+  it("keeps MCP statusline, why, why --json, and store output free of raw MCP names", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const env = cliEnv(workspace);
+      const rawMcpName = "mcp__privateServer__failingLookup";
+      const transcriptPath = join(workspace.root, "transcripts", "mcp-stop.jsonl");
+      await writeTranscript(transcriptPath, repeatedFailedMcpTranscript(rawMcpName, 3));
+
+      const statusline = await runCli(["statusline"], {
+        env,
+        input: statusInput({
+          session_id: "session-mcp-stop",
+          transcript_path: transcriptPath,
+          terminal_width: 220
+        })
+      });
+
+      expect(statusline.exitCode).toBe(0);
+      expect(statusline.stderr).toBe("");
+      expect(statusline.stdout).toContain(
+        "bb: Stop | why: MCP tool failed 3x; Claude is retrying the same failing MCP tool | do: inspect MCP server/tool config before more retries"
+      );
+
+      const why = await runCli(["why"], { env });
+      expect(why.exitCode).toBe(0);
+      expect(why.stdout).toContain("Reason: MCP tool failed 3x. Claude is retrying the same failing MCP tool.");
+      expect(why.stdout).toContain("Next action: inspect MCP server/tool config before more retries.");
+
+      const whyJson = await runCli(["why", "--json"], { env });
+      expect(whyJson.exitCode).toBe(0);
+      expect(JSON.parse(whyJson.stdout)).toMatchObject({
+        state: "Stop",
+        reasonCode: "repeated_tool_failure",
+        primaryEvidence: "MCP tool failed 3x"
+      });
+
+      const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
+      for (const output of [statusline.stdout, why.stdout, whyJson.stdout, storeText]) {
+        expect(output).not.toContain(rawMcpName);
+        expect(output).not.toContain("mcp__");
+      }
+      expectNoPrivacySentinels(statusline.stdout, why.stdout, whyJson.stdout, storeText);
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
   it("characterizes fixture-based status states through the CLI path", async () => {
     const cases: Array<{
       name: string;
@@ -559,6 +606,43 @@ function repeatedFailedTestTranscript(count: number): string[] {
             tool_use_id: `bash-test-${index}`,
             is_error: true,
             content: `failed test output ${privacySentinels[1]} ${privacySentinels[2]} ${privacySentinels[3]} ${privacySentinels[4]}`
+          }
+        ]
+      }
+    })
+  ]);
+}
+
+function repeatedFailedMcpTranscript(rawMcpName: string, count: number): string[] {
+  return Array.from({ length: count }, (_value, index) => index + 1).flatMap((index) => [
+    JSON.stringify({
+      timestamp: `2026-05-19T00:03:0${index}.000Z`,
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: `mcp-fail-${index}`,
+            name: rawMcpName,
+            input: {
+              private_query: privacySentinels[0]
+            }
+          }
+        ]
+      }
+    }),
+    JSON.stringify({
+      timestamp: `2026-05-19T00:04:0${index}.000Z`,
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: `mcp-fail-${index}`,
+            is_error: true,
+            content: `failed MCP output ${privacySentinels[1]}`
           }
         ]
       }

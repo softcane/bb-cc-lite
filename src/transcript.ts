@@ -1,5 +1,5 @@
 import { asRecord, extractUsage, mergeUsage, stringField } from "./status-input.js";
-import { classifyResultPurpose, classifyToolPurpose, isEditTool, safeToolName } from "./tool-metadata.js";
+import { classifyResultPurpose, classifyToolIdentity } from "./tool-metadata.js";
 import { readTranscriptTail, type ReadTranscriptTailOptions } from "./transcript-reader.js";
 import type { ToolFailureSummary, TokenUsage, TranscriptSummary } from "./types.js";
 
@@ -8,7 +8,10 @@ export type ParseTranscriptOptions = ReadTranscriptTailOptions;
 interface ToolMeta {
   name: string;
   purpose?: string;
+  category?: "MCP";
+  identityHash?: string;
   isEdit: boolean;
+  isReadSearch: boolean;
 }
 
 export async function parseTranscriptTail(
@@ -80,18 +83,21 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
 
     for (const toolUse of toolUses) {
       toolCalls += 1;
-      if (isReadLikeTool(toolUse.name)) {
+      const identity = classifyToolIdentity(toolUse.name, toolUse.input, { basenameOnly: true });
+      if (identity.isReadSearch) {
         readToolCalls += 1;
       }
       if (toolUse.id) {
-        const isEdit = isEditTool(toolUse.name, { basenameOnly: true });
         toolById.set(toolUse.id, {
-          name: safeToolName(toolUse.name, { basenameOnly: true }),
-          purpose: classifyToolPurpose(toolUse.name, toolUse.input, { basenameOnly: true }),
-          isEdit
+          name: identity.displayName,
+          purpose: identity.purpose,
+          category: identity.category,
+          identityHash: identity.identityHash,
+          isEdit: identity.isEdit,
+          isReadSearch: identity.isReadSearch
         });
       }
-      if (isEditTool(toolUse.name, { basenameOnly: true })) {
+      if (identity.isEdit) {
         recentEditBeforeTest = true;
       }
     }
@@ -101,11 +107,11 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
       const meta =
         (toolResult.toolUseId ? toolById.get(toolResult.toolUseId) : undefined) ||
         (toolResult.toolName
-          ? { name: safeToolName(toolResult.toolName, { basenameOnly: true }), purpose: undefined, isEdit: false }
+          ? metaFromToolName(toolResult.toolName)
           : undefined) ||
-        { name: "tool", purpose: undefined, isEdit: false };
+        { name: "tool", purpose: undefined, isEdit: false, isReadSearch: false };
       const purpose = toolResult.purpose || meta.purpose;
-      const key = `${meta.name}:${purpose || ""}`;
+      const key = failureKey(meta, purpose);
       const isValidation = meta.name === "Bash" && isValidationPurpose(purpose);
       if (!toolResult.isError) {
         failureCounts.delete(key);
@@ -126,11 +132,7 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
       }
       failedToolResults += 1;
       const existing = failureCounts.get(key);
-      failureCounts.set(key, {
-        toolName: meta.name,
-        purpose,
-        count: (existing?.count || 0) + 1
-      });
+      failureCounts.set(key, failureSummary(meta, purpose, (existing?.count || 0) + 1));
       if (meta.name === "Bash" && purpose === "tests" && recentEditBeforeTest) {
         editTestLoopFailures += 1;
         recentEditBeforeTest = false;
@@ -184,12 +186,41 @@ function emptySummary(pathReadable: boolean): TranscriptSummary {
   };
 }
 
-function isReadLikeTool(toolName: string): boolean {
-  return /^(Read|Grep|Glob|LS|WebFetch|WebSearch)$/u.test(safeToolName(toolName, { basenameOnly: true }));
-}
-
 function isValidationPurpose(purpose: string | undefined): boolean {
   return purpose === "tests" || purpose === "lint" || purpose === "typecheck" || purpose === "build";
+}
+
+function metaFromToolName(toolName: string): ToolMeta {
+  const identity = classifyToolIdentity(toolName, undefined, { basenameOnly: true });
+  return {
+    name: identity.displayName,
+    purpose: identity.purpose,
+    category: identity.category,
+    identityHash: identity.identityHash,
+    isEdit: identity.isEdit,
+    isReadSearch: identity.isReadSearch
+  };
+}
+
+function failureKey(meta: Pick<ToolMeta, "name" | "purpose" | "category" | "identityHash">, purpose = meta.purpose): string {
+  return meta.category === "MCP" && meta.identityHash ? `MCP:${meta.identityHash}` : `${meta.name}:${purpose || ""}`;
+}
+
+function failureSummary(meta: ToolMeta, purpose: string | undefined, count: number): ToolFailureSummary {
+  const summary: ToolFailureSummary = {
+    toolName: meta.name,
+    count
+  };
+  if (purpose) {
+    summary.purpose = purpose;
+  }
+  if (meta.category) {
+    summary.category = meta.category;
+  }
+  if (meta.identityHash) {
+    summary.identityHash = meta.identityHash;
+  }
+  return summary;
 }
 
 function hasUsage(usage: TokenUsage): boolean {

@@ -1,7 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { renderStatusLine } from "../src/renderer.js";
+import { decide } from "../src/signals.js";
 import { parseTranscriptLines, parseTranscriptTail } from "../src/transcript.js";
+import type { StatusLineInput } from "../src/types.js";
 
 const privacySentinels = [
   "BB_CC_LITE_RAW_PROMPT_SENTINEL",
@@ -22,6 +25,16 @@ function expectNoPrivacySentinels(value: unknown): void {
   for (const sentinel of privacySentinels) {
     expect(serialized).not.toContain(sentinel);
   }
+}
+
+function input(overrides: Partial<StatusLineInput> = {}): StatusLineInput {
+  return {
+    rawValid: true,
+    sessionId: "session-alpha",
+    model: { id: "claude-sonnet-4-5" },
+    usage: {},
+    ...overrides
+  };
 }
 
 describe("parseTranscriptLines", () => {
@@ -398,6 +411,90 @@ describe("parseTranscriptLines", () => {
     expect(summary.repeatedFailures).toEqual([{ toolName: "Bash", purpose: "typecheck", count: 2 }]);
     expectNoPrivacySentinels(summary);
   });
+
+  it("counts a successful MCP tool call without warning or leaking the raw name", () => {
+    const rawMcpName = "mcp__privateServer__lookupCustomer";
+    const summary = parseTranscriptLines(mcpToolPairs(rawMcpName, [false]));
+
+    expect(summary.toolCalls).toBe(1);
+    expect(summary.failedToolResults).toBe(0);
+    expect(summary.repeatedFailures).toEqual([]);
+    expect(JSON.stringify(summary)).not.toContain(rawMcpName);
+    expect(decide(input({ contextPercent: 42 }), summary)).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy"
+    });
+  });
+
+  it("warns carefully after the same MCP tool fails twice without exposing the raw name", () => {
+    const rawMcpName = "mcp__privateServer__failingLookup";
+    const summary = parseTranscriptLines(mcpToolPairs(rawMcpName, [true, true]));
+    const decision = decide(input({ contextPercent: 42 }), summary);
+    const rendered = renderStatusLine(decision, 180);
+
+    expect(summary.repeatedFailures).toEqual([
+      { toolName: "MCP tool", category: "MCP", identityHash: expect.any(String), count: 2 }
+    ]);
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "tool_failure_repeated",
+      primaryEvidence: "MCP tool failed 2x",
+      action: "inspect the failing MCP step before another retry"
+    });
+    expect(rendered).toContain("bb: Careful | MCP tool failed 2x | inspect the failing MCP step before another retry");
+    expect(rendered).not.toContain(rawMcpName);
+    expectNoPrivacySentinels(summary);
+  });
+
+  it("stops after the same MCP tool fails three times without exposing the raw name", () => {
+    const rawMcpName = "mcp__privateServer__failingLookup";
+    const decision = decide(input({ contextPercent: 42 }), parseTranscriptLines(mcpToolPairs(rawMcpName, [true, true, true])));
+    const rendered = renderStatusLine(decision, 200);
+
+    expect(decision).toMatchObject({
+      state: "Stop",
+      reasonCode: "repeated_tool_failure",
+      primaryEvidence: "MCP tool failed 3x",
+      impact: "Claude is retrying the same failing MCP tool",
+      action: "inspect MCP server/tool config before more retries"
+    });
+    expect(rendered).toContain(
+      "bb: Stop | why: MCP tool failed 3x; Claude is retrying the same failing MCP tool | do: inspect MCP server/tool config before more retries"
+    );
+    expect(rendered).not.toContain(rawMcpName);
+  });
+
+  it("clears an MCP repeated failure when the same MCP tool later succeeds", () => {
+    const rawMcpName = "mcp__privateServer__eventualSuccess";
+    const summary = parseTranscriptLines(mcpToolPairs(rawMcpName, [true, true, false]));
+
+    expect(summary.failedToolResults).toBe(2);
+    expect(summary.toolCalls).toBe(3);
+    expect(summary.repeatedFailures).toEqual([]);
+    expect(decide(input({ contextPercent: 42 }), summary)).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy"
+    });
+    expect(JSON.stringify(summary)).not.toContain(rawMcpName);
+  });
+
+  it("does not merge one-off failures from different MCP tools", () => {
+    const firstRawMcpName = "mcp__privateServer__firstFailure";
+    const secondRawMcpName = "mcp__privateServer__secondFailure";
+    const summary = parseTranscriptLines([
+      ...mcpToolPairs(firstRawMcpName, [true]),
+      ...mcpToolPairs(secondRawMcpName, [true], 10)
+    ]);
+
+    expect(summary.failedToolResults).toBe(2);
+    expect(summary.repeatedFailures).toEqual([]);
+    expect(decide(input({ contextPercent: 42 }), summary)).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy"
+    });
+    expect(JSON.stringify(summary)).not.toContain(firstRawMcpName);
+    expect(JSON.stringify(summary)).not.toContain(secondRawMcpName);
+  });
 });
 
 describe("parseTranscriptTail", () => {
@@ -473,4 +570,44 @@ function failedBashCommandPair(index: number, command: string): string[] {
       }
     })
   ];
+}
+
+function mcpToolPairs(rawName: string, results: boolean[], offset = 0): string[] {
+  return results.flatMap((isError, index) => {
+    const id = `mcp-${offset + index}`;
+    return [
+      JSON.stringify({
+        timestamp: `2026-02-03T00:01:${String(offset + index).padStart(2, "0")}.000Z`,
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id,
+              name: rawName,
+              input: {
+                query: privacySentinels[0]
+              }
+            }
+          ]
+        }
+      }),
+      JSON.stringify({
+        timestamp: `2026-02-03T00:02:${String(offset + index).padStart(2, "0")}.000Z`,
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: id,
+              is_error: isError,
+              content: isError ? privacySentinels[1] : "safe derived success"
+            }
+          ]
+        }
+      })
+    ];
+  });
 }

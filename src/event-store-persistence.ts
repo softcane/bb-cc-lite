@@ -34,7 +34,7 @@ export async function writeStore(store: EventStoreData, storePath: string): Prom
 
 function sanitizeStoredDecision(value: unknown): StoredDecision | undefined {
   const record = asRecord(value);
-  if (!record || containsForbiddenRawDataKey(record)) {
+  if (!record || containsForbiddenRawDataKey(record) || containsRawMcpName(record)) {
     return undefined;
   }
   const id = stringField(record.id);
@@ -66,7 +66,7 @@ function sanitizeStoredDecision(value: unknown): StoredDecision | undefined {
 
 function sanitizeStoredHookEvent(value: unknown): StoredHookEvent | undefined {
   const record = asRecord(value);
-  if (!record || containsForbiddenRawDataKey(record)) {
+  if (!record || containsForbiddenRawDataKey(record) || containsRawMcpName(record)) {
     return undefined;
   }
   const id = stringField(record.id);
@@ -83,6 +83,8 @@ function sanitizeStoredHookEvent(value: unknown): StoredHookEvent | undefined {
     sessionKey: stringField(record.sessionKey),
     toolName: stringField(record.toolName),
     purpose: stringField(record.purpose),
+    category: hookCategory(record.category),
+    identityHash: stringField(record.identityHash),
     toolCount: numberField(record.toolCount)
   };
 }
@@ -94,7 +96,7 @@ function sanitizeEvidence(value: unknown): DecisionEvidence[] {
   return value.flatMap((item) => {
     const record = asRecord(item);
     const label = stringField(record?.label);
-    if (!record || containsForbiddenRawDataKey(record) || !label) {
+    if (!record || containsForbiddenRawDataKey(record) || containsRawMcpName(record) || !label) {
       return [];
     }
     const detail = stringField(record.detail);
@@ -137,6 +139,10 @@ function hookKind(value: unknown): HookEventKind | undefined {
     : undefined;
 }
 
+function hookCategory(value: unknown): StoredHookEvent["category"] {
+  return value === "MCP" ? value : undefined;
+}
+
 function containsForbiddenRawDataKey(value: unknown): boolean {
   if (Array.isArray(value)) {
     return value.some((item) => containsForbiddenRawDataKey(item));
@@ -151,6 +157,20 @@ function containsForbiddenRawDataKey(value: unknown): boolean {
     }
   }
   return false;
+}
+
+function containsRawMcpName(value: unknown): boolean {
+  if (typeof value === "string") {
+    return /\bmcp__/u.test(value);
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => containsRawMcpName(item));
+  }
+  const record = asRecord(value);
+  if (!record) {
+    return false;
+  }
+  return Object.entries(record).some(([key, child]) => /\bmcp__/u.test(key) || containsRawMcpName(child));
 }
 
 const FORBIDDEN_RAW_DATA_KEYS_NORMALIZED = new Set(

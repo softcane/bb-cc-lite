@@ -36,16 +36,12 @@ export async function hookSummary(
       failedToolResults += 1;
       toolCalls += 1;
       const toolName = event.toolName || "tool";
-      const key = failureKey(toolName, event.purpose);
+      const key = failureKey(event);
       const existing = failures.get(key);
-      failures.set(key, {
-        toolName,
-        purpose: event.purpose,
-        count: (existing?.count || 0) + 1
-      });
+      failures.set(key, failureSummary(event, toolName, (existing?.count || 0) + 1));
     } else if (event.kind === "tool_success") {
       toolCalls += 1;
-      failures.delete(failureKey(event.toolName || "tool", event.purpose));
+      failures.delete(failureKey(event));
     } else if (event.kind === "tool_batch") {
       toolCalls += event.toolCount || 0;
     } else if (isCompaction) {
@@ -69,6 +65,29 @@ export async function hookSummary(
   };
 }
 
-function failureKey(toolName: string, purpose?: string): string {
-  return `${toolName}:${purpose || ""}`;
+function failureKey(event: { toolName?: string; purpose?: string; category?: "MCP"; identityHash?: string }): string {
+  return event.category === "MCP" && event.identityHash
+    ? `MCP:${event.identityHash}`
+    : `${event.toolName || "tool"}:${event.purpose || ""}`;
+}
+
+function failureSummary(
+  event: { purpose?: string; category?: "MCP"; identityHash?: string },
+  toolName: string,
+  count: number
+): ToolFailureSummary {
+  const summary: ToolFailureSummary = {
+    toolName,
+    count
+  };
+  if (event.purpose) {
+    summary.purpose = event.purpose;
+  }
+  if (event.category) {
+    summary.category = event.category;
+  }
+  if (event.identityHash) {
+    summary.identityHash = event.identityHash;
+  }
+  return summary;
 }

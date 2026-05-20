@@ -85,6 +85,55 @@ describe("signals and renderer", () => {
     });
   });
 
+  it("renders the required Careful MCP wording without raw tool names", () => {
+    const rawMcpName = "mcp__privateServer__failingLookup";
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        failedToolResults: 2,
+        repeatedFailures: [{ toolName: "MCP tool", category: "MCP", identityHash: "safehash", count: 2 }]
+      })
+    );
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "tool_failure_repeated",
+      diagnosisCode: "mcp_tool_failure_repeated",
+      diagnosis: "MCP tool failed 2x",
+      primaryEvidence: "MCP tool failed 2x",
+      action: "inspect the failing MCP step before another retry"
+    });
+    const rendered = renderStatusLine(decision, 140);
+    expect(rendered).toContain("bb: Careful | MCP tool failed 2x | inspect the failing MCP step before another retry");
+    expect(rendered).not.toContain(rawMcpName);
+  });
+
+  it("renders the required Stop MCP wording without raw tool names", () => {
+    const rawMcpName = "mcp__privateServer__failingLookup";
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        failedToolResults: 3,
+        repeatedFailures: [{ toolName: "MCP tool", category: "MCP", identityHash: "safehash", count: 3 }]
+      })
+    );
+
+    expect(decision).toMatchObject({
+      state: "Stop",
+      reasonCode: "repeated_tool_failure",
+      diagnosisCode: "mcp_tool_failure_repeated",
+      diagnosis: "MCP tool failed 3x",
+      primaryEvidence: "MCP tool failed 3x",
+      impact: "Claude is retrying the same failing MCP tool",
+      action: "inspect MCP server/tool config before more retries"
+    });
+    const rendered = renderStatusLine(decision, 180);
+    expect(rendered).toContain(
+      "bb: Stop | why: MCP tool failed 3x; Claude is retrying the same failing MCP tool | do: inspect MCP server/tool config before more retries"
+    );
+    expect(rendered).not.toContain(rawMcpName);
+  });
+
   it("uses validation recovery history for a two-failure test streak without escalating to Stop", () => {
     const decision = decide(
       input({ contextPercent: 42 }),

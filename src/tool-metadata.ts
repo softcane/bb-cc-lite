@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { hashValue } from "./paths.js";
 import { asRecord, stringField } from "./status-input.js";
 
 const TEST_COMMAND_RE =
@@ -9,6 +10,40 @@ const BUILD_COMMAND_RE = /\b(npm|pnpm|yarn|bun)\s+(run\s+)?(build|compile)\b|\b(
 
 interface SafeToolNameOptions {
   basenameOnly?: boolean;
+}
+
+export interface ToolIdentity {
+  displayName: string;
+  category?: "MCP";
+  identityHash?: string;
+  purpose?: string;
+  isEdit: boolean;
+  isReadSearch: boolean;
+}
+
+export function classifyToolIdentity(
+  toolName: string | undefined,
+  input?: unknown,
+  options: SafeToolNameOptions = {}
+): ToolIdentity {
+  const candidate = rawToolNameCandidate(toolName, options) || "";
+  if (candidate && isMcpToolName(candidate)) {
+    return {
+      displayName: "MCP tool",
+      category: "MCP",
+      identityHash: hashValue(candidate),
+      isEdit: false,
+      isReadSearch: false
+    };
+  }
+
+  const displayName = safeToolName(toolName, options);
+  return {
+    displayName,
+    purpose: classifyToolPurpose(displayName, input),
+    isEdit: isEditTool(displayName),
+    isReadSearch: isReadSearchTool(displayName)
+  };
 }
 
 export function classifyToolPurpose(
@@ -56,10 +91,25 @@ export function isEditTool(toolName: string, options: SafeToolNameOptions = {}):
   return /^(Edit|MultiEdit|Write|NotebookEdit)$/u.test(safeToolName(toolName, options));
 }
 
+export function isReadSearchTool(toolName: string, options: SafeToolNameOptions = {}): boolean {
+  return /^(Read|Grep|Glob|LS|WebFetch|WebSearch)$/u.test(safeToolName(toolName, options));
+}
+
 export function safeToolName(toolName: string | undefined, options: SafeToolNameOptions = {}): string {
   if (!toolName) {
     return "tool";
   }
-  const candidate = options.basenameOnly ? basename(toolName) : toolName;
+  const candidate = rawToolNameCandidate(toolName, options) || "";
   return /^[A-Za-z][A-Za-z0-9_-]{0,32}$/u.test(candidate) ? candidate : "tool";
+}
+
+function rawToolNameCandidate(toolName: string | undefined, options: SafeToolNameOptions): string | undefined {
+  if (!toolName) {
+    return undefined;
+  }
+  return options.basenameOnly ? basename(toolName) : toolName;
+}
+
+function isMcpToolName(toolName: string): boolean {
+  return toolName.startsWith("mcp__");
 }

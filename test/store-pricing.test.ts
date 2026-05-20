@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { estimateCostUsd, type PricingTable } from "../src/pricing.js";
 import { hashValue } from "../src/paths.js";
 import { decide } from "../src/signals.js";
-import { latestDecision, recordDecision } from "../src/store.js";
+import { hookSummary, latestDecision, recordDecision } from "../src/store.js";
 import type { StatusLineInput, TranscriptSummary } from "../src/types.js";
 
 function input(overrides: Partial<StatusLineInput> = {}): StatusLineInput {
@@ -157,6 +157,55 @@ describe("store and pricing", () => {
 
       expect(whyDecision?.id).toBe("safe-derived");
       expect(JSON.stringify(whyDecision)).not.toContain(rawPromptSentinel);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("drops legacy hook events that contain raw MCP tool names", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-store-mcp-legacy-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      const rawMcpName = "mcp__privateServer__failingLookup";
+      await writeFile(
+        storePath,
+        `${JSON.stringify(
+          {
+            version: 1,
+            updatedAt: "2026-05-19T12:00:00.000Z",
+            decisions: [],
+            hookEvents: [
+              {
+                id: "legacy-raw-mcp",
+                kind: "tool_failure",
+                timestamp: "2026-05-19T12:00:00.000Z",
+                hookEventName: "PostToolUseFailure",
+                sessionKey: hashValue("session-alpha"),
+                toolName: rawMcpName
+              },
+              {
+                id: "safe-mcp",
+                kind: "tool_failure",
+                timestamp: "2026-05-19T12:00:01.000Z",
+                hookEventName: "PostToolUseFailure",
+                sessionKey: hashValue("session-alpha"),
+                toolName: "MCP tool",
+                category: "MCP",
+                identityHash: "safehash"
+              }
+            ]
+          },
+          null,
+          2
+        )}\n`,
+        "utf8"
+      );
+
+      const summary = await hookSummary(hashValue("session-alpha"), storePath);
+
+      expect(summary.failedToolResults).toBe(1);
+      expect(JSON.stringify(summary)).not.toContain(rawMcpName);
+      expect(JSON.stringify(summary)).not.toContain("mcp__");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

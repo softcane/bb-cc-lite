@@ -110,6 +110,7 @@ describe("personal baseline storage", () => {
         },
         toolCategories: {
           "Bash:tests": toolCategoryAggregate(),
+          MCP: toolCategoryAggregate(),
           Read: toolCategoryAggregate()
         }
       };
@@ -131,6 +132,18 @@ describe("personal baseline storage", () => {
           ...sampleBaseline(),
           toolCategories: {
             "Bash:npm test -- private": toolCategoryAggregate()
+          }
+        })}\n`,
+        "utf8"
+      );
+      await expect(readBaseline(targetPath)).resolves.toBeUndefined();
+
+      await writeFile(
+        targetPath,
+        `${JSON.stringify({
+          ...sampleBaseline(),
+          toolCategories: {
+            mcp__privateServer__failingLookup: toolCategoryAggregate()
           }
         })}\n`,
         "utf8"
@@ -518,6 +531,58 @@ describe("personal baseline builder", () => {
     }
   });
 
+  it("builds aggregate MCP tool category counts without storing raw MCP names", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-mcp-"));
+    try {
+      const claudeProjectsDir = join(tempDir, ".claude", "projects");
+      const projectDir = join(claudeProjectsDir, "project");
+      const appHomePath = join(tempDir, "app-home");
+      await mkdir(projectDir, { recursive: true });
+      const recoveredMcpName = "mcp__privateServer__eventualSuccess";
+      const unrecoveredMcpName = "mcp__privateServer__alwaysFails";
+      const successMcpName = "mcp__privateServer__lookupCustomer";
+
+      await writeJsonl(join(projectDir, "mcp-success.jsonl"), [
+        toolUse("mcp-success", successMcpName, { query: "private" }),
+        toolResult("mcp-success", false, "ok")
+      ]);
+      await writeJsonl(join(projectDir, "mcp-recovered.jsonl"), [
+        ...failedMcpTool("mcp-recovered-1", recoveredMcpName),
+        ...failedMcpTool("mcp-recovered-2", recoveredMcpName),
+        toolUse("mcp-recovered-success", recoveredMcpName, { query: "private" }),
+        toolResult("mcp-recovered-success", false, "ok")
+      ]);
+      await writeJsonl(join(projectDir, "mcp-unrecovered.jsonl"), [
+        ...failedMcpTool("mcp-unrecovered-1", unrecoveredMcpName),
+        ...failedMcpTool("mcp-unrecovered-2", unrecoveredMcpName),
+        ...failedMcpTool("mcp-unrecovered-3", unrecoveredMcpName)
+      ]);
+
+      const result = await buildBaseline({
+        claudeProjectsDir,
+        appHomePath,
+        now: new Date("2026-05-19T10:00:00.000Z")
+      });
+
+      expect(result.baseline.toolCategories?.MCP).toMatchObject({
+        calls: 7,
+        failures: 5,
+        repeatedFailureSessions: 2,
+        recovered: 1,
+        unrecovered: 1,
+        recoveryRate: 0.5
+      });
+      const baselineText = await readFile(join(appHomePath, "baseline.json"), "utf8");
+      for (const rawMcpName of [recoveredMcpName, unrecoveredMcpName, successMcpName]) {
+        expect(JSON.stringify(result.baseline)).not.toContain(rawMcpName);
+        expect(baselineText).not.toContain(rawMcpName);
+      }
+      expect(baselineText).not.toContain("mcp__");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("learns weak outcome aggregates without storing raw private transcript data", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-builder-"));
     try {
@@ -570,6 +635,19 @@ describe("personal baseline builder", () => {
       expect(result.baseline.outcomes.healthyLike.readHeavyNoFailure).toBe(1);
       expect(result.baseline.outcomes.stopLike.validationLoopUnrecovered).toBe(1);
       expect(result.baseline.outcomes.stopLike.sessionEndedInFailureLoop).toBe(1);
+      expect(result.baseline.privacy).toMatchObject({
+        rawPromptsStored: false,
+        rawAssistantTextStored: false,
+        rawToolOutputStored: false,
+        rawShellOutputStored: false,
+        rawPathsStored: false,
+        rawTranscriptPathsStored: false,
+        rawWorkspacePathsStored: false,
+        rawCommandsStored: false,
+        rawFileContentsStored: false,
+        rawSessionIdsStored: false,
+        perSessionRowsStored: false
+      });
       expect(result.baseline).toMatchObject({
         totals: {
           toolCalls: 9,
@@ -757,6 +835,10 @@ function failedBashCommand(id: string, command: string): unknown[] {
 
 function successfulBashCommand(id: string, command: string): unknown[] {
   return [toolUse(id, "Bash", { command }), toolResult(id, false, "command passed")];
+}
+
+function failedMcpTool(id: string, rawName: string): unknown[] {
+  return [toolUse(id, rawName, { query: "private" }), toolResult(id, true, "mcp failed")];
 }
 
 function readHeavySession(prefix: string): unknown[] {

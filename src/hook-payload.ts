@@ -1,6 +1,6 @@
 import { hashValue } from "./paths.js";
 import { asRecord, numberField, stringField } from "./status-input.js";
-import { classifyToolPurpose, safeToolName } from "./tool-metadata.js";
+import { classifyToolIdentity } from "./tool-metadata.js";
 import type { DerivedHookEvent } from "./types.js";
 
 export const SAFE_HOOK_EVENTS = [
@@ -34,22 +34,26 @@ export function parseHookPayload(raw: string, fallbackEventName?: string): Deriv
   };
 
   if (hookEventName === "PostToolUseFailure") {
-    const toolName = safeToolName(stringField(root.tool_name) || stringField(root.toolName));
+    const identity = classifyToolIdentity(stringField(root.tool_name) || stringField(root.toolName), root.tool_input ?? root.toolInput);
     return {
       ...base,
       kind: "tool_failure",
-      toolName,
-      purpose: classifyToolPurpose(toolName, root.tool_input ?? root.toolInput)
+      toolName: identity.displayName,
+      purpose: identity.purpose,
+      category: identity.category,
+      identityHash: identity.identityHash
     };
   }
 
   if (hookEventName === "PostToolUse") {
-    const toolName = safeToolName(stringField(root.tool_name) || stringField(root.toolName));
+    const identity = classifyToolIdentity(stringField(root.tool_name) || stringField(root.toolName), root.tool_input ?? root.toolInput);
     return {
       ...base,
       kind: "tool_success",
-      toolName,
-      purpose: classifyToolPurpose(toolName, root.tool_input ?? root.toolInput)
+      toolName: identity.displayName,
+      purpose: identity.purpose,
+      category: identity.category,
+      identityHash: identity.identityHash
     };
   }
 

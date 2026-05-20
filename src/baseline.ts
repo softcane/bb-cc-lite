@@ -8,7 +8,17 @@ export const BASELINE_READ_MAX_BYTES = 64 * 1024;
 
 export type BaselineConfidence = "low" | "medium" | "high";
 export type ValidationCategory = "tests" | "lint" | "typecheck" | "build";
-export type SafeToolCategory = "Bash:tests" | "Bash:lint" | "Bash:typecheck" | "Bash:build" | "Read" | "Grep" | "Glob" | "LS" | "Edit";
+export type SafeToolCategory =
+  | "Bash:tests"
+  | "Bash:lint"
+  | "Bash:typecheck"
+  | "Bash:build"
+  | "Read"
+  | "Grep"
+  | "Glob"
+  | "LS"
+  | "Edit"
+  | "MCP";
 
 export interface ValidationAggregate {
   calls: number;
@@ -49,9 +59,15 @@ export interface PersonalBaseline {
   };
   privacy: {
     rawPromptsStored: false;
+    rawAssistantTextStored?: false;
     rawToolOutputStored: false;
+    rawShellOutputStored?: false;
     rawPathsStored: false;
+    rawTranscriptPathsStored?: false;
+    rawWorkspacePathsStored?: false;
     rawCommandsStored: false;
+    rawFileContentsStored?: false;
+    rawSessionIdsStored?: false;
     perSessionRowsStored: false;
   };
   recent?: {
@@ -171,6 +187,7 @@ function isPersonalBaseline(value: unknown): value is PersonalBaseline {
   if (
     !root ||
     containsForbiddenRawDataKey(root) ||
+    containsRawMcpName(root) ||
     !hasOnlyKeys(root, ROOT_KEYS) ||
     root.schema !== BASELINE_SCHEMA ||
     root.version !== BASELINE_VERSION
@@ -236,9 +253,15 @@ function isPrivacy(value: Record<string, unknown> | undefined): boolean {
     value !== undefined &&
     hasOnlyKeys(value, PRIVACY_KEYS) &&
     value?.rawPromptsStored === false &&
+    (value.rawAssistantTextStored === undefined || value.rawAssistantTextStored === false) &&
     value.rawToolOutputStored === false &&
+    (value.rawShellOutputStored === undefined || value.rawShellOutputStored === false) &&
     value.rawPathsStored === false &&
+    (value.rawTranscriptPathsStored === undefined || value.rawTranscriptPathsStored === false) &&
+    (value.rawWorkspacePathsStored === undefined || value.rawWorkspacePathsStored === false) &&
     value.rawCommandsStored === false &&
+    (value.rawFileContentsStored === undefined || value.rawFileContentsStored === false) &&
+    (value.rawSessionIdsStored === undefined || value.rawSessionIdsStored === false) &&
     value.perSessionRowsStored === false
   );
 }
@@ -425,6 +448,20 @@ function containsForbiddenRawDataKey(value: unknown): boolean {
   return false;
 }
 
+function containsRawMcpName(value: unknown): boolean {
+  if (typeof value === "string") {
+    return /\bmcp__/u.test(value);
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => containsRawMcpName(item));
+  }
+  const record = asRecord(value);
+  if (!record) {
+    return false;
+  }
+  return Object.entries(record).some(([key, child]) => /\bmcp__/u.test(key) || containsRawMcpName(child));
+}
+
 const ROOT_KEYS = new Set([
   "schema",
   "version",
@@ -451,7 +488,19 @@ const SOURCE_KEYS = new Set([
   "scanStrategy",
   "parallelism"
 ]);
-const PRIVACY_KEYS = new Set(["rawPromptsStored", "rawToolOutputStored", "rawPathsStored", "rawCommandsStored", "perSessionRowsStored"]);
+const PRIVACY_KEYS = new Set([
+  "rawPromptsStored",
+  "rawAssistantTextStored",
+  "rawToolOutputStored",
+  "rawShellOutputStored",
+  "rawPathsStored",
+  "rawTranscriptPathsStored",
+  "rawWorkspacePathsStored",
+  "rawCommandsStored",
+  "rawFileContentsStored",
+  "rawSessionIdsStored",
+  "perSessionRowsStored"
+]);
 const RECENT_KEYS = new Set(["windowKind", "windowSize", "transcriptFilesScanned", "sessionsSeen"]);
 const TOTALS_KEYS = new Set([
   "toolCalls",
@@ -496,7 +545,18 @@ const EDIT_VALIDATION_KEYS = new Set([
   "medianToolStepsFromEditToValidation",
   "p75ToolStepsFromEditToValidation"
 ]);
-const SAFE_TOOL_CATEGORY_KEYS = new Set(["Bash:tests", "Bash:lint", "Bash:typecheck", "Bash:build", "Read", "Grep", "Glob", "LS", "Edit"]);
+const SAFE_TOOL_CATEGORY_KEYS = new Set([
+  "Bash:tests",
+  "Bash:lint",
+  "Bash:typecheck",
+  "Bash:build",
+  "Read",
+  "Grep",
+  "Glob",
+  "LS",
+  "Edit",
+  "MCP"
+]);
 const TOOL_CATEGORY_AGGREGATE_KEYS = new Set(["calls", "failures", "repeatedFailureSessions", "recovered", "unrecovered", "recoveryRate"]);
 
 const FORBIDDEN_RAW_DATA_KEYS = new Set([

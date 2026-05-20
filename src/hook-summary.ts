@@ -7,20 +7,16 @@ export function mergeHookSummary(
     toolCalls: number;
     compactionEvents: number;
     postCompactionActivity: number;
-    repeatedFailures: Array<{ toolName: string; count: number; purpose?: string }>;
+    repeatedFailures: TranscriptSummary["repeatedFailures"];
     latestTimestamp?: string;
     latestCompactionTimestamp?: string;
   }
 ): TranscriptSummary {
-  const repeatedFailures = new Map<string, { toolName: string; count: number; purpose?: string }>();
+  const repeatedFailures = new Map<string, TranscriptSummary["repeatedFailures"][number]>();
   for (const failure of [...transcript.repeatedFailures, ...hookData.repeatedFailures]) {
-    const key = `${failure.toolName}:${failure.purpose || ""}`;
+    const key = failureKey(failure);
     const existing = repeatedFailures.get(key);
-    repeatedFailures.set(key, {
-      toolName: failure.toolName,
-      purpose: failure.purpose,
-      count: Math.max(existing?.count || 0, failure.count)
-    });
+    repeatedFailures.set(key, { ...failure, count: Math.max(existing?.count || 0, failure.count) });
   }
 
   const latestTimestamp = latestIsoTimestamp(transcript.latestTimestamp, hookData.latestTimestamp);
@@ -36,6 +32,12 @@ export function mergeHookSummary(
     latestTimestamp,
     latestCompactionTimestamp
   };
+}
+
+function failureKey(failure: TranscriptSummary["repeatedFailures"][number]): string {
+  return failure.category === "MCP" && failure.identityHash
+    ? `MCP:${failure.identityHash}`
+    : `${failure.toolName}:${failure.purpose || ""}`;
 }
 
 function latestIsoTimestamp(first: string | undefined, second: string | undefined): string | undefined {
