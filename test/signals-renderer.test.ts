@@ -156,7 +156,7 @@ describe("signals and renderer", () => {
       action: "inspect the failing MCP step before another retry"
     });
     const rendered = renderStatusLine(decision, 140);
-    expect(rendered).toContain("bb: Careful | MCP tool failed 2x | inspect the failing MCP step before another retry");
+    expect(stripAnsi(rendered)).toContain("bb: Careful | MCP tool failed 2x | inspect the failing MCP step before another retry");
     expect(rendered).not.toContain(rawMcpName);
   });
 
@@ -180,7 +180,7 @@ describe("signals and renderer", () => {
       action: "inspect MCP server/tool config before more retries"
     });
     const rendered = renderStatusLine(decision, 180);
-    expect(rendered).toContain(
+    expect(stripAnsi(rendered)).toContain(
       "bb: Stop | why: MCP tool failed 3x; Claude is retrying the same failing MCP tool | do: inspect MCP server/tool config before more retries"
     );
     expect(rendered).not.toContain(rawMcpName);

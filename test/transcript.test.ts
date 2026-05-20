@@ -27,6 +27,11 @@ function expectNoPrivacySentinels(value: unknown): void {
   }
 }
 
+function stripAnsi(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/\u001b\[[0-9;]*m/gu, "");
+}
+
 function input(overrides: Partial<StatusLineInput> = {}): StatusLineInput {
   return {
     rawValid: true,
@@ -461,7 +466,7 @@ describe("parseTranscriptLines", () => {
       primaryEvidence: "same MCP tool failed twice without fix evidence",
       action: "inspect first failure"
     });
-    expect(rendered).toContain("bb: Careful | retry looks blind: same MCP tool failed twice | inspect first failure");
+    expect(stripAnsi(rendered)).toContain("bb: Careful | retry looks blind: same MCP tool failed twice | inspect first failure");
     expect(rendered).not.toContain(rawMcpName);
     expectNoPrivacySentinels(summary);
   });
@@ -488,7 +493,7 @@ describe("parseTranscriptLines", () => {
       impact: "Claude is retrying the same failure without meaningful intervention",
       action: "stop and inspect first failure"
     });
-    expect(rendered).toContain(
+    expect(stripAnsi(rendered)).toContain(
       "bb: Stop | why: blind retry loop: same failure 3x without fix evidence"
     );
     expect(rendered).not.toContain(rawMcpName);
