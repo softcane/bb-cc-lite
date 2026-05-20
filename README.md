@@ -16,7 +16,7 @@ npx bb-cc-lite install --scope local
 
 Restart Claude Code in the project. The line appears at the bottom.
 
-Install builds a local personal baseline by default after it installs the statusline. It reads bounded local Claude Code JSONL once, newest eligible files first, extracts aggregate patterns from past sessions, and stores a small `baseline.json` under the `bb-cc-lite` app home. If install preserves an existing statusline because `--replace` was not passed, learning is skipped too. Use `--no-learn` to install the statusline without scanning old JSONL:
+Install replaces any existing Claude Code `statusLine` by default and stores a backup so `uninstall` can restore it. It also builds a local personal baseline by default after it installs the statusline. It reads bounded local Claude Code JSONL once, newest eligible files first, extracts aggregate patterns from past sessions, and stores a small `baseline.json` under the `bb-cc-lite` app home. Use `--no-learn` to install the statusline without scanning old JSONL:
 
 ```bash
 npx bb-cc-lite install --scope local --no-learn
@@ -98,4 +98,4 @@ bb-cc-lite unlearn
 bb-cc-lite uninstall --scope local
 ```
 
-Install preserves an existing Claude Code `statusLine` unless you pass `--replace`.
+Install backs up the previous Claude Code `statusLine` before replacing it.

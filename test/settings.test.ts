@@ -111,7 +111,7 @@ describe("settings install and uninstall", () => {
     );
   });
 
-  it("preserves a custom statusLine unless replace is requested", async () => {
+  it("replaces a custom statusLine by default and backs it up", async () => {
     const dirs = mustHaveWorkspace(workspace);
     const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
     const existing = {
@@ -123,30 +123,30 @@ describe("settings install and uninstall", () => {
     };
     await writeJson(target.settingsPath, existing);
 
-    const skipped = await installStatusLine({
-      projectDir: dirs.projectDir,
-      homeDir: dirs.homeDir,
-      cliFilePath: await createFakeRuntime(dirs.root)
-    });
-
-    expect(skipped.status).toBe("skipped");
-    await expect(readJson(target.settingsPath)).resolves.toEqual(existing);
-
     const replaced = await installStatusLine({
       projectDir: dirs.projectDir,
       homeDir: dirs.homeDir,
-      replace: true,
       cliFilePath: await createFakeRuntime(dirs.root)
     });
     const settings = await readJson<{ cleanupPeriodDays: number; statusLine: { command: string } }>(target.settingsPath);
+    const manifest = await readJson<{
+      before: { hadStatusLine: boolean; statusLine: { command: string } };
+    }>(join(dirs.appHome, "backups", replaced.backupId as string, "manifest.json"));
 
     expect(replaced.status).toBe("updated");
     expect(replaced.backupId).toEqual(expect.any(String));
+    expect(replaced.message).toContain("Previous settings were backed up.");
+    expect(manifest.before).toMatchObject({
+      hadStatusLine: true,
+      statusLine: {
+        command: "custom-bb-cc-lite-wrapper"
+      }
+    });
     expect(settings.cleanupPeriodDays).toBe(7);
     expect(settings.statusLine.command).toBe(quoteShell(join(dirs.appHome, "bin", "statusline")));
   });
 
-  it("does not mutate runtime launchers when install is skipped", async () => {
+  it("replaces a shadowing custom statusLine and writes runtime launchers", async () => {
     const dirs = mustHaveWorkspace(workspace);
     const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
     await writeJson(target.settingsPath, {
@@ -156,15 +156,15 @@ describe("settings install and uninstall", () => {
       }
     });
 
-    const skipped = await installStatusLine({
+    const result = await installStatusLine({
       projectDir: dirs.projectDir,
       homeDir: dirs.homeDir,
       cliFilePath: await createFakeRuntime(dirs.root)
     });
 
-    expect(skipped.status).toBe("skipped");
-    await expect(pathExists(join(dirs.appHome, "bin", "statusline"))).resolves.toBe(false);
-    await expect(pathExists(join(dirs.appHome, "bin", "hook"))).resolves.toBe(false);
+    expect(result.status).toBe("updated");
+    await expect(pathExists(join(dirs.appHome, "bin", "statusline"))).resolves.toBe(true);
+    await expect(pathExists(join(dirs.appHome, "bin", "hook"))).resolves.toBe(true);
   });
 
   it("reinstall with hooks repairs partial bb hook settings", async () => {

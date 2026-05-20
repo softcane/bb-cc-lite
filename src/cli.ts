@@ -72,15 +72,6 @@ async function commandInstall(args: ParsedArgs): Promise<void> {
   if (result.command) {
     console.log(`Command: ${result.command}`);
   }
-  if (result.status === "skipped") {
-    console.log(`Manual replace: bb-cc-lite install --scope ${result.target.scope} --replace`);
-    if (shouldLearn) {
-      console.log("Skipped personal baseline learning because statusline install was skipped.");
-    } else {
-      console.log("Skipped personal baseline learning because --no-learn was passed.");
-    }
-    return;
-  }
   if (!shouldLearn) {
     console.log("Skipped personal baseline learning because --no-learn was passed.");
     return;
@@ -203,7 +194,7 @@ function printHelp(): void {
   console.log(`bb-cc-lite
 
 Usage:
-  bb-cc-lite install [--scope local|project|user] [--replace] [--hooks]
+  bb-cc-lite install [--scope local|project|user] [--hooks]
                      [--no-learn]
   bb-cc-lite statusline
   bb-cc-lite why [--session <id>] [--json]
@@ -214,6 +205,7 @@ Usage:
 
 Learning:
   install builds a local personal baseline from Claude JSONL by default.
+  install replaces an existing Claude statusLine and backs it up for uninstall.
   learning scans newest eligible JSONL first with capped 512 KiB tails and bounded reads.
   --no-learn skips that scan.
   doctor --baseline shows a safe aggregate summary, including recent and validation categories.

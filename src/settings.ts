@@ -31,7 +31,7 @@ export interface UninstallOptions {
 }
 
 export interface InstallResult {
-  status: "installed" | "updated" | "skipped";
+  status: "installed" | "updated";
   target: SettingsTarget;
   message: string;
   command?: string;
@@ -93,23 +93,6 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
   const existing = targetRead.settings.statusLine;
   const existingHooks = targetRead.settings.hooks;
 
-  if (existing && !isBbStatusLine(existing) && !options.replace) {
-    return {
-      status: "skipped",
-      target,
-      message: `Preserved existing statusLine in ${describeSettingsTarget(target)}. Re-run with --replace to replace it.`
-    };
-  }
-
-  const shadowed = !existing ? await findShadowedStatusLine(target) : undefined;
-  if (shadowed && !options.replace) {
-    return {
-      status: "skipped",
-      target,
-      message: `Preserved existing ${shadowed.scope} statusLine. Local install would shadow it; re-run with --replace to opt in.`
-    };
-  }
-
   const launchers = await ensureRuntimeLaunchers(options.cliFilePath || cliPath(), target.homeDir);
   const statusLine = {
     type: "command",
@@ -166,7 +149,9 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
     target,
     command: statusLine.command,
     backupId: installId,
-    message: `${existing ? "Replaced" : "Installed"} bb-cc-lite statusLine${options.hooks ? " and optional hooks" : ""} in ${describeSettingsTarget(target)}.`
+    message: existing
+      ? `Replaced existing Claude statusLine with bb-cc-lite${options.hooks ? " and optional hooks" : ""} in ${describeSettingsTarget(target)}. Previous settings were backed up.`
+      : `Installed bb-cc-lite statusLine${options.hooks ? " and optional hooks" : ""} in ${describeSettingsTarget(target)}.`
   };
 }
 
@@ -426,19 +411,6 @@ async function chmodTree(path: string, dirMode: number, fileMode: number): Promi
   } catch {
     // Best effort. Existing umask protections still apply if chmod is unavailable.
   }
-}
-
-async function findShadowedStatusLine(target: SettingsTarget): Promise<SettingsTarget | undefined> {
-  const scopes: SettingsScope[] =
-    target.scope === "local" ? ["project", "user"] : target.scope === "project" ? ["user"] : [];
-  for (const scope of scopes) {
-    const candidate = resolveSettingsTarget({ scope, projectDir: target.projectDir, homeDir: target.homeDir });
-    const statusLine = await readStatusLine(scope, target.projectDir, target.homeDir);
-    if (statusLine && !isBbStatusLine(statusLine)) {
-      return candidate;
-    }
-  }
-  return undefined;
 }
 
 async function readSettings(settingsPath: string): Promise<{

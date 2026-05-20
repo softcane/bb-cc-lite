@@ -97,7 +97,7 @@ describe("CLI behavior characterization", () => {
     }
   });
 
-  it("install does not learn when a custom statusline is preserved", async () => {
+  it("install replaces a custom statusline by default and still learns", async () => {
     const workspace = await createTempWorkspace();
     try {
       const env = cliEnv(workspace);
@@ -119,9 +119,12 @@ describe("CLI behavior characterization", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
-      expect(result.stdout).toContain("Preserved existing statusLine");
-      expect(result.stdout).toContain("Skipped personal baseline learning because statusline install was skipped.");
-      await expect(pathExists(join(workspace.appHome, "baseline.json"))).resolves.toBe(false);
+      expect(result.stdout).toContain("Replaced existing Claude statusLine with bb-cc-lite");
+      expect(result.stdout).toContain("Previous settings were backed up.");
+      expect(result.stdout).toContain("Built personal baseline from 1 sessions.");
+      const settings = JSON.parse(await readFile(settingsPath, "utf8")) as { statusLine?: { command?: string } };
+      expect(settings.statusLine?.command).toContain(join(workspace.appHome, "bin", "statusline"));
+      await expect(pathExists(join(workspace.appHome, "baseline.json"))).resolves.toBe(true);
     } finally {
       await removeTempWorkspace(workspace);
     }
