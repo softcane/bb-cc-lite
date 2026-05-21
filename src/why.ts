@@ -31,10 +31,7 @@ function baselineWhyLine(decision: Decision): string | undefined {
     return undefined;
   }
   if (decision.diagnosisCode === "read_heavy_debugging") {
-    return "Baseline: read-heavy sessions were usually Healthy-like for you.";
-  }
-  if (decision.baselineNote === "usually Stop-like for you") {
-    return "Baseline: this pattern was Stop-like in past sessions.";
+    return "Baseline: similar research-heavy sessions usually ended OK.";
   }
   return `Baseline: ${decision.baselineNote}.`;
 }

@@ -53,7 +53,7 @@ describe("failure recovery statistics", () => {
     ).toMatchObject({
       kind: "usually_recovers",
       confidence: "medium",
-      diagnosis: "tests failed twice; usually recovers after one focused fix"
+      diagnosis: "tests failed twice; usually passes after one targeted fix"
     });
   });
 

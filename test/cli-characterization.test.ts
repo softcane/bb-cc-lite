@@ -337,8 +337,8 @@ describe("CLI behavior characterization", () => {
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stderr).toBe("");
       expect(statusline.stdout).toContain("bb: Healthy");
-      expect(statusline.stdout).toContain("research phase: usually normal for you");
-      expect(statusline.stdout).toContain("usually Healthy-like for you");
+      expect(statusline.stdout).toContain("research-heavy session usually ended OK");
+      expect(statusline.stdout).toContain("similar research-heavy sessions usually ended OK");
       expectNoPrivacySentinels(statusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
@@ -403,7 +403,7 @@ describe("CLI behavior characterization", () => {
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stderr).toBe("");
       expect(statusline.stdout.split("\n").filter(Boolean)).toHaveLength(1);
-      expect(statusline.stdout).toContain("research phase: usually normal for you");
+      expect(statusline.stdout).toContain("research-heavy session usually ended OK");
       expect(elapsedMs).toBeLessThan(1000);
 
       const refreshed = await waitForBaselineUpdated(join(workspace.appHome, "baseline.json"), staleBaseline.updatedAt);
@@ -537,8 +537,8 @@ describe("CLI behavior characterization", () => {
       });
       expect(corrupt.exitCode).toBe(0);
       expect(corrupt.stdout).toContain("bb: Careful");
-      expect(corrupt.stdout).toContain("Bash failed 2x running tests");
-      expect(corrupt.stdout).not.toContain("usually recovers");
+      expect(corrupt.stdout).toContain("tests failed twice");
+      expect(corrupt.stdout).not.toContain("usually passes");
 
       await writeJson(join(workspace.appHome, "baseline.json"), sparseRecoveryBaseline());
       const sparse = await runCli(["statusline"], {
@@ -551,8 +551,8 @@ describe("CLI behavior characterization", () => {
       });
       expect(sparse.exitCode).toBe(0);
       expect(sparse.stdout).toContain("bb: Careful");
-      expect(sparse.stdout).toContain("Bash failed 2x running tests");
-      expect(sparse.stdout).not.toContain("usually recovers");
+      expect(sparse.stdout).toContain("tests failed twice");
+      expect(sparse.stdout).not.toContain("usually passes");
       expectNoPrivacySentinels(corrupt.stdout, sparse.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
@@ -579,18 +579,86 @@ describe("CLI behavior characterization", () => {
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stderr).toBe("");
       expect(statusline.stdout).toContain("bb: Careful");
-      expect(statusline.stdout).toContain("tests failed twice; usually recovers after one focused fix");
+      expect(statusline.stdout).toContain("tests failed twice; usually passes after one targeted fix");
 
       const why = await runCli(["why"], { env });
-      expect(why.stdout).toContain("Baseline: test failures usually recovered after one focused fix.");
+      expect(why.stdout).toContain("Baseline: test failures usually recovered after one targeted fix.");
 
       const whyJson = await runCli(["why", "--json"], { env });
       const parsed = JSON.parse(whyJson.stdout) as { state: string; baselineNote?: string };
       expect(parsed).toMatchObject({
         state: "Careful",
-        baselineNote: "test failures usually recovered after one focused fix"
+        baselineNote: "test failures usually recovered after one targeted fix"
       });
       expectNoPrivacySentinels(statusline.stdout, why.stdout, whyJson.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("renders edit-without-check wording through the real statusline and why path", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const env = cliEnv(workspace);
+      const transcriptPath = join(workspace.root, "transcripts", "unchecked-edit.jsonl");
+      await writeTranscript(transcriptPath, unvalidatedEditTranscript());
+
+      const statusline = await runCli(["statusline"], {
+        env,
+        input: statusInput({
+          session_id: "session-unchecked-edit",
+          transcript_path: transcriptPath,
+          terminal_width: 180
+        })
+      });
+
+      expect(statusline.exitCode).toBe(0);
+      expect(statusline.stderr).toBe("");
+      expect(statusline.stdout).toContain("bb: Careful");
+      expect(statusline.stdout).toContain("edits have not been checked yet");
+      expect(statusline.stdout).toContain("ask Claude to run the smallest relevant check");
+      expect(statusline.stdout).not.toContain("focused check");
+      expect(statusline.stdout).not.toContain("validation lag");
+
+      const why = await runCli(["why"], { env });
+      expect(why.stdout).toContain("Reason: edits have not been checked.");
+      expect(why.stdout).toContain("Next action: ask Claude to run the smallest relevant check.");
+      expect(why.stdout).not.toContain("focused check");
+      expectNoPrivacySentinels(statusline.stdout, why.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("uses edit-check history through the real statusline path without internal wording", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const env = cliEnv(workspace);
+      await writeJson(join(workspace.appHome, "baseline.json"), editValidationBaseline());
+      const transcriptPath = join(workspace.root, "transcripts", "unusual-unchecked-edit.jsonl");
+      await writeTranscript(transcriptPath, unvalidatedEditTranscript(7));
+
+      const statusline = await runCli(["statusline"], {
+        env,
+        input: statusInput({
+          session_id: "session-unusual-unchecked-edit",
+          transcript_path: transcriptPath,
+          terminal_width: 180
+        })
+      });
+
+      expect(statusline.exitCode).toBe(0);
+      expect(statusline.stderr).toBe("");
+      expect(statusline.stdout).toContain("bb: Careful");
+      expect(statusline.stdout).toContain("edits have gone longer than usual without a check");
+      expect(statusline.stdout).toContain("past sessions usually checked edits sooner");
+      expect(statusline.stdout).toContain("ask Claude to run the smallest relevant check");
+      expect(statusline.stdout).not.toContain("focused check");
+      expect(statusline.stdout).not.toContain("validation lag");
+
+      const why = await runCli(["why"], { env });
+      expect(why.stdout).toContain("Baseline: past sessions usually checked edits sooner.");
+      expectNoPrivacySentinels(statusline.stdout, why.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -642,7 +710,7 @@ describe("CLI behavior characterization", () => {
 
       expect(stop.exitCode).toBe(0);
       expect(stop.stdout).toContain("bb: Stop");
-      expect(stop.stdout).toContain("why: blind retry loop: same failure 3x without fix evidence");
+      expect(stop.stdout).toContain("why: same failure retried 3x without a fix");
       expect(stop.stdout).toContain("do: stop and inspect first failure");
 
       const latest = await runCli(["statusline"], {
@@ -667,7 +735,7 @@ describe("CLI behavior characterization", () => {
       expect(whyStop.exitCode).toBe(0);
       expect(whyStop.stdout).toContain("Last decision: Stop.");
       expect(whyStop.stdout).toContain(
-        "Reason: same test failed 3x without fix evidence. Claude is retrying the same failure without meaningful intervention."
+        "Reason: same test failed 3x without a fix. Claude is repeating the same failure without a fix or passing check."
       );
       expect(whyStop.stdout).toContain("Next action: stop and inspect first failure.");
 
@@ -676,7 +744,7 @@ describe("CLI behavior characterization", () => {
       expect(JSON.parse(whyJson.stdout)).toMatchObject({
         state: "Stop",
         reasonCode: "blind_retry_loop",
-        primaryEvidence: "same test failed 3x without fix evidence"
+        primaryEvidence: "same test failed 3x without a fix"
       });
 
       const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
@@ -706,13 +774,13 @@ describe("CLI behavior characterization", () => {
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stderr).toBe("");
       expect(statusline.stdout).toContain(
-        "bb: Stop | why: blind retry loop: same failure 3x without fix evidence"
+        "bb: Stop | why: same failure retried 3x without a fix"
       );
 
       const why = await runCli(["why"], { env });
       expect(why.exitCode).toBe(0);
       expect(why.stdout).toContain(
-        "Reason: same MCP tool failed 3x without fix evidence. Claude is retrying the same failure without meaningful intervention."
+        "Reason: same MCP tool failed 3x without a fix. Claude is repeating the same failure without a fix or passing check."
       );
       expect(why.stdout).toContain("Next action: stop and inspect first failure.");
 
@@ -721,7 +789,7 @@ describe("CLI behavior characterization", () => {
       expect(JSON.parse(whyJson.stdout)).toMatchObject({
         state: "Stop",
         reasonCode: "blind_retry_loop",
-        primaryEvidence: "same MCP tool failed 3x without fix evidence"
+        primaryEvidence: "same MCP tool failed 3x without a fix"
       });
 
       const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
@@ -757,7 +825,7 @@ describe("CLI behavior characterization", () => {
           terminal_width: 180
         },
         transcript: repeatedFailedTestTranscript(2),
-        expected: ["bb: Careful", "retry looks blind: same test failed twice", "inspect first failure"]
+        expected: ["bb: Careful", "same test failed twice without a fix", "inspect first failure"]
       },
       {
         name: "three repeated failed test commands",
@@ -768,7 +836,7 @@ describe("CLI behavior characterization", () => {
         transcript: repeatedFailedTestTranscript(3),
         expected: [
           "bb: Stop",
-          "why: blind retry loop: same failure 3x without fix evidence",
+          "why: same failure retried 3x without a fix",
           "do: stop and inspect first failure"
         ]
       },
@@ -968,6 +1036,84 @@ function repeatedFailedTestWithEditInterventionTranscript(): string[] {
   ];
 }
 
+function unvalidatedEditTranscript(extraToolResultsAfterEdit = 0): string[] {
+  const lines = [
+    JSON.stringify({
+      timestamp: "2026-05-19T00:05:00.000Z",
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "unchecked-edit",
+            name: "Edit",
+            input: {
+              file_path: privacySentinels[4],
+              old_string: "before",
+              new_string: privacySentinels[3]
+            }
+          }
+        ]
+      }
+    }),
+    JSON.stringify({
+      timestamp: "2026-05-19T00:05:01.000Z",
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "unchecked-edit",
+            is_error: false,
+            content: "edited"
+          }
+        ]
+      }
+    })
+  ];
+
+  for (let index = 0; index < extraToolResultsAfterEdit; index += 1) {
+    lines.push(
+      JSON.stringify({
+        timestamp: `2026-05-19T00:05:${String(index + 2).padStart(2, "0")}.000Z`,
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: `post-edit-read-${index}`,
+              name: "Read",
+              input: {
+                file_path: privacySentinels[4]
+              }
+            }
+          ]
+        }
+      }),
+      JSON.stringify({
+        timestamp: `2026-05-19T00:06:${String(index + 2).padStart(2, "0")}.000Z`,
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: `post-edit-read-${index}`,
+              is_error: false,
+              content: "read complete"
+            }
+          ]
+        }
+      })
+    );
+  }
+
+  return lines;
+}
+
 function repeatedFailedMcpTranscript(rawMcpName: string, count: number): string[] {
   return Array.from({ length: count }, (_value, index) => index + 1).flatMap((index) => [
     JSON.stringify({
@@ -1143,6 +1289,19 @@ function sparseRecoveryBaseline(): Record<string, unknown> {
         blindRetryUnrecovered: 0,
         confidence: "low"
       }
+    }
+  };
+}
+
+function editValidationBaseline(): Record<string, unknown> {
+  return {
+    ...readHeavyBaseline(),
+    editValidation: {
+      editsFollowedByValidation: 12,
+      editsWithoutValidation: 1,
+      editWithoutValidationRate: 0.0769,
+      medianToolStepsFromEditToValidation: 2,
+      p75ToolStepsFromEditToValidation: 4
     }
   };
 }

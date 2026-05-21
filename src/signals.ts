@@ -45,10 +45,10 @@ export function decide(
       state: "Stop",
       reasonCode: "blind_retry_loop",
       diagnosisCode: "blind_retry_loop",
-      diagnosis: `blind retry loop: same failure ${blindRetry.blindRetryFailureCount}x without fix evidence`,
+      diagnosis: `same failure retried ${blindRetry.blindRetryFailureCount}x without a fix`,
       confidence: "high",
-      primaryEvidence: `same ${blindRetry.label} failed ${blindRetry.blindRetryFailureCount}x without fix evidence`,
-      impact: "Claude is retrying the same failure without meaningful intervention",
+      primaryEvidence: `same ${blindRetry.label} failed ${formatFailureCount(blindRetry.blindRetryFailureCount)} without a fix`,
+      impact: "Claude is repeating the same failure without a fix or passing check",
       action: "stop and inspect first failure",
       input,
       usage,
@@ -67,6 +67,7 @@ export function decide(
     const runningTests = repeatedFailure.toolName === "Bash" && repeatedFailure.purpose === "tests";
     const mcpFailure = isMcpFailure(repeatedFailure);
     const validationPurpose = validationPurposeForFailure(repeatedFailure);
+    const validationLabel = validationPurpose ? validationPurposeLabel(validationPurpose) : undefined;
     const baselineInsight = validationPurpose
       ? recoveryInsight(options.baseline, validationPurpose, repeatedFailure.count)
       : mcpFailure
@@ -88,18 +89,24 @@ export function decide(
           : baselineStopLike
           ? "test loop: past runs ended badly"
           : `test loop: failed ${repeatedFailure.count}x`
-        : undefined,
+        : validationLabel
+          ? baselineUnrecoveredLoop && baselineInsight
+            ? baselineInsight.diagnosis
+            : `${validationLabel} failed ${formatFailureCount(repeatedFailure.count)}`
+          : undefined,
       confidence: baselineInsight?.confidence || "high",
       baselineNote: baselineUnrecoveredLoop && baselineInsight
         ? baselineInsight.baselineNote
         : baselineStopLike
-          ? "usually Stop-like for you"
+          ? "similar past loops usually needed intervention"
           : undefined,
       primaryEvidence: repeatedFailureEvidence(repeatedFailure),
       impact: mcpFailure
         ? "Claude is retrying the same failing MCP tool"
         : runningTests
           ? "Claude is retrying a broken test loop"
+          : validationLabel
+            ? `Claude is retrying a failing ${validationLabel} check`
           : "Claude is retrying the same failing tool",
       action: mcpFailure
         ? baselineUnrecoveredLoop
@@ -109,6 +116,10 @@ export function decide(
         ? baselineUnrecoveredLoop
           ? "stop retrying and inspect first failure"
           : "inspect first failure"
+        : validationLabel
+          ? baselineUnrecoveredLoop
+            ? "stop retrying and inspect first failure"
+            : `inspect the first ${validationLabel} failure, then rerun that check`
         : repeatedFailure.toolName === "Bash"
           ? "fix the failing command manually, then ask Claude to rerun only that command"
           : `inspect the failing ${repeatedFailure.toolName} step manually before more retries`,
@@ -128,7 +139,7 @@ export function decide(
       reasonCode: "edit_test_retry_loop",
       primaryEvidence: `edit-test loop failed ${transcript.editTestLoopFailures}x`,
       impact: "More edits are likely to churn without a narrower failure target",
-      action: "inspect the failing test manually, then ask Claude for one focused fix",
+      action: "inspect the failing test manually, then ask Claude for one targeted fix",
       input,
       usage,
       transcript,
@@ -145,10 +156,10 @@ export function decide(
       state: "Careful",
       reasonCode: "blind_retry",
       diagnosisCode: "blind_retry_loop",
-      diagnosis: `retry looks blind: same ${blindRetry.label} failed twice`,
+      diagnosis: `same ${blindRetry.label} failed twice without a fix`,
       confidence: "medium",
-      primaryEvidence: `same ${blindRetry.label} failed twice without fix evidence`,
-      impact: "Claude retried without a successful edit or validation in between",
+      primaryEvidence: `same ${blindRetry.label} failed twice without a fix`,
+      impact: "Claude retried before making a successful edit or getting a passing check",
       action: "inspect first failure",
       input,
       usage,
@@ -167,6 +178,7 @@ export function decide(
     const runningTests = earlyRepeatedFailure.toolName === "Bash" && earlyRepeatedFailure.purpose === "tests";
     const mcpFailure = isMcpFailure(earlyRepeatedFailure);
     const validationPurpose = validationPurposeForFailure(earlyRepeatedFailure);
+    const validationLabel = validationPurpose ? validationPurposeLabel(validationPurpose) : undefined;
     const baselineInsight = validationPurpose
       ? recoveryInsight(options.baseline, validationPurpose, earlyRepeatedFailure.count)
       : mcpFailure
@@ -189,6 +201,8 @@ export function decide(
         ? "Claude is retrying the same failing MCP tool"
         : runningTests
           ? "Tests are failing repeatedly"
+          : validationLabel
+            ? `${validationLabel} is failing repeatedly`
           : "A tool is starting to repeat failures",
       action: mcpFailure
         ? "inspect the failing MCP step before another retry"
@@ -196,6 +210,8 @@ export function decide(
         ? "inspect first failure"
         : runningTests
         ? "pause and inspect the failing test before another retry"
+        : validationLabel
+        ? `pause and inspect the failing ${validationLabel} before another retry`
         : `inspect the failing ${earlyRepeatedFailure.toolName} step before another retry`,
       input,
       usage,
@@ -264,12 +280,12 @@ export function decide(
       state: "Careful",
       reasonCode: "edit_without_validation",
       diagnosisCode: "edit_without_validation",
-      diagnosis: unusualEditLag ? "edit lag unusual for you" : "edits not checked yet",
+      diagnosis: unusualEditLag ? "edits have gone longer than usual without a check" : "edits have not been checked yet",
       confidence: "medium",
-      baselineNote: unusualEditLag ? "this edit has gone longer than your usual validation lag" : undefined,
-      primaryEvidence: "edits not validated",
-      impact: "A successful edit has not been checked by validation yet",
-      action: "run focused check",
+      baselineNote: unusualEditLag ? "past sessions usually checked edits sooner" : undefined,
+      primaryEvidence: "edits have not been checked",
+      impact: "A successful edit has not been checked by a test, lint, typecheck, or build yet",
+      action: "ask Claude to run the smallest relevant check",
       input,
       usage,
       transcript,
@@ -357,11 +373,11 @@ export function decide(
       state: "Healthy",
       reasonCode: "read_heavy_debugging",
       diagnosisCode: "read_heavy_debugging",
-      diagnosis: "research phase: usually normal for you",
+      diagnosis: "research-heavy session usually ended OK",
       confidence: options.baseline?.scenarios?.read_heavy_debugging?.confidence || "medium",
-      baselineNote: "usually Healthy-like for you",
+      baselineNote: "similar research-heavy sessions usually ended OK",
       primaryEvidence: `${transcript.readToolCalls} read/search tool calls`,
-      impact: "This matches your Healthy-like read-heavy sessions",
+      impact: "This matches past research-heavy sessions that ended OK",
       action: "continue",
       input,
       usage,
@@ -525,9 +541,21 @@ function isMcpFailure(failure: { toolName: string; category?: string }): boolean
 }
 
 function repeatedFailureEvidence(failure: { toolName: string; purpose?: string; count: number; category?: string }): string {
+  const validationPurpose = validationPurposeForFailure(failure);
+  if (validationPurpose) {
+    return `${validationPurposeLabel(validationPurpose)} failed ${formatFailureCount(failure.count)}`;
+  }
   return `${isMcpFailure(failure) ? "MCP tool" : failure.toolName} failed ${failure.count}x${
     failure.toolName === "Bash" && failure.purpose === "tests" ? " running tests" : ""
   }`;
+}
+
+function validationPurposeLabel(purpose: ValidationPurpose): string {
+  return purpose === "tests" ? "tests" : purpose;
+}
+
+function formatFailureCount(count: number): string {
+  return count === 2 ? "twice" : `${count}x`;
 }
 
 function hasUnusualEditValidationLag(transcript: TranscriptSummary, baseline: DecisionPersonalBaseline | undefined): boolean {

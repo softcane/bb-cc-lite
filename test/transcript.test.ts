@@ -430,7 +430,7 @@ describe("parseTranscriptLines", () => {
     expect(decision).toMatchObject({
       state: "Careful",
       reasonCode: "blind_retry",
-      primaryEvidence: "same tool failed twice without fix evidence"
+      primaryEvidence: "same tool failed twice without a fix"
     });
     expect(JSON.stringify(summary)).not.toContain(rawUnknownToolName);
     expect(rendered).not.toContain(rawUnknownToolName);
@@ -463,10 +463,10 @@ describe("parseTranscriptLines", () => {
     expect(decision).toMatchObject({
       state: "Careful",
       reasonCode: "blind_retry",
-      primaryEvidence: "same MCP tool failed twice without fix evidence",
+      primaryEvidence: "same MCP tool failed twice without a fix",
       action: "inspect first failure"
     });
-    expect(stripAnsi(rendered)).toContain("bb: Careful | retry looks blind: same MCP tool failed twice | inspect first failure");
+    expect(stripAnsi(rendered)).toContain("bb: Careful | same MCP tool failed twice without a fix | inspect first failure");
     expect(rendered).not.toContain(rawMcpName);
     expectNoPrivacySentinels(summary);
   });
@@ -489,12 +489,12 @@ describe("parseTranscriptLines", () => {
     expect(decision).toMatchObject({
       state: "Stop",
       reasonCode: "blind_retry_loop",
-      primaryEvidence: "same MCP tool failed 3x without fix evidence",
-      impact: "Claude is retrying the same failure without meaningful intervention",
+      primaryEvidence: "same MCP tool failed 3x without a fix",
+      impact: "Claude is repeating the same failure without a fix or passing check",
       action: "stop and inspect first failure"
     });
     expect(stripAnsi(rendered)).toContain(
-      "bb: Stop | why: blind retry loop: same failure 3x without fix evidence"
+      "bb: Stop | why: same failure retried 3x without a fix"
     );
     expect(rendered).not.toContain(rawMcpName);
   });

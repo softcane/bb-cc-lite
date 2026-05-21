@@ -212,8 +212,8 @@ export function recoveryInsightFromAggregate(
       kind: "usually_recovers",
       confidence,
       category,
-      diagnosis: `${categoryFailurePlural(category)} failed twice; usually recovers after one focused fix`,
-      baselineNote: `${categoryFailureSingular(category)} failures usually recovered after one focused fix`
+      diagnosis: `${categoryFailurePlural(category)} failed twice; usually passes after one targeted fix`,
+      baselineNote: `${categoryFailureSingular(category)} failures usually recovered after one targeted fix`
     };
   }
 

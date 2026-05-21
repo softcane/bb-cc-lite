@@ -46,8 +46,8 @@ npx --yes bb-cc-lite install --scope local --replace --hooks
 
 ## What It Catches
 
-- Blind retry loops where the same command or test fails repeatedly without fix evidence.
-- Long stretches of editing without a focused check.
+- Retry loops where the same command or test fails repeatedly without a fix.
+- Long stretches of editing without a test, lint, typecheck, or build check.
 - Context pressure before the session gets too full to reason clearly.
 - Cost and cache signals that make a stuck session easier to spot.
 
@@ -55,10 +55,10 @@ npx --yes bb-cc-lite install --scope local --replace --hooks
 
 ```text
 bb: Healthy | ctx 42% | $0.18 | cache warm | continue normally
-bb: Careful | edits not checked yet | run focused check
-bb: Careful | retry looks blind: same test failed twice | inspect first failure
-bb: Careful | tests failed twice; usually recovers after one fix | inspect first failure
-bb: Stop | why: blind retry loop: same failure 3x without fix evidence | do: stop and inspect first failure
+bb: Careful | edits have not been checked yet | ask Claude to run the smallest relevant check
+bb: Careful | same test failed twice without a fix | inspect first failure
+bb: Careful | tests failed twice; usually passes after one targeted fix | inspect first failure
+bb: Stop | why: same failure retried 3x without a fix | do: stop and inspect first failure
 bb: Stop | why: test loop rarely recovered after 3 failures | do: stop retrying and inspect first failure
 ```
 

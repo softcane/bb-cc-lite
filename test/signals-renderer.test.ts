@@ -60,7 +60,7 @@ describe("signals and renderer", () => {
       reasonCode: "repeated_tool_failure",
       diagnosisCode: "validation_command_loop",
       diagnosis: "test loop: failed 3x",
-      primaryEvidence: "Bash failed 3x running tests",
+      primaryEvidence: "tests failed 3x",
       action: "inspect first failure"
     });
     const rendered = renderStatusLine(decision, 180);
@@ -80,7 +80,7 @@ describe("signals and renderer", () => {
     expect(decision).toMatchObject({
       state: "Careful",
       reasonCode: "tool_failure_repeated",
-      primaryEvidence: "Bash failed 2x running tests",
+      primaryEvidence: "tests failed twice",
       action: "pause and inspect the failing test before another retry"
     });
   });
@@ -105,11 +105,11 @@ describe("signals and renderer", () => {
     expect(careful).toMatchObject({
       state: "Careful",
       reasonCode: "blind_retry",
-      diagnosis: "retry looks blind: same test failed twice",
-      primaryEvidence: "same test failed twice without fix evidence",
+      diagnosis: "same test failed twice without a fix",
+      primaryEvidence: "same test failed twice without a fix",
       action: "inspect first failure"
     });
-    expect(renderStatusLine(careful, 140)).toContain("retry looks blind: same test failed twice");
+    expect(renderStatusLine(careful, 140)).toContain("same test failed twice without a fix");
 
     const stop = decide(
       input({ contextPercent: 42 }),
@@ -130,11 +130,11 @@ describe("signals and renderer", () => {
     expect(stop).toMatchObject({
       state: "Stop",
       reasonCode: "blind_retry_loop",
-      diagnosis: "blind retry loop: same failure 3x without fix evidence",
-      primaryEvidence: "same test failed 3x without fix evidence",
+      diagnosis: "same failure retried 3x without a fix",
+      primaryEvidence: "same test failed 3x without a fix",
       action: "stop and inspect first failure"
     });
-    expect(renderStatusLine(stop, 160)).toContain("why: blind retry loop: same failure 3x without fix evidence");
+    expect(renderStatusLine(stop, 160)).toContain("why: same failure retried 3x without a fix");
   });
 
   it("renders the required Careful MCP wording without raw tool names", () => {
@@ -216,12 +216,12 @@ describe("signals and renderer", () => {
     expect(decision).toMatchObject({
       state: "Careful",
       reasonCode: "tool_failure_repeated",
-      diagnosis: "tests failed twice; usually recovers after one focused fix",
-      baselineNote: "test failures usually recovered after one focused fix",
+      diagnosis: "tests failed twice; usually passes after one targeted fix",
+      baselineNote: "test failures usually recovered after one targeted fix",
       action: "inspect first failure"
     });
-    expect(renderStatusLine(decision, 140)).toContain("tests failed twice; usually recovers after one focused fix");
-    expect(formatWhy(decision)).toContain("Baseline: test failures usually recovered after one focused fix.");
+    expect(renderStatusLine(decision, 140)).toContain("tests failed twice; usually passes after one targeted fix");
+    expect(formatWhy(decision)).toContain("Baseline: test failures usually recovered after one targeted fix.");
   });
 
   it("uses category-specific recovery history for a two-failure typecheck streak", () => {
@@ -254,10 +254,32 @@ describe("signals and renderer", () => {
     expect(decision).toMatchObject({
       state: "Careful",
       reasonCode: "tool_failure_repeated",
-      diagnosis: "typecheck failed twice; usually recovers after one focused fix",
-      baselineNote: "typecheck failures usually recovered after one focused fix",
+      diagnosis: "typecheck failed twice; usually passes after one targeted fix",
+      baselineNote: "typecheck failures usually recovered after one targeted fix",
       action: "inspect first failure"
     });
+  });
+
+  it("uses check-level wording for repeated typecheck failures without baseline history", () => {
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        failedToolResults: 2,
+        repeatedFailures: [{ toolName: "Bash", purpose: "typecheck", count: 2 }]
+      })
+    );
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "tool_failure_repeated",
+      primaryEvidence: "typecheck failed twice",
+      impact: "typecheck is failing repeatedly",
+      action: "pause and inspect the failing typecheck before another retry"
+    });
+    const rendered = renderStatusLine(decision, 140);
+    expect(rendered).toContain("typecheck failed twice");
+    expect(rendered).not.toContain("Bash failed");
+    expect(rendered).not.toContain("Bash step");
   });
 
   it("warns when edits have not been validated yet", () => {
@@ -270,13 +292,13 @@ describe("signals and renderer", () => {
       state: "Careful",
       reasonCode: "edit_without_validation",
       diagnosisCode: "edit_without_validation",
-      diagnosis: "edits not checked yet",
-      action: "run focused check"
+      diagnosis: "edits have not been checked yet",
+      action: "ask Claude to run the smallest relevant check"
     });
-    expect(renderStatusLine(decision, 120)).toContain("edits not checked yet");
+    expect(renderStatusLine(decision, 120)).toContain("edits have not been checked yet");
   });
 
-  it("uses edit-validation lag history when an unvalidated edit is unusual", () => {
+  it("uses plain edit-check wording when an unvalidated edit is unusual", () => {
     const decision = decide(
       input({ contextPercent: 42 }),
       transcript({ hasUnvalidatedEdits: true, unvalidatedEditToolSteps: 7 }),
@@ -296,12 +318,16 @@ describe("signals and renderer", () => {
     expect(decision).toMatchObject({
       state: "Careful",
       reasonCode: "edit_without_validation",
-      diagnosis: "edit lag unusual for you",
-      baselineNote: "this edit has gone longer than your usual validation lag",
-      action: "run focused check"
+      diagnosis: "edits have gone longer than usual without a check",
+      baselineNote: "past sessions usually checked edits sooner",
+      action: "ask Claude to run the smallest relevant check"
     });
-    expect(renderStatusLine(decision, 120)).toContain("edit lag unusual for you");
-    expect(formatWhy(decision)).toContain("Baseline: this edit has gone longer than your usual validation lag.");
+    const rendered = renderStatusLine(decision, 120);
+    expect(rendered).toContain("edits have gone longer than usual without a check");
+    expect(rendered).toContain("ask Claude to run the smallest relevant check");
+    expect(rendered).not.toContain("validation lag");
+    expect(rendered).not.toContain("focused check");
+    expect(formatWhy(decision)).toContain("Baseline: past sessions usually checked edits sooner.");
   });
 
   it("renders validation recovery as healthy", () => {
@@ -337,11 +363,11 @@ describe("signals and renderer", () => {
       state: "Healthy",
       reasonCode: "read_heavy_debugging",
       diagnosisCode: "read_heavy_debugging",
-      diagnosis: "research phase: usually normal for you",
-      baselineNote: "usually Healthy-like for you",
+      diagnosis: "research-heavy session usually ended OK",
+      baselineNote: "similar research-heavy sessions usually ended OK",
       action: "continue"
     });
-    expect(renderStatusLine(decision, 140)).toContain("research phase: usually normal for you");
+    expect(renderStatusLine(decision, 140)).toContain("research-heavy session usually ended OK");
   });
 
   it("prefers recent read-heavy baseline evidence over stale all-time history", () => {
@@ -388,7 +414,7 @@ describe("signals and renderer", () => {
     expect(recentHealthy).toMatchObject({
       state: "Healthy",
       reasonCode: "read_heavy_debugging",
-      diagnosis: "research phase: usually normal for you"
+      diagnosis: "research-heavy session usually ended OK"
     });
   });
 
@@ -416,7 +442,7 @@ describe("signals and renderer", () => {
       reasonCode: "repeated_tool_failure",
       diagnosisCode: "validation_command_loop",
       diagnosis: "test loop: past runs ended badly",
-      baselineNote: "usually Stop-like for you"
+      baselineNote: "similar past loops usually needed intervention"
     });
     expect(renderStatusLine(decision, 120)).toContain("why: test loop: past runs ended badly");
   });
@@ -484,7 +510,7 @@ describe("signals and renderer", () => {
 
     const why = formatWhy(decision);
 
-    expect(why).toContain("Baseline: read-heavy sessions were usually Healthy-like for you.");
+    expect(why).toContain("Baseline: similar research-heavy sessions usually ended OK.");
     expect(why).not.toContain("16");
   });
 

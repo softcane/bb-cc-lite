@@ -238,7 +238,7 @@ describe("optional Claude Code hooks", () => {
       expect(careful).toMatchObject({
         state: "Careful",
         reasonCode: "blind_retry",
-        primaryEvidence: "same test failed twice without fix evidence"
+        primaryEvidence: "same test failed twice without a fix"
       });
 
       const thirdEvent = parseHookPayload(
@@ -261,7 +261,7 @@ describe("optional Claude Code hooks", () => {
       expect(stop).toMatchObject({
         state: "Stop",
         reasonCode: "blind_retry_loop",
-        primaryEvidence: "same test failed 3x without fix evidence"
+        primaryEvidence: "same test failed 3x without a fix"
       });
       expect(await hookSummary(hashValue("other-session"), storePath)).toMatchObject({
         failedToolResults: 0,
@@ -301,7 +301,7 @@ describe("optional Claude Code hooks", () => {
       expect(careful).toMatchObject({
         state: "Careful",
         reasonCode: "blind_retry",
-        primaryEvidence: "same MCP tool failed twice without fix evidence",
+        primaryEvidence: "same MCP tool failed twice without a fix",
         action: "inspect first failure"
       });
 
@@ -322,7 +322,7 @@ describe("optional Claude Code hooks", () => {
       expect(stop).toMatchObject({
         state: "Stop",
         reasonCode: "blind_retry_loop",
-        primaryEvidence: "same MCP tool failed 3x without fix evidence",
+        primaryEvidence: "same MCP tool failed 3x without a fix",
         action: "stop and inspect first failure"
       });
 
