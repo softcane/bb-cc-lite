@@ -2,10 +2,11 @@ import { chmod, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "no
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { baselinePath } from "../src/paths.js";
+import { baselinePath, projectBaselinePath, projectKeyFromPath } from "../src/paths.js";
 import {
   BASELINE_READ_MAX_BYTES,
   clearBaseline,
+  readBaselineForProject,
   readBaseline,
   summarizeBaseline,
   type PersonalBaseline,
@@ -240,6 +241,123 @@ describe("personal baseline storage", () => {
     expect(summarizeBaseline(baseline)).toBe(
       "Personal baseline: 12 sessions, Healthy-like 3, Careful-like 2, Stop-like 1."
     );
+  });
+});
+
+describe("project baseline storage", () => {
+  it("stores project baselines under app home using only a hashed project key", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-project-baseline-"));
+    try {
+      const rawProjectPath = join(tempDir, "private-client-worktree");
+      const appHomePath = join(tempDir, "app-home");
+      await mkdir(rawProjectPath, { recursive: true });
+
+      const projectKey = projectKeyFromPath(rawProjectPath);
+      const targetPath = projectBaselinePath({ appHomePath, projectKey });
+      const baseline: PersonalBaseline = {
+        ...sampleBaseline(),
+        source: {
+          ...sampleBaseline().source,
+          sessionsSeen: 3,
+          transcriptFilesScanned: 3
+        },
+        project: {
+          kind: "hashed_project",
+          key: projectKey
+        },
+        activity: {
+          highActivitySessions: 2,
+          busyNoProgressSessions: 1,
+          observedProgressSessions: 1,
+          readHeavySessions: 1,
+          confidence: "medium"
+        },
+        budget: {
+          costSamples: 2,
+          durationSamples: 2,
+          p75CostUsd: 0.42,
+          p90CostUsd: 0.5,
+          p75DurationMs: 600000,
+          p90DurationMs: 900000,
+          confidence: "medium"
+        }
+      };
+
+      await writeBaseline(baseline, targetPath);
+
+      const serialized = await readFile(targetPath, "utf8");
+      expect(projectKey).toMatch(/^[a-f0-9]{64}$/u);
+      expect(targetPath).toBe(join(appHomePath, "project-baselines", `${projectKey}.json`));
+      expect(targetPath).not.toContain(rawProjectPath);
+      expect(serialized).toContain(projectKey);
+      expect(serialized).not.toContain(rawProjectPath);
+      await expect(readBaseline(targetPath)).resolves.toEqual(baseline);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers a strong project baseline and falls back for sparse or corrupt project data", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-project-baseline-select-"));
+    try {
+      const rawProjectPath = join(tempDir, "private-client-worktree");
+      const appHomePath = join(tempDir, "app-home");
+      const projectKey = projectKeyFromPath(rawProjectPath);
+      const personalPath = join(appHomePath, "baseline.json");
+      const projectPath = projectBaselinePath({ appHomePath, projectKey });
+      const personalBaseline = {
+        ...sampleBaseline(),
+        source: {
+          ...sampleBaseline().source,
+          sessionsSeen: 12,
+          transcriptFilesScanned: 12
+        }
+      };
+      const sparseProjectBaseline = projectBaseline(projectKey, 2);
+      const strongProjectBaseline = projectBaseline(projectKey, 4);
+
+      await writeBaseline(personalBaseline, personalPath);
+      await writeBaseline(sparseProjectBaseline, projectPath);
+
+      const sparseSelection = await readBaselineForProject({
+        projectDir: rawProjectPath,
+        appHomePath,
+        personalPath
+      });
+
+      expect(sparseSelection.source).toBe("personal");
+      expect(sparseSelection.baseline).toEqual(personalBaseline);
+      expect(JSON.stringify(sparseSelection)).not.toContain(rawProjectPath);
+
+      await writeBaseline(strongProjectBaseline, projectPath);
+
+      const strongSelection = await readBaselineForProject({
+        projectDir: rawProjectPath,
+        appHomePath,
+        personalPath
+      });
+
+      expect(strongSelection).toMatchObject({
+        source: "project",
+        projectKey,
+        baseline: strongProjectBaseline
+      });
+      expect(JSON.stringify(strongSelection)).not.toContain(rawProjectPath);
+
+      await writeFile(projectPath, "{not-json", "utf8");
+
+      const corruptSelection = await readBaselineForProject({
+        projectDir: rawProjectPath,
+        appHomePath,
+        personalPath
+      });
+
+      expect(corruptSelection.source).toBe("personal");
+      expect(corruptSelection.baseline).toEqual(personalBaseline);
+      expect(JSON.stringify(corruptSelection)).not.toContain(rawProjectPath);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -601,6 +719,179 @@ describe("personal baseline builder", () => {
     }
   });
 
+  it("builds safe activity and budget aggregates for project-baseline consumers", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-activity-budget-"));
+    try {
+      const claudeProjectsDir = join(tempDir, ".claude", "projects");
+      const projectDir = join(claudeProjectsDir, "project");
+      await mkdir(projectDir, { recursive: true });
+
+      await writeJsonl(join(projectDir, "busy-no-progress.jsonl"), [
+        statusMetrics(0.12, 300000),
+        ...readHeavySession("busy-read-1"),
+        ...readHeavySession("busy-read-2"),
+        userText("BB_CC_LITE_RAW_PROMPT_SENTINEL")
+      ]);
+      await writeJsonl(join(projectDir, "progress.jsonl"), [
+        statusMetrics(0.45, 900000),
+        ...validationRecoveredSession("progress"),
+        userText("/tmp/bb-cc-lite/private/worktree/src/secret.ts")
+      ]);
+
+      const result = await buildBaseline({
+        claudeProjectsDir,
+        appHomePath: join(tempDir, "app-home"),
+        now: new Date("2026-05-19T10:00:00.000Z")
+      });
+
+      expect(result.baseline.activity).toMatchObject({
+        highActivitySessions: 1,
+        busyNoProgressSessions: 1,
+        observedProgressSessions: 1,
+        readHeavySessions: 1,
+        confidence: "low"
+      });
+      expect(result.baseline.budget).toMatchObject({
+        costSamples: 2,
+        durationSamples: 2,
+        p75CostUsd: 0.45,
+        p90CostUsd: 0.45,
+        p75DurationMs: 900000,
+        p90DurationMs: 900000,
+        confidence: "low"
+      });
+      expect(JSON.stringify(result.baseline)).not.toContain("BB_CC_LITE_RAW");
+      expect(JSON.stringify(result.baseline)).not.toContain("/tmp/bb-cc-lite/private/worktree");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes a project baseline under app home when a project directory is supplied", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-project-build-"));
+    try {
+      const rawProjectPath = join(tempDir, "private-client-worktree");
+      const claudeProjectsDir = join(tempDir, ".claude", "projects");
+      const transcriptProjectDir = join(claudeProjectsDir, "project");
+      const appHomePath = join(tempDir, "app-home");
+      await mkdir(rawProjectPath, { recursive: true });
+      await mkdir(transcriptProjectDir, { recursive: true });
+      await writeJsonl(join(transcriptProjectDir, "project-session.jsonl"), readHeavySession("project-build"));
+
+      const result = await buildBaseline({
+        claudeProjectsDir,
+        appHomePath,
+        projectDir: rawProjectPath,
+        projectTranscriptDir: transcriptProjectDir,
+        now: new Date("2026-05-19T10:00:00.000Z")
+      });
+
+      const projectKey = projectKeyFromPath(rawProjectPath);
+      const storedProjectBaseline = await readBaseline(projectBaselinePath({ appHomePath, projectKey }));
+
+      expect(result.projectBaseline).toMatchObject({
+        project: {
+          kind: "hashed_project",
+          key: projectKey
+        },
+        source: {
+          sessionsSeen: 1,
+          transcriptFilesScanned: 1
+        }
+      });
+      expect(storedProjectBaseline).toEqual(result.projectBaseline);
+      expect(projectBaselinePath({ appHomePath, projectKey })).not.toContain(rawProjectPath);
+      expect(JSON.stringify(storedProjectBaseline)).not.toContain(rawProjectPath);
+      expect(JSON.stringify(storedProjectBaseline)).not.toContain("private-client-worktree");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not build a project baseline from an unrelated single transcript project", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-project-unmatched-"));
+    try {
+      const rawProjectPath = join(tempDir, "current-worktree-with-no-history");
+      const claudeProjectsDir = join(tempDir, ".claude", "projects");
+      const unrelatedTranscriptDir = join(claudeProjectsDir, "unrelated-project");
+      const appHomePath = join(tempDir, "app-home");
+      await mkdir(rawProjectPath, { recursive: true });
+      await mkdir(unrelatedTranscriptDir, { recursive: true });
+      await writeJsonl(join(unrelatedTranscriptDir, "stop-loop.jsonl"), stopLoopSession("unrelated"));
+
+      const result = await buildBaseline({
+        claudeProjectsDir,
+        appHomePath,
+        projectDir: rawProjectPath,
+        now: new Date("2026-05-19T10:00:00.000Z")
+      });
+
+      const projectKey = projectKeyFromPath(rawProjectPath);
+      const storedProjectBaseline = await readBaseline(projectBaselinePath({ appHomePath, projectKey }));
+
+      expect(result.baseline.source.sessionsSeen).toBe(1);
+      expect(result.baseline.outcomes.stopLike.validationLoopUnrecovered).toBe(1);
+      expect(result.projectBaseline).toMatchObject({
+        project: {
+          kind: "hashed_project",
+          key: projectKey
+        },
+        source: {
+          sessionsSeen: 0,
+          transcriptFilesScanned: 0
+        },
+        outcomes: {
+          stopLike: {
+            validationLoopUnrecovered: 0
+          }
+        }
+      });
+      expect(storedProjectBaseline).toEqual(result.projectBaseline);
+      expect(JSON.stringify(storedProjectBaseline)).not.toContain(rawProjectPath);
+      expect(JSON.stringify(storedProjectBaseline)).not.toContain("unrelated-project");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("builds the project baseline from only that project's transcript directory", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-project-specific-"));
+    try {
+      const rawProjectPath = join(tempDir, "private-client-worktree");
+      const claudeProjectsDir = join(tempDir, ".claude", "projects");
+      const targetTranscriptDir = join(claudeProjectsDir, "target-project");
+      const otherTranscriptDir = join(claudeProjectsDir, "other-project");
+      const appHomePath = join(tempDir, "app-home");
+      await mkdir(rawProjectPath, { recursive: true });
+      await mkdir(targetTranscriptDir, { recursive: true });
+      await mkdir(otherTranscriptDir, { recursive: true });
+
+      for (let index = 0; index < 3; index += 1) {
+        await writeJsonl(join(targetTranscriptDir, `read-heavy-${index}.jsonl`), readHeavySession(`target-${index}`));
+        await writeJsonl(join(otherTranscriptDir, `stop-loop-${index}.jsonl`), stopLoopSession(`other-${index}`));
+      }
+
+      const result = await buildBaseline({
+        claudeProjectsDir,
+        appHomePath,
+        projectDir: rawProjectPath,
+        projectTranscriptDir: targetTranscriptDir,
+        now: new Date("2026-05-19T10:00:00.000Z")
+      });
+
+      expect(result.baseline.source.sessionsSeen).toBe(6);
+      expect(result.baseline.outcomes.stopLike.validationLoopUnrecovered).toBe(3);
+      expect(result.projectBaseline?.source.sessionsSeen).toBe(3);
+      expect(result.projectBaseline?.outcomes.healthyLike.readHeavyNoFailure).toBe(3);
+      expect(result.projectBaseline?.outcomes.stopLike.validationLoopUnrecovered).toBe(0);
+      expect(result.projectBaseline?.scenarios.validation_command_loop).toMatchObject({ seen: 0, recentSeen: 0 });
+      expect(JSON.stringify(result.projectBaseline)).not.toContain(rawProjectPath);
+      expect(JSON.stringify(result.projectBaseline)).not.toContain("other-project");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("builds aggregate MCP tool category counts without storing raw MCP names", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-mcp-"));
     try {
@@ -855,6 +1146,37 @@ function sampleBaseline(): PersonalBaseline {
   };
 }
 
+function projectBaseline(projectKey: string, sessionsSeen: number): PersonalBaseline {
+  return {
+    ...sampleBaseline(),
+    project: {
+      kind: "hashed_project",
+      key: projectKey
+    },
+    source: {
+      ...sampleBaseline().source,
+      sessionsSeen,
+      transcriptFilesScanned: sessionsSeen
+    },
+    activity: {
+      highActivitySessions: sessionsSeen,
+      busyNoProgressSessions: Math.max(0, sessionsSeen - 1),
+      observedProgressSessions: 1,
+      readHeavySessions: sessionsSeen,
+      confidence: sessionsSeen >= 3 ? "medium" : "low"
+    },
+    budget: {
+      costSamples: sessionsSeen,
+      durationSamples: sessionsSeen,
+      p75CostUsd: 0.5,
+      p90CostUsd: 0.7,
+      p75DurationMs: 600000,
+      p90DurationMs: 900000,
+      confidence: sessionsSeen >= 3 ? "medium" : "low"
+    }
+  };
+}
+
 function validationAggregate(): Record<string, number> {
   return {
     calls: 4,
@@ -925,6 +1247,16 @@ function userText(content: string): unknown {
     message: {
       role: "user",
       content
+    }
+  };
+}
+
+function statusMetrics(costUsd: number, durationMs: number): unknown {
+  return {
+    type: "system",
+    cost: {
+      total_cost_usd: costUsd,
+      total_duration_ms: durationMs
     }
   };
 }

@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { readBaseline, type PersonalBaseline } from "../src/baseline.js";
+import { readBaseline, writeBaseline, type PersonalBaseline } from "../src/baseline.js";
 import {
   acquireRefreshLock,
   baselineIsStale,
@@ -10,8 +10,10 @@ import {
   maybeTriggerBaselineRefresh,
   refreshIntervalHoursFromEnv,
   runBaselineRefresh,
-  shouldAutoRefresh
+  shouldAutoRefresh,
+  type RefreshSpawnRequest
 } from "../src/baseline-refresh.js";
+import { projectBaselinePath, projectKeyFromPath } from "../src/paths.js";
 import { pathExists } from "./helpers/temp.js";
 
 const privacySentinels = [
@@ -163,6 +165,45 @@ describe("baseline auto refresh locking", () => {
     }
   });
 
+  it("passes the project directory through quiet refresh and writes a project baseline", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-refresh-project-"));
+    try {
+      const appHomePath = join(tempDir, "app-home");
+      const projectDir = join(tempDir, "private-project");
+      const projectKey = projectKeyFromPath(projectDir);
+
+      const result = await runBaselineRefresh({
+        appHomePath,
+        projectDir,
+        build: async (options) => {
+          const baseline = {
+            ...sampleBaseline("2026-05-20T12:00:00.000Z"),
+            project: options.projectDir
+              ? {
+                  kind: "hashed_project" as const,
+                  key: projectKeyFromPath(options.projectDir)
+                }
+              : undefined
+          };
+          if (options.projectDir) {
+            await writeBaseline(baseline, projectBaselinePath({ appHomePath, projectKey }));
+          }
+          return { baseline, written: true };
+        }
+      });
+
+      expect(result).toEqual({ ok: true, written: true });
+      const stored = await readBaseline(projectBaselinePath({ appHomePath, projectKey }));
+      expect(stored?.project).toEqual({
+        kind: "hashed_project",
+        key: projectKey
+      });
+      expect(JSON.stringify(stored)).not.toContain(projectDir);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not spawn when a fresh lock already exists", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-refresh-trigger-lock-"));
     try {
@@ -180,6 +221,41 @@ describe("baseline auto refresh locking", () => {
 
       expect(result).toEqual({ triggered: false, reason: "locked" });
       expect(spawned).toBe(0);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("spawns stale refresh with the current project and transcript path", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-refresh-trigger-project-"));
+    try {
+      const projectDir = join(tempDir, "private-project");
+      const transcriptPath = join(tempDir, ".claude", "projects", "project", "session.jsonl");
+      let spawned: RefreshSpawnRequest | undefined;
+
+      const result = await maybeTriggerBaselineRefresh({
+        baseline: sampleBaseline("2026-05-19T00:00:00.000Z"),
+        appHomePath: tempDir,
+        projectDir,
+        transcriptPath,
+        cliFilePath: "/safe/cli.js",
+        now: new Date("2026-05-20T12:00:30.000Z"),
+        spawnRefresh: (request) => {
+          spawned = request;
+        }
+      });
+
+      expect(result).toEqual({ triggered: true, reason: "spawned" });
+      expect(spawned?.args).toEqual([
+        "/safe/cli.js",
+        "baseline-refresh",
+        "--quiet",
+        "--project",
+        projectDir,
+        "--transcript",
+        transcriptPath
+      ]);
+      expect(spawned?.env.BB_CC_LITE_BASELINE_REFRESH_LOCK_HELD).toBe("1");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

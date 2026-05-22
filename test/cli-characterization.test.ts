@@ -6,6 +6,7 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { baselineRefreshLockPath } from "../src/baseline-refresh.js";
+import { projectBaselinePath, projectKeyFromPath } from "../src/paths.js";
 import { createTempWorkspace, pathExists, removeTempWorkspace, type TempWorkspace, writeJson } from "./helpers/temp.js";
 
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -16,7 +17,10 @@ const privacySentinels = [
   "BB_CC_LITE_TOOL_OUTPUT_SENTINEL",
   "BB_CC_LITE_API_KEY_SENTINEL",
   "BB_CC_LITE_FILE_CONTENT_SENTINEL",
-  "/tmp/bb-cc-lite/private/worktree/src/secret.ts"
+  "/tmp/bb-cc-lite/private/worktree/src/secret.ts",
+  "BB_CC_LITE_RAW_COMMAND_SENTINEL",
+  "BB_CC_LITE_RAW_SESSION_SENTINEL",
+  "mcp__privateServer__rawPrivacyTool"
 ];
 
 interface ProcessResult {
@@ -191,11 +195,14 @@ describe("CLI behavior characterization", () => {
     }
   });
 
-  it("unlearn clears the personal baseline", async () => {
+  it("unlearn clears all learned baselines", async () => {
     const workspace = await createTempWorkspace();
     try {
       const baselinePath = join(workspace.appHome, "baseline.json");
+      const projectKey = projectKeyFromPath(workspace.projectDir);
+      const projectBaselineFile = projectBaselinePath({ appHomePath: workspace.appHome, projectKey });
       await writeFile(baselinePath, '{"schema":"bb-cc-lite.baseline.v1"}\n', "utf8");
+      await writeJson(projectBaselineFile, { schema: "bb-cc-lite.baseline.v1" });
 
       const result = await runCli(["unlearn", "--home", workspace.homeDir], {
         env: cliEnv(workspace)
@@ -203,8 +210,9 @@ describe("CLI behavior characterization", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
-      expect(result.stdout.trim()).toBe("Cleared personal baseline.");
+      expect(result.stdout.trim()).toBe("Cleared learned baselines.");
       await expect(pathExists(baselinePath)).resolves.toBe(false);
+      await expect(pathExists(projectBaselineFile)).resolves.toBe(false);
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -345,6 +353,61 @@ describe("CLI behavior characterization", () => {
     }
   });
 
+  it("uses a strong project baseline for normal project budget patterns", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const env = cliEnv(workspace);
+      const projectKey = projectKeyFromPath(workspace.projectDir);
+      await writeJson(
+        projectBaselinePath({ appHomePath: workspace.appHome, projectKey }),
+        {
+          ...readHeavyBaseline(),
+          project: {
+            kind: "hashed_project",
+            key: projectKey
+          },
+          source: {
+            ...readHeavyBaseline().source,
+            sessionsSeen: 6,
+            transcriptFilesScanned: 6
+          },
+          budget: {
+            costSamples: 6,
+            durationSamples: 6,
+            p75CostUsd: 2.5,
+            p90CostUsd: 4,
+            p75DurationMs: 60 * 60_000,
+            p90DurationMs: 90 * 60_000,
+            confidence: "medium"
+          }
+        }
+      );
+
+      const statusline = await runCli(["statusline"], {
+        env,
+        input: statusInput({
+          session_id: "session-project-budget",
+          cwd: workspace.projectDir,
+          cost: {
+            total_cost_usd: 2.4,
+            total_duration_ms: 60 * 60_000
+          },
+          terminal_width: 180
+        })
+      });
+
+      expect(statusline.exitCode).toBe(0);
+      expect(statusline.stderr).toBe("");
+      expect(statusline.stdout).toContain("bb: Healthy");
+      expect(statusline.stdout).not.toContain("cost is above");
+      expect(statusline.stdout).not.toContain("session ran");
+      expect(statusline.stdout).not.toContain(workspace.projectDir);
+      expectNoPrivacySentinels(statusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
   it("does not scan old Claude JSONL history during statusline rendering", async () => {
     const workspace = await createTempWorkspace();
     try {
@@ -367,6 +430,51 @@ describe("CLI behavior characterization", () => {
       expect(statusline.stdout).toContain("bb: Healthy");
       expect(statusline.stdout).not.toContain("test loop");
       expectNoPrivacySentinels(statusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("uses environment budget thresholds in the real statusline path", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const env = {
+        ...cliEnv(workspace),
+        BB_CC_LITE_BUDGET_COST_USD: "0.10",
+        BB_CC_LITE_BUDGET_DURATION_MS: "10000"
+      };
+
+      const costStatusline = await runCli(["statusline"], {
+        env,
+        input: statusInput({
+          session_id: "session-budget-env-cost",
+          cwd: workspace.projectDir,
+          cost: {
+            total_cost_usd: 0.11
+          },
+          terminal_width: 180
+        })
+      });
+      const costWhy = await runCli(["why", "--session", "session-budget-env-cost", "--json"], { env });
+
+      const durationStatusline = await runCli(["statusline"], {
+        env,
+        input: statusInput({
+          session_id: "session-budget-env-duration",
+          cwd: workspace.projectDir,
+          duration_ms: 11000,
+          terminal_width: 180
+        })
+      });
+      const durationWhy = await runCli(["why", "--session", "session-budget-env-duration", "--json"], { env });
+
+      expect(costStatusline.exitCode).toBe(0);
+      expect(durationStatusline.exitCode).toBe(0);
+      expect(costStatusline.stdout).toContain("bb: Careful");
+      expect(durationStatusline.stdout).toContain("bb: Careful");
+      expect(JSON.parse(costWhy.stdout)).toMatchObject({ reasonCode: "cost_budget" });
+      expect(JSON.parse(durationWhy.stdout)).toMatchObject({ reasonCode: "duration_budget" });
+      expectNoPrivacySentinels(costStatusline.stdout, durationStatusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -803,6 +911,91 @@ describe("CLI behavior characterization", () => {
     }
   });
 
+  it("keeps end-to-end CLI QA surfaces free of forbidden raw data sentinels", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const env = {
+        ...cliEnv(workspace),
+        BB_CC_LITE_PRICING_CACHE: join(workspace.appHome, "pricing.json")
+      };
+      const refreshEnv = {
+        ...cliEnv(workspace, { autoLearn: true }),
+        BB_CC_LITE_PRICING_CACHE: join(workspace.appHome, "pricing.json")
+      };
+      const rawSessionId = `session-${privacySentinels[6]}`;
+      const transcriptPath = join(workspace.root, "transcripts", "privacy-surfaces.jsonl");
+      await writeTranscript(transcriptPath, privacySurfaceTranscript());
+      await writeHistoricalPrivacyTranscripts(workspace.homeDir);
+
+      const statusline = await runCli(["statusline"], {
+        env,
+        input: statusInput({
+          session_id: rawSessionId,
+          transcript_path: transcriptPath,
+          terminal_width: 240
+        })
+      });
+
+      expect(statusline.exitCode).toBe(0);
+      expect(statusline.stderr).toBe("");
+      expect(statusline.stdout).toContain("bb: Stop");
+
+      const why = await runCli(["why", "--session", rawSessionId], { env });
+      const whyJson = await runCli(["why", "--session", rawSessionId, "--json"], { env });
+      expect(why.exitCode).toBe(0);
+      expect(whyJson.exitCode).toBe(0);
+      expect(JSON.parse(whyJson.stdout)).toMatchObject({
+        state: "Stop"
+      });
+
+      const refresh = await runCli(["baseline-refresh", "--quiet", "--home", workspace.homeDir], { env: refreshEnv });
+      expect(refresh.exitCode).toBe(0);
+      expect(refresh.stdout).toBe("");
+      expect(refresh.stderr).toBe("");
+
+      const doctor = await runCli(
+        [
+          "doctor",
+          "--project",
+          workspace.projectDir,
+          "--home",
+          workspace.homeDir,
+          "--transcript",
+          transcriptPath,
+          "--build-baseline",
+          "--baseline",
+          "--replay-baseline"
+        ],
+        { env }
+      );
+      expect(doctor.exitCode).toBe(0);
+      expect(doctor.stdout).toContain("OK baseline:");
+      expect(doctor.stdout).toContain("derived aggregate data only");
+      expect(doctor.stdout).toContain("baseline-replay:");
+
+      const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
+      const baselineText = await readFile(join(workspace.appHome, "baseline.json"), "utf8");
+      const serializedSurfaces = [
+        statusline.stdout,
+        why.stdout,
+        whyJson.stdout,
+        refresh.stdout,
+        refresh.stderr,
+        doctor.stdout,
+        doctor.stderr,
+        storeText,
+        baselineText
+      ].join("\n");
+
+      expectNoPrivacySentinels(serializedSurfaces);
+      for (const rawPath of [workspace.root, workspace.projectDir, workspace.homeDir, workspace.appHome, transcriptPath]) {
+        expect(serializedSurfaces).not.toContain(rawPath);
+      }
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
   it("characterizes fixture-based status states through the CLI path", async () => {
     const cases: Array<{
       name: string;
@@ -1149,6 +1342,141 @@ function repeatedFailedMcpTranscript(rawMcpName: string, count: number): string[
       }
     })
   ]);
+}
+
+function privacySurfaceTranscript(): string[] {
+  return [
+    JSON.stringify({
+      session_id: privacySentinels[6],
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: privacySentinels[0] }]
+      }
+    }),
+    ...repeatedFailedRawCommandTranscript("privacy-bash", 3),
+    ...repeatedFailedMcpTranscript(privacySentinels[7], 2),
+    JSON.stringify({
+      timestamp: "2026-05-19T00:07:00.000Z",
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: "privacy-edit",
+            name: "Edit",
+            input: {
+              file_path: privacySentinels[4],
+              old_string: "before",
+              new_string: privacySentinels[3]
+            }
+          }
+        ]
+      }
+    }),
+    JSON.stringify({
+      timestamp: "2026-05-19T00:07:01.000Z",
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "privacy-edit",
+            is_error: false,
+            content: privacySentinels[1]
+          }
+        ]
+      }
+    })
+  ];
+}
+
+function repeatedFailedRawCommandTranscript(prefix: string, count: number): string[] {
+  return Array.from({ length: count }, (_value, index) => index + 1).flatMap((index) => [
+    JSON.stringify({
+      timestamp: `2026-05-19T00:08:0${index}.000Z`,
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: `${prefix}-${index}`,
+            name: "Bash",
+            input: {
+              command: `npm test -- ${privacySentinels[5]} ${privacySentinels[4]}`
+            }
+          }
+        ]
+      }
+    }),
+    JSON.stringify({
+      timestamp: `2026-05-19T00:09:0${index}.000Z`,
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: `${prefix}-${index}`,
+            is_error: true,
+            content: `${privacySentinels[1]} ${privacySentinels[2]} ${privacySentinels[3]}`
+          }
+        ]
+      }
+    })
+  ]);
+}
+
+async function writeHistoricalPrivacyTranscripts(homeDir: string): Promise<void> {
+  const projectDir = join(homeDir, ".claude", "projects", "privacy");
+  await writeTranscript(join(projectDir, "older-recovered.jsonl"), [
+    ...repeatedFailedRawCommandTranscript("older-bash", 2),
+    ...successfulRawCommandTranscript("older-pass")
+  ]);
+  await writeTranscript(join(projectDir, "newer-unrecovered.jsonl"), [
+    ...repeatedFailedRawCommandTranscript("newer-bash", 3),
+    ...repeatedFailedMcpTranscript(privacySentinels[7], 3)
+  ]);
+}
+
+function successfulRawCommandTranscript(id: string): string[] {
+  return [
+    JSON.stringify({
+      timestamp: "2026-05-19T00:10:00.000Z",
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id,
+            name: "Bash",
+            input: {
+              command: `npm test -- ${privacySentinels[5]}`
+            }
+          }
+        ]
+      }
+    }),
+    JSON.stringify({
+      timestamp: "2026-05-19T00:10:01.000Z",
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: id,
+            is_error: false,
+            content: privacySentinels[1]
+          }
+        ]
+      }
+    })
+  ];
 }
 
 function compactionTranscript(): string[] {

@@ -1,14 +1,38 @@
 import { sessionKeyFromId } from "./session.js";
 import { mergeUsage } from "./status-input.js";
 import { recoveryInsight } from "./recovery-stats.js";
-import type { Decision, DecisionPersonalBaseline, StatusLineInput, StoredDecision, TokenUsage, TranscriptSummary } from "./types.js";
+import type { Decision, DecisionPersonalBaseline, StatusLineInput, TokenUsage, TranscriptSummary } from "./types.js";
 
 export interface DecideOptions {
-  previous?: StoredDecision;
+  previous?: {
+    costUsd?: number;
+  };
   baseline?: DecisionPersonalBaseline;
+  budgetThresholds?: BudgetThresholds;
+}
+
+export interface BudgetThresholds {
+  costUsd?: number;
+  costTotalCarefulUsd?: number;
+  costDeltaUsd?: number;
+  costDeltaCarefulUsd?: number;
+  durationMs?: number;
+  durationCarefulMs?: number;
+}
+
+interface NormalizedBudgetThresholds {
+  costUsd: number;
+  costDeltaUsd: number;
+  durationMs: number;
 }
 
 type ValidationPurpose = "tests" | "lint" | "typecheck" | "build";
+
+const DEFAULT_BUDGET_THRESHOLDS: NormalizedBudgetThresholds = {
+  costUsd: 2,
+  costDeltaUsd: 0.5,
+  durationMs: 45 * 60_000
+};
 
 export function decide(
   input: StatusLineInput,
@@ -21,6 +45,8 @@ export function decide(
   const sessionKey = sessionKeyFromId(input.sessionId);
   const costUsd = input.costUsd;
   const costSource = input.costSource;
+  const budgetThresholds = normalizeBudgetThresholds(options.budgetThresholds ?? budgetThresholdsFromEnv());
+  const costDelta = costUsd !== undefined && options.previous?.costUsd !== undefined ? costUsd - options.previous.costUsd : 0;
 
   if (!input.rawValid) {
     return baseDecision({
@@ -140,6 +166,34 @@ export function decide(
       primaryEvidence: `edit-test loop failed ${transcript.editTestLoopFailures}x`,
       impact: "More edits are likely to churn without a narrower failure target",
       action: "inspect the failing test manually, then ask Claude for one targeted fix",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
+  const budgetRepeatedFailure = transcript.repeatedFailures
+    .filter((item) => item.count >= 2)
+    .sort((a, b) => b.count - a.count)[0];
+  if (
+    budgetRepeatedFailure &&
+    ((costUsd !== undefined && costUsd >= budgetThresholds.costUsd) || costDelta >= budgetThresholds.costDeltaUsd)
+  ) {
+    const costEvidence =
+      costDelta >= budgetThresholds.costDeltaUsd ? `cost +${formatCost(costDelta)}` : budgetCostEvidence(costUsd || 0, costSource);
+    return baseDecision({
+      state: "Stop",
+      reasonCode: "budget_with_repeated_failure",
+      diagnosisCode: "budget_with_repeated_failure",
+      diagnosis: "high cost plus repeated failures",
+      confidence: "high",
+      primaryEvidence: `${costEvidence} plus ${repeatedFailureEvidence(budgetRepeatedFailure)}`,
+      impact: "high cost plus repeated failures",
+      action: "stop and inspect first failure",
       input,
       usage,
       transcript,
@@ -330,13 +384,75 @@ export function decide(
     });
   }
 
-  const costDelta = costUsd !== undefined && options.previous?.costUsd !== undefined ? costUsd - options.previous.costUsd : 0;
-  if (costDelta >= 0.5) {
+  const budgetCarefulEvidence = budgetCarefulEvidenceFor(input, costDelta, costSource, budgetThresholds, options.baseline);
+  if (budgetCarefulEvidence && isBusyWithoutProgress(transcript)) {
+    return baseDecision({
+      state: "Careful",
+      reasonCode: "budget_busy_no_observed_progress",
+      diagnosisCode: "budget_busy_no_observed_progress",
+      diagnosis: "budget is high and no progress was observed",
+      confidence: "medium",
+      primaryEvidence: `${budgetCarefulEvidence} plus ${transcript.toolCalls} tool calls, no check or recovery seen`,
+      impact: "Budget is high and no observed progress signal was seen",
+      action: "pause and ask Claude what changed before continuing",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
+  if (costDelta >= budgetThresholds.costDeltaUsd) {
     return baseDecision({
       state: "Careful",
       reasonCode: "cost_growth",
       primaryEvidence: `cost +${formatCost(costDelta)}`,
       impact: "Spend rose quickly since the last statusline update",
+      action: "ask Claude to summarize progress before continuing",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
+  if (
+    costUsd !== undefined &&
+    costUsd >= budgetThresholds.costUsd &&
+    !baselineSuppressesCostBudget(costUsd, options.baseline)
+  ) {
+    return baseDecision({
+      state: "Careful",
+      reasonCode: "cost_budget",
+      primaryEvidence: budgetCostEvidence(costUsd, costSource),
+      impact: "Session cost is above the budget threshold",
+      action: "ask Claude to summarize progress before continuing",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
+  if (
+    input.durationMs !== undefined &&
+    input.durationMs >= budgetThresholds.durationMs &&
+    !baselineSuppressesDurationBudget(input.durationMs, options.baseline)
+  ) {
+    return baseDecision({
+      state: "Careful",
+      reasonCode: "duration_budget",
+      primaryEvidence: `session ran ${formatDuration(input.durationMs)}`,
+      impact: "Session has been running longer than expected",
       action: "ask Claude to summarize progress before continuing",
       input,
       usage,
@@ -358,6 +474,26 @@ export function decide(
       primaryEvidence: "validation recovered",
       impact: "A failed validation later passed",
       action: "continue",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
+  if (isBusyWithoutProgress(transcript)) {
+    return baseDecision({
+      state: "Careful",
+      reasonCode: "busy_no_observed_progress",
+      diagnosisCode: "busy_no_observed_progress",
+      diagnosis: `${transcript.toolCalls} tool calls, no check or recovery seen`,
+      confidence: "medium",
+      primaryEvidence: `${transcript.toolCalls} tool calls, no check or recovery seen`,
+      impact: "Many safe activity signals were seen, but no observed progress signal was seen",
+      action: "pause and ask Claude what changed",
       input,
       usage,
       transcript,
@@ -506,6 +642,27 @@ function isReadHeavyCurrentSession(transcript: TranscriptSummary): boolean {
   );
 }
 
+function isBusyWithoutProgress(transcript: TranscriptSummary): boolean {
+  const nonReadToolCalls = Math.max(0, transcript.toolCalls - transcript.readToolCalls);
+  return (
+    transcript.toolCalls >= 8 &&
+    nonReadToolCalls >= 6 &&
+    transcript.failedToolResults === 0 &&
+    !transcript.hasUnvalidatedEdits &&
+    !hasObservedProgress(transcript) &&
+    !isReadHeavyCurrentSession(transcript)
+  );
+}
+
+function hasObservedProgress(transcript: TranscriptSummary): boolean {
+  return Boolean(
+    transcript.observedProgress ||
+      transcript.validationRecovered ||
+      (transcript.validationSuccesses || 0) > 0 ||
+      (transcript.toolRecoveryEvents || 0) > 0
+  );
+}
+
 function hasOpenCompactionBoundary(transcript: TranscriptSummary): boolean {
   return transcript.compactionEvents > 0 && transcript.postCompactionActivity === 0;
 }
@@ -556,6 +713,117 @@ function validationPurposeLabel(purpose: ValidationPurpose): string {
 
 function formatFailureCount(count: number): string {
   return count === 2 ? "twice" : `${count}x`;
+}
+
+function normalizeBudgetThresholds(thresholds: BudgetThresholds | undefined): NormalizedBudgetThresholds {
+  return {
+    costUsd: thresholdOrDefault(thresholds?.costTotalCarefulUsd ?? thresholds?.costUsd, DEFAULT_BUDGET_THRESHOLDS.costUsd),
+    costDeltaUsd: thresholdOrDefault(
+      thresholds?.costDeltaCarefulUsd ?? thresholds?.costDeltaUsd,
+      DEFAULT_BUDGET_THRESHOLDS.costDeltaUsd
+    ),
+    durationMs: thresholdOrDefault(thresholds?.durationCarefulMs ?? thresholds?.durationMs, DEFAULT_BUDGET_THRESHOLDS.durationMs)
+  };
+}
+
+function budgetThresholdsFromEnv(env: NodeJS.ProcessEnv = process.env): BudgetThresholds | undefined {
+  const costUsd = numberEnv(env, "BB_CC_LITE_BUDGET_COST_USD", "BB_CC_LITE_COST_BUDGET_USD");
+  const costDeltaUsd = numberEnv(env, "BB_CC_LITE_BUDGET_COST_DELTA_USD", "BB_CC_LITE_COST_DELTA_BUDGET_USD");
+  const durationMs =
+    numberEnv(env, "BB_CC_LITE_BUDGET_DURATION_MS", "BB_CC_LITE_DURATION_BUDGET_MS") ??
+    minutesEnv(env, "BB_CC_LITE_BUDGET_DURATION_MINUTES", "BB_CC_LITE_DURATION_BUDGET_MINUTES");
+  return costUsd === undefined && costDeltaUsd === undefined && durationMs === undefined
+    ? undefined
+    : {
+        costUsd,
+        costDeltaUsd,
+        durationMs
+      };
+}
+
+function numberEnv(env: NodeJS.ProcessEnv, ...names: string[]): number | undefined {
+  for (const name of names) {
+    const value = env[name];
+    if (value === undefined || value.trim() === "") {
+      continue;
+    }
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function minutesEnv(env: NodeJS.ProcessEnv, ...names: string[]): number | undefined {
+  const minutes = numberEnv(env, ...names);
+  return minutes === undefined ? undefined : minutes * 60_000;
+}
+
+function thresholdOrDefault(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function budgetCostEvidence(costUsd: number, costSource: Decision["costSource"]): string {
+  const cost = formatCost(costUsd);
+  return costSource === "estimated" ? `estimated cost ${cost}` : `cost ${cost}`;
+}
+
+function budgetCarefulEvidenceFor(
+  input: StatusLineInput,
+  costDelta: number,
+  costSource: Decision["costSource"],
+  thresholds: NormalizedBudgetThresholds,
+  baseline: DecisionPersonalBaseline | undefined
+): string | undefined {
+  if (costDelta >= thresholds.costDeltaUsd) {
+    return `cost +${formatCost(costDelta)}`;
+  }
+  if (
+    input.costUsd !== undefined &&
+    input.costUsd >= thresholds.costUsd &&
+    !baselineSuppressesCostBudget(input.costUsd, baseline)
+  ) {
+    return budgetCostEvidence(input.costUsd, costSource);
+  }
+  if (
+    input.durationMs !== undefined &&
+    input.durationMs >= thresholds.durationMs &&
+    !baselineSuppressesDurationBudget(input.durationMs, baseline)
+  ) {
+    return `session ran ${formatDuration(input.durationMs)}`;
+  }
+  return undefined;
+}
+
+function baselineSuppressesCostBudget(costUsd: number, baseline: DecisionPersonalBaseline | undefined): boolean {
+  const budget = baseline?.budget;
+  return Boolean(
+    budget &&
+      (budget.costSamples || 0) >= 3 &&
+      budget.confidence !== "low" &&
+      (budget.p90CostUsd || 0) >= costUsd
+  );
+}
+
+function baselineSuppressesDurationBudget(durationMs: number, baseline: DecisionPersonalBaseline | undefined): boolean {
+  const budget = baseline?.budget;
+  return Boolean(
+    budget &&
+      (budget.durationSamples || 0) >= 3 &&
+      budget.confidence !== "low" &&
+      (budget.p90DurationMs || 0) >= durationMs
+  );
+}
+
+function formatDuration(durationMs: number): string {
+  const minutes = Math.max(1, Math.round(durationMs / 60_000));
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes === 0 ? `${hours}h` : `${hours}h ${remainingMinutes}m`;
 }
 
 function hasUnusualEditValidationLag(transcript: TranscriptSummary, baseline: DecisionPersonalBaseline | undefined): boolean {

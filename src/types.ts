@@ -80,6 +80,10 @@ export interface TranscriptSummary {
   malformedLines: number;
   toolCalls: number;
   readToolCalls: number;
+  successfulEditResults?: number;
+  validationChecks?: number;
+  validationSuccesses?: number;
+  toolRecoveryEvents?: number;
   failedToolResults: number;
   repeatedFailures: ToolFailureSummary[];
   failureEpisodes?: FailureEpisodeSummary[];
@@ -88,6 +92,7 @@ export interface TranscriptSummary {
   hasUnvalidatedEdits: boolean;
   unvalidatedEditToolSteps?: number;
   validationRecovered: boolean;
+  observedProgress?: boolean;
   compactionEvents: number;
   postCompactionActivity: number;
   usage: TokenUsage;
@@ -209,6 +214,22 @@ export interface DecisionPersonalBaseline {
       }
     >
   >;
+  activity?: {
+    highActivitySessions?: number;
+    busyNoProgressSessions?: number;
+    observedProgressSessions?: number;
+    readHeavySessions?: number;
+    confidence?: DecisionConfidence;
+  };
+  budget?: {
+    costSamples?: number;
+    durationSamples?: number;
+    p75CostUsd?: number;
+    p90CostUsd?: number;
+    p75DurationMs?: number;
+    p90DurationMs?: number;
+    confidence?: DecisionConfidence;
+  };
 }
 
 export interface Decision {

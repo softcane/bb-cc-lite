@@ -1,11 +1,12 @@
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import { baselinePath } from "./paths.js";
+import { dirname, join } from "node:path";
+import { appHome, baselinePath, PROJECT_BASELINE_DIR_NAME, projectBaselinePath, projectKeyFromPath } from "./paths.js";
 import type { BlindRetryAggregate, FailureRecoveryAggregate, FailureRecoveryCategory } from "./recovery-stats.js";
 
 export const BASELINE_SCHEMA = "bb-cc-lite.baseline.v1";
 export const BASELINE_VERSION = 1;
 export const BASELINE_READ_MAX_BYTES = 64 * 1024;
+export const PROJECT_BASELINE_MIN_SESSIONS = 3;
 
 export type BaselineConfidence = "low" | "medium" | "high";
 export type ValidationCategory = "tests" | "lint" | "typecheck" | "build";
@@ -48,6 +49,10 @@ export interface PersonalBaseline {
   version: typeof BASELINE_VERSION;
   createdAt: string;
   updatedAt: string;
+  project?: {
+    kind: "hashed_project";
+    key: string;
+  };
   source: {
     kind: "local_transcript_scan";
     transcriptFilesScanned: number;
@@ -129,6 +134,37 @@ export interface PersonalBaseline {
   toolCategories?: Partial<Record<SafeToolCategory, ToolCategoryAggregate>>;
   failureRecovery?: Partial<Record<FailureRecoveryCategory, FailureRecoveryAggregate>>;
   blindRetry?: Partial<Record<FailureRecoveryCategory, BlindRetryAggregate>>;
+  activity?: {
+    highActivitySessions: number;
+    busyNoProgressSessions: number;
+    observedProgressSessions: number;
+    readHeavySessions: number;
+    confidence: BaselineConfidence;
+  };
+  budget?: {
+    costSamples: number;
+    durationSamples: number;
+    p75CostUsd: number;
+    p90CostUsd: number;
+    p75DurationMs: number;
+    p90DurationMs: number;
+    confidence: BaselineConfidence;
+  };
+}
+
+export interface BaselineSelection {
+  source: "project" | "personal" | "none";
+  baseline?: PersonalBaseline;
+  projectKey?: string;
+}
+
+export interface ReadBaselineForProjectOptions {
+  projectDir?: string;
+  homeDir?: string;
+  appHomePath?: string;
+  personalPath?: string;
+  projectPath?: string;
+  minProjectSessions?: number;
 }
 
 interface BaselineScenario {
@@ -149,6 +185,23 @@ export async function readBaseline(path = baselinePath()): Promise<PersonalBasel
   }
 }
 
+export async function readBaselineForProject(options: ReadBaselineForProjectOptions = {}): Promise<BaselineSelection> {
+  const personal = await readBaseline(personalBaselinePath(options));
+  const projectKey = options.projectDir ? projectKeyFromPath(options.projectDir) : undefined;
+  if (!projectKey) {
+    return personal ? { source: "personal", baseline: personal } : { source: "none" };
+  }
+
+  const project = await readBaseline(options.projectPath ?? projectBaselinePath({ appHomePath: options.appHomePath, homeDir: options.homeDir, projectKey }));
+  if (projectBaselineIsUsable(project, projectKey, options.minProjectSessions ?? PROJECT_BASELINE_MIN_SESSIONS)) {
+    return { source: "project", baseline: project, projectKey };
+  }
+  if (personal) {
+    return { source: "personal", baseline: personal, projectKey };
+  }
+  return { source: "none", projectKey };
+}
+
 export async function writeBaseline(baseline: PersonalBaseline, path = baselinePath()): Promise<void> {
   if (!isPersonalBaseline(baseline)) {
     throw new Error("invalid personal baseline");
@@ -165,6 +218,14 @@ export async function writeBaseline(baseline: PersonalBaseline, path = baselineP
   await bestEffortChmod(path, 0o600);
 }
 
+function personalBaselinePath(options: Pick<ReadBaselineForProjectOptions, "homeDir" | "appHomePath" | "personalPath">): string {
+  return options.personalPath ?? (options.appHomePath ? join(options.appHomePath, "baseline.json") : baselinePath(options.homeDir));
+}
+
+function projectBaselineIsUsable(baseline: PersonalBaseline | undefined, projectKey: string, minSessions: number): baseline is PersonalBaseline {
+  return Boolean(baseline?.project?.key === projectKey && baseline.source.sessionsSeen >= minSessions);
+}
+
 export async function clearBaseline(path = baselinePath()): Promise<boolean> {
   try {
     await rm(path, { force: false });
@@ -175,6 +236,11 @@ export async function clearBaseline(path = baselinePath()): Promise<boolean> {
     }
     throw error;
   }
+}
+
+export async function clearAllBaselines(options: { homeDir?: string; appHomePath?: string; personalPath?: string } = {}): Promise<void> {
+  await clearBaseline(personalBaselinePath(options));
+  await rm(join(options.appHomePath ?? appHome(options.homeDir), PROJECT_BASELINE_DIR_NAME), { recursive: true, force: true });
 }
 
 export function summarizeBaseline(baseline: PersonalBaseline | undefined): string {
@@ -200,6 +266,7 @@ function isPersonalBaseline(value: unknown): value is PersonalBaseline {
   }
 
   const source = asRecord(root.source);
+  const project = root.project === undefined ? undefined : asRecord(root.project);
   const privacy = asRecord(root.privacy);
   const recent = root.recent === undefined ? undefined : asRecord(root.recent);
   const totals = asRecord(root.totals);
@@ -211,10 +278,13 @@ function isPersonalBaseline(value: unknown): value is PersonalBaseline {
   const toolCategories = root.toolCategories === undefined ? undefined : asRecord(root.toolCategories);
   const failureRecovery = root.failureRecovery === undefined ? undefined : asRecord(root.failureRecovery);
   const blindRetry = root.blindRetry === undefined ? undefined : asRecord(root.blindRetry);
+  const activity = root.activity === undefined ? undefined : asRecord(root.activity);
+  const budget = root.budget === undefined ? undefined : asRecord(root.budget);
 
   return (
     isIsoTimestamp(root.createdAt) &&
     isIsoTimestamp(root.updatedAt) &&
+    (root.project === undefined || isProject(project)) &&
     isSource(source) &&
     isPrivacy(privacy) &&
     (root.recent === undefined || isRecent(recent)) &&
@@ -226,7 +296,19 @@ function isPersonalBaseline(value: unknown): value is PersonalBaseline {
     (root.editValidation === undefined || isEditValidation(editValidation)) &&
     (root.toolCategories === undefined || isToolCategories(toolCategories)) &&
     (root.failureRecovery === undefined || isFailureRecoveryAggregates(failureRecovery)) &&
-    (root.blindRetry === undefined || isBlindRetryAggregates(blindRetry))
+    (root.blindRetry === undefined || isBlindRetryAggregates(blindRetry)) &&
+    (root.activity === undefined || isActivity(activity)) &&
+    (root.budget === undefined || isBudget(budget))
+  );
+}
+
+function isProject(value: Record<string, unknown> | undefined): boolean {
+  return (
+    value !== undefined &&
+    hasOnlyKeys(value, PROJECT_KEYS) &&
+    value.kind === "hashed_project" &&
+    typeof value.key === "string" &&
+    /^[a-f0-9]{64}$/u.test(value.key)
   );
 }
 
@@ -272,6 +354,32 @@ function isPrivacy(value: Record<string, unknown> | undefined): boolean {
     (value.rawSessionIdsStored === undefined || value.rawSessionIdsStored === false) &&
     (value.rawMcpNamesStored === undefined || value.rawMcpNamesStored === false) &&
     value.perSessionRowsStored === false
+  );
+}
+
+function isActivity(value: Record<string, unknown> | undefined): boolean {
+  return (
+    value !== undefined &&
+    hasOnlyKeys(value, ACTIVITY_KEYS) &&
+    isNonNegativeInteger(value.highActivitySessions) &&
+    isNonNegativeInteger(value.busyNoProgressSessions) &&
+    isNonNegativeInteger(value.observedProgressSessions) &&
+    isNonNegativeInteger(value.readHeavySessions) &&
+    isConfidence(value.confidence)
+  );
+}
+
+function isBudget(value: Record<string, unknown> | undefined): boolean {
+  return (
+    value !== undefined &&
+    hasOnlyKeys(value, BUDGET_KEYS) &&
+    isNonNegativeInteger(value.costSamples) &&
+    isNonNegativeInteger(value.durationSamples) &&
+    isNonNegativeNumber(value.p75CostUsd) &&
+    isNonNegativeNumber(value.p90CostUsd) &&
+    isNonNegativeInteger(value.p75DurationMs) &&
+    isNonNegativeInteger(value.p90DurationMs) &&
+    isConfidence(value.confidence)
   );
 }
 
@@ -524,6 +632,7 @@ const ROOT_KEYS = new Set([
   "version",
   "createdAt",
   "updatedAt",
+  "project",
   "source",
   "privacy",
   "recent",
@@ -535,8 +644,11 @@ const ROOT_KEYS = new Set([
   "editValidation",
   "toolCategories",
   "failureRecovery",
-  "blindRetry"
+  "blindRetry",
+  "activity",
+  "budget"
 ]);
+const PROJECT_KEYS = new Set(["kind", "key"]);
 const SOURCE_KEYS = new Set([
   "kind",
   "transcriptFilesScanned",
@@ -651,6 +763,22 @@ const BLIND_RETRY_AGGREGATE_KEYS = new Set([
   "recoveryRate",
   "carefulLikeEpisodes",
   "stopLikeEpisodes",
+  "confidence"
+]);
+const ACTIVITY_KEYS = new Set([
+  "highActivitySessions",
+  "busyNoProgressSessions",
+  "observedProgressSessions",
+  "readHeavySessions",
+  "confidence"
+]);
+const BUDGET_KEYS = new Set([
+  "costSamples",
+  "durationSamples",
+  "p75CostUsd",
+  "p90CostUsd",
+  "p75DurationMs",
+  "p90DurationMs",
   "confidence"
 ]);
 

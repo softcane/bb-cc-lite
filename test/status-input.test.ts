@@ -86,4 +86,36 @@ describe("parseStatusLineInput", () => {
     expect(input.usage.cacheCreationInputTokens).toBe(50_000);
     expect(input.usage.cacheReadInputTokens).toBeUndefined();
   });
+
+  it("keeps Claude cost source for alternate cost fields and zero values", () => {
+    const camelCost = parseStatusLineInput(
+      JSON.stringify({
+        session_id: "session-camel-cost",
+        cost: {
+          totalCostUsd: 0.25,
+          total_duration_ms: 0
+        }
+      })
+    );
+    const zeroCost = parseStatusLineInput(
+      JSON.stringify({
+        session_id: "session-zero-cost",
+        cost: {
+          total_cost_usd: 0,
+          total_duration_ms: 0
+        }
+      })
+    );
+
+    expect(camelCost).toMatchObject({
+      costUsd: 0.25,
+      costSource: "claude",
+      durationMs: 0
+    });
+    expect(zeroCost).toMatchObject({
+      costUsd: 0,
+      costSource: "claude",
+      durationMs: 0
+    });
+  });
 });

@@ -1,5 +1,5 @@
 import { mergeHookSummary } from "./hook-summary.js";
-import { readBaseline } from "./baseline.js";
+import { readBaselineForProject } from "./baseline.js";
 import { maybeTriggerBaselineRefresh, type MaybeTriggerBaselineRefreshOptions } from "./baseline-refresh.js";
 import { toDecisionPresentation } from "./decision-presentation.js";
 import { estimateCostUsd, loadPricing } from "./pricing.js";
@@ -45,9 +45,10 @@ export async function createStatusLine(
   }
 
   const previous = sessionKey ? await latestDecision(sessionKey) : undefined;
-  const baseline = await readBaseline();
+  const baselineSelection = await readBaselineForProject({ projectDir: input.cwd });
+  const baseline = baselineSelection.baseline;
   const decision = decide(input, transcript, { previous, baseline });
   await recordDecision(decision);
-  await maybeTriggerBaselineRefresh({ ...options.baselineRefresh, baseline });
+  await maybeTriggerBaselineRefresh({ ...options.baselineRefresh, baseline, projectDir: input.cwd, transcriptPath: input.transcriptPath });
   return renderStatusLine(toDecisionPresentation(decision), input.terminalWidth || terminalColumns);
 }

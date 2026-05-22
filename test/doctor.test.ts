@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { PersonalBaseline } from "../src/baseline.js";
 import { formatDoctorChecks, runDoctor, type DoctorCheck } from "../src/doctor.js";
+import { projectBaselinePath, projectKeyFromPath } from "../src/paths.js";
 import { installStatusLine, resolveSettingsTarget } from "../src/settings.js";
 import {
   createTempWorkspace,
@@ -235,15 +237,51 @@ describe("doctor", () => {
     expect(baseline.message).not.toContain(rawPathSentinel);
   });
 
-  it("clears only the personal baseline", async () => {
+  it("shows a safe project baseline summary without exposing the project path or hash", async () => {
+    const dirs = mustHaveWorkspace(workspace);
+    const projectKey = projectKeyFromPath(dirs.projectDir);
+    await writeJson(
+      projectBaselinePath({
+        appHomePath: dirs.appHome,
+        projectKey
+      }),
+      projectBaseline(projectKey, 5)
+    );
+
+    const checks = await runDoctor({
+      projectDir: dirs.projectDir,
+      homeDir: dirs.homeDir,
+      appHomePath: dirs.appHome,
+      showBaseline: true
+    });
+
+    const project = findCheck(checks, "project-baseline");
+    expect(project).toMatchObject({ level: "OK" });
+    expect(project.message).toContain("project baseline: 5 sessions");
+    expect(project.message).toContain("derived aggregate data only");
+    expect(project.message).toContain("activity samples: high 5, no-progress 2, progress 3, read-heavy 4");
+    expect(project.message).toContain("budget samples: cost 5, duration 5");
+    expect(project.message).not.toContain(dirs.projectDir);
+    expect(project.message).not.toContain(projectKey);
+  });
+
+  it("clears all learned baselines without removing the event store", async () => {
     const dirs = mustHaveWorkspace(workspace);
     const baselinePath = join(dirs.appHome, "baseline.json");
+    const projectKey = projectKeyFromPath(dirs.projectDir);
+    const projectBaselineFile = projectBaselinePath({ appHomePath: dirs.appHome, projectKey });
     const eventStorePath = join(dirs.appHome, "events.json");
     await Promise.all([
       writeJson(baselinePath, {
         schema: "bb-cc-lite.baseline.v1",
         version: 1,
         source: { sessionsSeen: 1, transcriptFilesScanned: 1 }
+      }),
+      writeJson(projectBaselineFile, {
+        schema: "bb-cc-lite.baseline.v1",
+        version: 1,
+        project: { kind: "hashed_project", key: projectKey },
+        source: { sessionsSeen: 3, transcriptFilesScanned: 3 }
       }),
       writeJson(eventStorePath, { events: [{ state: "Healthy" }] })
     ]);
@@ -257,9 +295,10 @@ describe("doctor", () => {
 
     expect(findCheck(checks, "baseline")).toMatchObject({
       level: "OK",
-      message: "cleared personal baseline"
+      message: "cleared learned baselines"
     });
     await expect(pathExists(baselinePath)).resolves.toBe(false);
+    await expect(pathExists(projectBaselineFile)).resolves.toBe(false);
     await expect(pathExists(eventStorePath)).resolves.toBe(true);
   });
 
@@ -310,6 +349,14 @@ describe("doctor", () => {
     const serialized = await readFile(baselinePath, "utf8");
     expect(serialized).not.toContain("BB_CC_LITE_RAW_COMMAND_SENTINEL");
     expect(serialized).not.toContain("BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL");
+    const projectKey = projectKeyFromPath(dirs.projectDir);
+    const projectBaselineFile = projectBaselinePath({ appHomePath: dirs.appHome, projectKey });
+    await expect(pathExists(projectBaselineFile)).resolves.toBe(true);
+    const serializedProjectBaseline = await readFile(projectBaselineFile, "utf8");
+    expect(serializedProjectBaseline).toContain(projectKey);
+    expect(serializedProjectBaseline).not.toContain(dirs.projectDir);
+    expect(serializedProjectBaseline).not.toContain("BB_CC_LITE_RAW_COMMAND_SENTINEL");
+    expect(serializedProjectBaseline).not.toContain("BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL");
   });
 
   it("reports aggregate-only historical replay metrics", async () => {
@@ -380,6 +427,89 @@ async function createFakeRuntime(root: string): Promise<string> {
 async function writeTranscript(path: string, lines: string[]): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${lines.join("\n")}\n`, "utf8");
+}
+
+function projectBaseline(projectKey: string, sessionsSeen: number): PersonalBaseline {
+  return {
+    schema: "bb-cc-lite.baseline.v1",
+    version: 1,
+    createdAt: "2026-05-19T12:00:00.000Z",
+    updatedAt: "2026-05-19T12:00:00.000Z",
+    project: {
+      kind: "hashed_project",
+      key: projectKey
+    },
+    source: {
+      kind: "local_transcript_scan",
+      transcriptFilesScanned: sessionsSeen,
+      sessionsSeen,
+      malformedLines: 0,
+      maxBytesPerTranscript: 1048576
+    },
+    privacy: {
+      rawPromptsStored: false,
+      rawToolOutputStored: false,
+      rawPathsStored: false,
+      rawCommandsStored: false,
+      perSessionRowsStored: false
+    },
+    totals: {
+      toolCalls: 20,
+      successfulToolResults: 20,
+      failedToolResults: 0,
+      validationCalls: 4,
+      validationFailures: 0,
+      validationSuccesses: 4,
+      successfulEditResults: 3,
+      readSearchToolCalls: 12
+    },
+    scenarios: {
+      read_heavy_debugging: { seen: 4, confidence: "medium" },
+      repeated_failure: { seen: 0, confidence: "low" },
+      validation_command_loop: { seen: 0, confidence: "low" },
+      edit_without_validation: { seen: 0, confidence: "low" },
+      validation_recovered: { seen: 3, confidence: "medium" }
+    },
+    outcomes: {
+      healthyLike: {
+        validationPassedAfterEdit: 3,
+        validationRecovered: 3,
+        readHeavyNoFailure: 4
+      },
+      carefulLike: {
+        editWithoutValidation: 0,
+        toolFailureRecovered: 0,
+        twoFailureStreakRecovered: 0
+      },
+      stopLike: {
+        validationLoopUnrecovered: 0,
+        toolLoopUnrecovered: 0,
+        sessionEndedInFailureLoop: 0
+      }
+    },
+    rates: {
+      toolFailureRate: 0,
+      repeatedFailureRate: 0,
+      validationFailureRate: 0,
+      cacheWritesHighRate: 0
+    },
+    activity: {
+      highActivitySessions: 5,
+      busyNoProgressSessions: 2,
+      observedProgressSessions: 3,
+      readHeavySessions: 4,
+      confidence: "medium"
+    },
+    budget: {
+      costSamples: 5,
+      durationSamples: 5,
+      p75CostUsd: 0.42,
+      p90CostUsd: 0.5,
+      p75DurationMs: 600000,
+      p90DurationMs: 900000,
+      confidence: "medium"
+    }
+  };
 }
 
 function failedBashValidation(id: string): string[] {

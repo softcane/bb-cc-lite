@@ -1,6 +1,7 @@
 node_modules/
 dist/
 doc_internal/
+CONTEXT.md
 coverage/
 .DS_Store
 *.log

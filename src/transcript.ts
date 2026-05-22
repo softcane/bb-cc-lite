@@ -40,6 +40,10 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
   let toolResultStep = 0;
   let toolCalls = 0;
   let readToolCalls = 0;
+  let successfulEditResults = 0;
+  let validationChecks = 0;
+  let validationSuccesses = 0;
+  let toolRecoveryEvents = 0;
   let failedToolResults = 0;
   let malformedLines = 0;
   let compactionEvents = 0;
@@ -116,12 +120,20 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
       const purpose = meta.name === "Bash" ? toolResult.purpose || meta.purpose : meta.purpose;
       const key = failureKey(meta, purpose);
       const isValidation = meta.name === "Bash" && isValidationPurpose(purpose);
+      if (isValidation) {
+        validationChecks += 1;
+      }
       if (!toolResult.isError) {
+        if (failureCounts.has(key)) {
+          toolRecoveryEvents += 1;
+        }
         failureCounts.delete(key);
         if (meta.isEdit) {
+          successfulEditResults += 1;
           hasUnvalidatedEdits = true;
           unvalidatedEditStep = toolResultStep;
         } else if (isValidation) {
+          validationSuccesses += 1;
           if (validationFailedSinceSuccess) {
             validationRecovered = true;
           }
@@ -153,6 +165,10 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
     malformedLines,
     toolCalls,
     readToolCalls,
+    successfulEditResults,
+    validationChecks,
+    validationSuccesses,
+    toolRecoveryEvents,
     failedToolResults,
     repeatedFailures: [...failureCounts.values()].filter((item) => item.count >= 2),
     failureEpisodes,
@@ -162,6 +178,7 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
     unvalidatedEditToolSteps:
       hasUnvalidatedEdits && unvalidatedEditStep !== undefined ? toolResultStep - unvalidatedEditStep : undefined,
     validationRecovered,
+    observedProgress: validationSuccesses > 0 || toolRecoveryEvents > 0,
     compactionEvents,
     postCompactionActivity,
     usage,
@@ -180,11 +197,16 @@ function emptySummary(pathReadable: boolean): TranscriptSummary {
     malformedLines: 0,
     toolCalls: 0,
     readToolCalls: 0,
+    successfulEditResults: 0,
+    validationChecks: 0,
+    validationSuccesses: 0,
+    toolRecoveryEvents: 0,
     failedToolResults: 0,
     repeatedFailures: [],
     editTestLoopFailures: 0,
     hasUnvalidatedEdits: false,
     validationRecovered: false,
+    observedProgress: false,
     compactionEvents: 0,
     postCompactionActivity: 0,
     usage: {}

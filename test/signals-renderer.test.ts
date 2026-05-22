@@ -343,6 +343,96 @@ describe("signals and renderer", () => {
     expect(renderStatusLine(decision, 120)).toContain("validation recovered");
   });
 
+  it("warns when many non-read tool calls happen without progress", () => {
+    const decision = decide(input({ contextPercent: 42 }), transcript({ toolCalls: 8, readToolCalls: 0 }));
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "busy_no_observed_progress",
+      primaryEvidence: "8 tool calls, no check or recovery seen",
+      impact: "Many safe activity signals were seen, but no observed progress signal was seen",
+      action: "pause and ask Claude what changed"
+    });
+    expect(renderStatusLine(decision, 140)).toContain("8 tool calls, no check or recovery seen");
+  });
+
+  it("keeps busy sessions healthy after a validation check passes", () => {
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({ toolCalls: 8, readToolCalls: 0, validationSuccesses: 1, observedProgress: true })
+    );
+
+    expect(decision).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy",
+      action: "continue normally"
+    });
+  });
+
+  it("keeps many reads healthy when there are no failures", () => {
+    const decision = decide(input({ contextPercent: 42 }), transcript({ toolCalls: 12, readToolCalls: 12 }));
+
+    expect(decision).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy"
+    });
+  });
+
+  it("keeps hard Stop decisions ahead of busy-no-progress activity", () => {
+    const blindRetry = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        toolCalls: 8,
+        readToolCalls: 0,
+        failedToolResults: 3,
+        repeatedFailures: [{ toolName: "Bash", purpose: "tests", count: 3 }],
+        blindRetry: {
+          category: "tests",
+          label: "test",
+          attemptCount: 3,
+          recovered: false,
+          activeEnded: true,
+          blindRetryFailureCount: 3
+        }
+      })
+    );
+
+    expect(blindRetry).toMatchObject({
+      state: "Stop",
+      reasonCode: "blind_retry_loop",
+      action: "stop and inspect first failure"
+    });
+
+    const repeatedFailure = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        toolCalls: 8,
+        readToolCalls: 0,
+        failedToolResults: 3,
+        repeatedFailures: [{ toolName: "Bash", purpose: "tests", count: 3 }]
+      })
+    );
+
+    expect(repeatedFailure).toMatchObject({
+      state: "Stop",
+      reasonCode: "repeated_tool_failure",
+      action: "inspect first failure"
+    });
+  });
+
+  it("keeps many edits without validation as Careful", () => {
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({ toolCalls: 8, readToolCalls: 0, successfulEditResults: 4, hasUnvalidatedEdits: true })
+    );
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "edit_without_validation",
+      action: "ask Claude to run the smallest relevant check"
+    });
+  });
+
   it("uses the baseline to render read-heavy research as usually normal", () => {
     const decision = decide(
       input({ contextPercent: 42 }),
@@ -592,6 +682,208 @@ describe("signals and renderer", () => {
       reasonCode: "statusline_input_unavailable",
       action: "run bb-cc-lite doctor and check Claude Code settings"
     });
+  });
+
+  it("warns when session duration crosses the budget threshold", () => {
+    const decision = decide(input({ durationMs: 46 * 60_000 }), transcript());
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "duration_budget",
+      primaryEvidence: "session ran 46m",
+      action: "ask Claude to summarize progress before continuing"
+    });
+    expect(renderStatusLine(decision, 120)).toContain("session ran 46m");
+    expect(formatWhy(decision)).toContain("Reason: session ran 46m.");
+  });
+
+  it("uses configured cost and duration budget thresholds", () => {
+    const previous = {
+      ...decide(input({ costUsd: 0.1, costSource: "claude" }), transcript()),
+      costUsd: 0.1
+    };
+
+    const costDecision = decide(
+      input({ costUsd: 0.2, costSource: "claude" }),
+      transcript(),
+      {
+        previous,
+        budgetThresholds: { costDeltaCarefulUsd: 0.05 }
+      }
+    );
+    expect(costDecision).toMatchObject({
+      state: "Careful",
+      reasonCode: "cost_growth",
+      primaryEvidence: "cost +$0.10"
+    });
+
+    const durationDecision = decide(
+      input({ durationMs: 6 * 60_000 }),
+      transcript(),
+      {
+        budgetThresholds: { durationCarefulMs: 5 * 60_000 }
+      }
+    );
+    expect(durationDecision).toMatchObject({
+      state: "Careful",
+      reasonCode: "duration_budget",
+      primaryEvidence: "session ran 6m"
+    });
+  });
+
+  it("uses high cost plus repeated failure as Stop evidence", () => {
+    const previous = {
+      ...decide(input({ costUsd: 0.1, costSource: "claude" }), transcript()),
+      costUsd: 0.1
+    };
+    const decision = decide(
+      input({ costUsd: 1.2, costSource: "claude" }),
+      transcript({
+        failedToolResults: 2,
+        repeatedFailures: [{ toolName: "Bash", purpose: "tests", count: 2 }]
+      }),
+      {
+        previous,
+        budgetThresholds: { costDeltaCarefulUsd: 0.5 }
+      }
+    );
+
+    expect(decision).toMatchObject({
+      state: "Stop",
+      reasonCode: "budget_with_repeated_failure",
+      primaryEvidence: "cost +$1.10 plus tests failed twice",
+      action: "stop and inspect first failure"
+    });
+    expect(renderStatusLine(decision, 160)).toContain("high cost plus repeated failures");
+  });
+
+  it("uses a strong baseline to suppress normal project cost and duration", () => {
+    const baseline = {
+      budget: {
+        costSamples: 6,
+        durationSamples: 6,
+        p75CostUsd: 2.5,
+        p90CostUsd: 4,
+        p75DurationMs: 60 * 60_000,
+        p90DurationMs: 90 * 60_000,
+        confidence: "medium" as const
+      }
+    };
+
+    const costDecision = decide(input({ costUsd: 2.4, costSource: "claude" }), transcript(), { baseline });
+    const durationDecision = decide(input({ durationMs: 60 * 60_000 }), transcript(), { baseline });
+
+    expect(costDecision).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy"
+    });
+    expect(durationDecision).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy"
+    });
+  });
+
+  it("keeps budget plus no observed progress as stronger Careful wording", () => {
+    const decision = decide(
+      input({ durationMs: 60 * 60_000 }),
+      transcript({ toolCalls: 9, readToolCalls: 0 })
+    );
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "budget_busy_no_observed_progress",
+      primaryEvidence: "session ran 1h plus 9 tool calls, no check or recovery seen",
+      impact: "Budget is high and no observed progress signal was seen",
+      action: "pause and ask Claude what changed before continuing"
+    });
+  });
+
+  it("warns on high session cost without escalating to Stop", () => {
+    const decision = decide(input({ costUsd: 2.25, costSource: "claude" }), transcript());
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "cost_budget",
+      primaryEvidence: "cost $2.25",
+      action: "ask Claude to summarize progress before continuing"
+    });
+    expect(formatWhy(decision)).toContain("Cost evidence: $2.2500.");
+  });
+
+  it("warns when cost rises quickly since the previous statusline update", () => {
+    const previous = {
+      ...decide(input({ costUsd: 0.4, costSource: "claude" }), transcript()),
+      id: "previous-decision",
+      costUsd: 0.4
+    };
+    const decision = decide(input({ costUsd: 1, costSource: "claude" }), transcript(), { previous });
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "cost_growth",
+      primaryEvidence: "cost +$0.60",
+      action: "ask Claude to summarize progress before continuing"
+    });
+    expect(formatWhy(decision)).toContain("Reason: cost +$0.60.");
+  });
+
+  it("labels estimated budget cost in statusline and why output", () => {
+    const decision = decide(input({ costUsd: 2.25, costSource: "estimated" }), transcript());
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "cost_budget",
+      primaryEvidence: "estimated cost $2.25"
+    });
+    expect(renderStatusLine(decision, 140)).toContain("estimated cost $2.25");
+    expect(formatWhy(decision)).toContain("Cost evidence: estimated $2.2500.");
+  });
+
+  it("keeps missing cost and duration data safe", () => {
+    expect(() => decide(input({ costUsd: undefined, durationMs: undefined }), transcript())).not.toThrow();
+    expect(decide(input({ costUsd: undefined, durationMs: undefined }), transcript())).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy"
+    });
+  });
+
+  it("honors configured cost and duration budget thresholds", () => {
+    const costDecision = decide(input({ costUsd: 0.25, costSource: "claude" }), transcript(), {
+      budgetThresholds: { costUsd: 0.2 }
+    });
+    const durationDecision = decide(input({ durationMs: 10_000 }), transcript(), {
+      budgetThresholds: { durationMs: 10_000 }
+    });
+
+    expect(costDecision).toMatchObject({
+      state: "Careful",
+      reasonCode: "cost_budget",
+      primaryEvidence: "cost $0.25"
+    });
+    expect(durationDecision).toMatchObject({
+      state: "Careful",
+      reasonCode: "duration_budget",
+      primaryEvidence: "session ran 1m"
+    });
+  });
+
+  it("uses high cost plus repeated failure as Stop evidence", () => {
+    const decision = decide(
+      input({ costUsd: 2.5, costSource: "claude" }),
+      transcript({
+        failedToolResults: 2,
+        repeatedFailures: [{ toolName: "Bash", purpose: "tests", count: 2 }]
+      })
+    );
+
+    expect(decision).toMatchObject({
+      state: "Stop",
+      reasonCode: "budget_with_repeated_failure",
+      diagnosis: "high cost plus repeated failures",
+      primaryEvidence: "cost $2.50 plus tests failed twice",
+      action: "stop and inspect first failure"
+    });
+    expect(renderStatusLine(decision, 140)).toContain("why: high cost plus repeated failures");
   });
 
   it("renders long, medium, and narrow status lines within the requested width", () => {

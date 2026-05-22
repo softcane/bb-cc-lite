@@ -40,6 +40,11 @@ export function parseStatusLineInput(raw: string): StatusLineInput {
   const workspace = asRecord(root.workspace);
   const cost = asRecord(root.cost);
   const contextWindow = asRecord(root.context_window) || asRecord(root.contextWindow);
+  const costUsd =
+    numberField(cost?.total_cost_usd) ??
+    numberField(cost?.totalCostUsd) ??
+    numberField(cost?.cost_usd) ??
+    numberField(root.total_cost_usd);
 
   const usage = mergeUsage(
     extractUsage(root),
@@ -65,20 +70,16 @@ export function parseStatusLineInput(raw: string): StatusLineInput {
         stringField(model?.displayName) ||
         stringField(model?.name)
     },
-    costUsd:
-      numberField(cost?.total_cost_usd) ||
-      numberField(cost?.totalCostUsd) ||
-      numberField(cost?.cost_usd) ||
-      numberField(root.total_cost_usd),
-    costSource: numberField(cost?.total_cost_usd) === undefined ? undefined : "claude",
-    durationMs: numberField(cost?.total_duration_ms) || numberField(root.duration_ms),
+    costUsd,
+    costSource: costUsd === undefined ? undefined : "claude",
+    durationMs: numberField(cost?.total_duration_ms) ?? numberField(root.duration_ms),
     contextPercent: extractPercent(root, ["context", "context_window", "contextWindow"]),
     rateLimitPercent: extractPercent(root, ["rate_limit", "rateLimit", "rate_limits", "rateLimits"]),
     usage,
     terminalWidth:
-      numberField(root.terminal_width) ||
-      numberField(root.terminalWidth) ||
-      numberFromString(process.env.BB_CC_LITE_WIDTH) ||
+      numberField(root.terminal_width) ??
+      numberField(root.terminalWidth) ??
+      numberFromString(process.env.BB_CC_LITE_WIDTH) ??
       numberFromString(process.env.COLUMNS)
   };
 }

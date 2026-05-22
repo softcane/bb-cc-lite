@@ -31,6 +31,8 @@ export interface MaybeTriggerBaselineRefreshOptions {
   lockStaleMs?: number;
   homeDir?: string;
   appHomePath?: string;
+  projectDir?: string;
+  transcriptPath?: string;
   cliFilePath?: string;
   spawnRefresh?: RefreshSpawner;
 }
@@ -46,6 +48,8 @@ export interface RunBaselineRefreshOptions {
   lockStaleMs?: number;
   homeDir?: string;
   appHomePath?: string;
+  projectDir?: string;
+  transcriptPath?: string;
   lockAlreadyHeld?: boolean;
   build?: (options: BuildBaselineOptions) => Promise<{ baseline: PersonalBaseline; written: boolean }>;
 }
@@ -174,9 +178,16 @@ export async function maybeTriggerBaselineRefresh(
         childEnv.HOME = options.homeDir;
       }
       const spawnRefresh = options.spawnRefresh ?? spawnDetachedRefresh;
+      const args = [options.cliFilePath ?? cliPath(), "baseline-refresh", "--quiet"];
+      if (options.projectDir) {
+        args.push("--project", options.projectDir);
+      }
+      if (options.transcriptPath) {
+        args.push("--transcript", options.transcriptPath);
+      }
       spawnRefresh({
         command: process.execPath,
-        args: [options.cliFilePath ?? cliPath(), "baseline-refresh", "--quiet"],
+        args,
         env: childEnv
       });
       return { triggered: true, reason: "spawned" };
@@ -215,6 +226,8 @@ export async function runBaselineRefresh(options: RunBaselineRefreshOptions = {}
     const result = await builder({
       homeDir: options.homeDir,
       appHomePath: options.appHomePath,
+      projectDir: options.projectDir,
+      transcriptPath: options.transcriptPath,
       now: options.now
     });
     return { ok: true, written: result.written };

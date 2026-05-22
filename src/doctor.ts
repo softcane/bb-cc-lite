@@ -1,7 +1,7 @@
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join } from "node:path";
-import { clearBaseline as clearBaselineFile, readBaseline, summarizeBaseline } from "./baseline.js";
+import { clearAllBaselines, readBaseline, readBaselineForProject, summarizeBaseline, type PersonalBaseline } from "./baseline.js";
 import { buildBaseline } from "./baseline-builder.js";
 import { evaluateHistoricalReplay, formatHistoricalReplayMetrics } from "./historical-replay.js";
 import { baselinePath, pricingCachePath } from "./paths.js";
@@ -102,6 +102,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorChec
   }
   if (options.showBaseline) {
     await addBaselineSummaryCheck(checks, options);
+    await addProjectBaselineSummaryCheck(checks, { ...options, projectDir: target.projectDir, homeDir: target.homeDir });
   }
   if (options.replayBaseline) {
     await addBaselineReplayCheck(checks, options);
@@ -127,12 +128,17 @@ async function addClearBaselineCheck(checks: DoctorCheck[], options: DoctorOptio
   checks.push({
     level: "OK",
     name: "baseline",
-    message: "cleared personal baseline"
+    message: "cleared learned baselines"
   });
 }
 
 async function addBuildBaselineCheck(checks: DoctorCheck[], options: DoctorOptions): Promise<void> {
-  const result = await buildPersonalBaseline({ homeDir: options.homeDir, appHomePath: options.appHomePath });
+  const result = await buildPersonalBaseline({
+    homeDir: options.homeDir,
+    appHomePath: options.appHomePath,
+    projectDir: options.projectDir,
+    transcriptPath: options.transcriptPath
+  });
   checks.push({
     level: result.ok ? "OK" : "WARN",
     name: "baseline",
@@ -157,6 +163,30 @@ async function addBaselineSummaryCheck(checks: DoctorCheck[], options: DoctorOpt
   });
 }
 
+async function addProjectBaselineSummaryCheck(checks: DoctorCheck[], options: DoctorOptions): Promise<void> {
+  if (!options.projectDir) {
+    return;
+  }
+  const selection = await readBaselineForProject({
+    projectDir: options.projectDir,
+    homeDir: options.homeDir,
+    appHomePath: options.appHomePath
+  });
+  if (selection.source === "project" && selection.baseline) {
+    checks.push({
+      level: "OK",
+      name: "project-baseline",
+      message: formatProjectBaselineSummaryMessage(selection.baseline)
+    });
+    return;
+  }
+  checks.push({
+    level: "WARN",
+    name: "project-baseline",
+    message: "no usable project baseline found; using personal baseline until this project has enough aggregate history"
+  });
+}
+
 async function addBaselineReplayCheck(checks: DoctorCheck[], options: DoctorOptions): Promise<void> {
   try {
     const metrics = await evaluateHistoricalReplay({ homeDir: options.homeDir });
@@ -175,10 +205,15 @@ async function addBaselineReplayCheck(checks: DoctorCheck[], options: DoctorOpti
 }
 
 export async function buildPersonalBaseline(
-  options: { homeDir?: string; appHomePath?: string } = {}
+  options: { homeDir?: string; appHomePath?: string; projectDir?: string; transcriptPath?: string } = {}
 ): Promise<PersonalBaselineResult> {
   try {
-    const baseline = await buildBaseline({ homeDir: options.homeDir, appHomePath: options.appHomePath });
+    const baseline = await buildBaseline({
+      homeDir: options.homeDir,
+      appHomePath: options.appHomePath,
+      projectDir: options.projectDir,
+      transcriptPath: options.transcriptPath
+    });
     return {
       ok: true,
       message: formatBuiltBaselineMessage(baseline)
@@ -194,10 +229,10 @@ export async function buildPersonalBaseline(
 export async function clearPersonalBaseline(
   options: { homeDir?: string; appHomePath?: string } = {}
 ): Promise<PersonalBaselineResult> {
-  await clearBaselineFile(baselineFilePath(options));
+  await clearAllBaselines(options);
   return {
     ok: true,
-    message: "cleared personal baseline"
+    message: "cleared learned baselines"
   };
 }
 
@@ -215,6 +250,21 @@ function formatBaselineSummaryMessage(value: unknown, summary?: unknown): string
       : "";
   const extendedSummary = extendedBaselineSummary(value);
   return `personal baseline: ${sessionsSeen} sessions, ${filesScanned} transcript files; derived aggregate data only${outcomeSummary}${extendedSummary}`;
+}
+
+function formatProjectBaselineSummaryMessage(baseline: PersonalBaseline): string {
+  const parts = [`project baseline: ${baseline.source.sessionsSeen} sessions`, "derived aggregate data only"];
+  const activity = baseline.activity;
+  if (activity) {
+    parts.push(
+      `activity samples: high ${activity.highActivitySessions}, no-progress ${activity.busyNoProgressSessions}, progress ${activity.observedProgressSessions}, read-heavy ${activity.readHeavySessions}`
+    );
+  }
+  const budget = baseline.budget;
+  if (budget) {
+    parts.push(`budget samples: cost ${budget.costSamples}, duration ${budget.durationSamples}`);
+  }
+  return parts.join("; ");
 }
 
 function extendedBaselineSummary(value: unknown): string {
@@ -304,7 +354,7 @@ function baselineFilePath(options: { homeDir?: string; appHomePath?: string }): 
 async function addLiteLLMChecks(checks: DoctorCheck[], shouldRefreshPricing: boolean): Promise<void> {
   try {
     await access(pricingCachePath(), constants.R_OK);
-    checks.push({ level: "OK", name: "litellm-pricing", message: `pricing cache exists at ${pricingCachePath()}` });
+    checks.push({ level: "OK", name: "litellm-pricing", message: "pricing cache exists" });
   } catch {
     checks.push({ level: "WARN", name: "litellm-pricing", message: "using bundled pricing fallback; run doctor --refresh-pricing to cache LiteLLM prices" });
   }

@@ -1,9 +1,9 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { readdir, stat } from "node:fs/promises";
-import { baselinePath } from "./paths.js";
+import { baselinePath, projectBaselinePath, projectKeyFromPath } from "./paths.js";
 import { extractFailureEpisodesFromTranscriptLines } from "./failure-episodes.js";
-import { asRecord, extractUsage, mergeUsage, stringField } from "./status-input.js";
+import { asRecord, extractUsage, mergeUsage, numberField, stringField } from "./status-input.js";
 import { classifyResultPurpose, classifyToolIdentity } from "./tool-metadata.js";
 import { readTranscriptTail } from "./transcript-reader.js";
 import {
@@ -31,6 +31,7 @@ const DEFAULT_MAX_BYTES_PER_TRANSCRIPT = 1024 * 1024;
 const SCAN_BUDGET_MS = 30_000;
 const TRANSCRIPT_READ_CONCURRENCY = 8;
 const RECENT_WINDOW_SIZE = 100;
+const HIGH_ACTIVITY_TOOL_CALLS = 6;
 const VALIDATION_CATEGORIES: ValidationCategory[] = ["tests", "lint", "typecheck", "build"];
 const SAFE_TOOL_CATEGORIES: SafeToolCategory[] = [
   "Bash:tests",
@@ -49,6 +50,9 @@ export interface BuildBaselineOptions {
   homeDir?: string;
   appHomePath?: string;
   claudeProjectsDir?: string;
+  projectDir?: string;
+  projectTranscriptDir?: string;
+  transcriptPath?: string;
   maxFiles?: number;
   maxBytesPerTranscript?: number;
   now?: Date;
@@ -67,6 +71,12 @@ interface BuildCounters {
   readSearchToolCalls: number;
   cacheWritesHighSessions: number;
   repeatedFailureSessions: number;
+  highActivitySessions: number;
+  busyNoProgressSessions: number;
+  observedProgressSessions: number;
+  readHeavySessions: number;
+  costSamples: number[];
+  durationSamples: number[];
   scenarios: {
     read_heavy_debugging: number;
     repeated_failure: number;
@@ -115,6 +125,8 @@ interface SessionCounters {
   toolLoopUnrecovered: boolean;
   sessionEndedInFailureLoop: boolean;
   repeatedFailure: boolean;
+  costUsd?: number;
+  durationMs?: number;
   validation: Record<ValidationCategory, ValidationBuildCounters>;
   editValidation: EditValidationBuildCounters;
   toolCategories: Partial<Record<SafeToolCategory, ToolCategoryBuildCounters>>;
@@ -151,7 +163,9 @@ interface ActiveFailure {
 
 export async function buildBaseline(options: BuildBaselineOptions = {}): Promise<{
   baseline: PersonalBaseline;
+  projectBaseline?: PersonalBaseline;
   written: boolean;
+  projectWritten?: boolean;
 }> {
   const homeDir = options.homeDir ?? homedir();
   const claudeProjectsDir = options.claudeProjectsDir ?? join(homeDir, ".claude", "projects");
@@ -160,17 +174,87 @@ export async function buildBaseline(options: BuildBaselineOptions = {}): Promise
   const startedAt = Date.now();
   const deadlineMs = startedAt + SCAN_BUDGET_MS;
   const files = await listTranscriptFiles(claudeProjectsDir, maxFiles, deadlineMs);
+  const now = options.now ?? new Date();
+  const baseline = await baselineFromFiles(files, { maxFiles, maxBytesPerTranscript, deadlineMs, now });
+  await writeBaseline(baseline, options.appHomePath ? join(options.appHomePath, "baseline.json") : baselinePath(homeDir));
+  const projectKey = options.projectDir ? projectKeyFromPath(options.projectDir) : undefined;
+  const projectFiles = projectKey
+    ? await listProjectTranscriptFiles({
+        claudeProjectsDir,
+        projectDir: options.projectDir,
+        projectTranscriptDir: options.projectTranscriptDir,
+        transcriptPath: options.transcriptPath,
+        maxFiles,
+        deadlineMs
+      })
+    : [];
+  const projectBaseline = projectKey
+    ? baselineForProject(
+        await baselineFromFiles(projectFiles, { maxFiles, maxBytesPerTranscript, deadlineMs, now }),
+        projectKey
+      )
+    : undefined;
+  if (projectBaseline && projectKey) {
+    await writeBaseline(
+      projectBaseline,
+      projectBaselinePath({
+        appHomePath: options.appHomePath,
+        homeDir,
+        projectKey
+      })
+    );
+  }
+  const written = true;
+  return projectBaseline ? { baseline, projectBaseline, written, projectWritten: true } : { baseline, written };
+}
+
+async function baselineFromFiles(
+  files: string[],
+  options: { maxFiles: number; maxBytesPerTranscript: number; deadlineMs: number; now: Date }
+): Promise<PersonalBaseline> {
   const counters = emptyCounters();
-  const sessions = await summarizeTranscriptFiles(files, maxBytesPerTranscript, deadlineMs);
+  const sessions = await summarizeTranscriptFiles(files, options.maxBytesPerTranscript, options.deadlineMs);
 
   for (const [index, session] of sessions.entries()) {
     addSessionCounters(counters, session, index < RECENT_WINDOW_SIZE);
   }
 
-  const baseline = baselineFromCounters(counters, { maxFiles, maxBytesPerTranscript }, options.now ?? new Date());
-  await writeBaseline(baseline, options.appHomePath ? join(options.appHomePath, "baseline.json") : baselinePath(homeDir));
-  const written = true;
-  return { baseline, written };
+  return baselineFromCounters(counters, options, options.now);
+}
+
+function baselineForProject(baseline: PersonalBaseline, projectKey: string): PersonalBaseline {
+  return {
+    ...baseline,
+    project: {
+      kind: "hashed_project",
+      key: projectKey
+    }
+  };
+}
+
+async function listProjectTranscriptFiles(options: {
+  claudeProjectsDir: string;
+  projectDir?: string;
+  projectTranscriptDir?: string;
+  transcriptPath?: string;
+  maxFiles: number;
+  deadlineMs: number;
+}): Promise<string[]> {
+  const directRoot = options.projectTranscriptDir || (options.transcriptPath ? dirname(options.transcriptPath) : undefined);
+  if (directRoot) {
+    return listTranscriptFiles(directRoot, options.maxFiles, options.deadlineMs);
+  }
+
+  if (options.projectDir) {
+    const inferredRoot = join(options.claudeProjectsDir, claudeProjectDirectoryName(options.projectDir));
+    return listTranscriptFiles(inferredRoot, options.maxFiles, options.deadlineMs);
+  }
+
+  return [];
+}
+
+function claudeProjectDirectoryName(projectDir: string): string {
+  return resolve(projectDir).replaceAll(/[\\/]/gu, "-");
 }
 
 async function listTranscriptFiles(root: string, maxFiles: number, deadlineMs: number): Promise<string[]> {
@@ -258,6 +342,16 @@ function addSessionCounters(counters: BuildCounters, session: SessionCounters, i
   counters.readSearchToolCalls += session.readSearchToolCalls;
   counters.cacheWritesHighSessions += session.cacheWritesHigh ? 1 : 0;
   counters.repeatedFailureSessions += session.repeatedFailure ? 1 : 0;
+  counters.highActivitySessions += isHighActivitySession(session) ? 1 : 0;
+  counters.busyNoProgressSessions += isHighActivitySession(session) && !hasObservedProgress(session) ? 1 : 0;
+  counters.observedProgressSessions += hasObservedProgress(session) ? 1 : 0;
+  counters.readHeavySessions += isReadHeavyNoFailureSession(session) ? 1 : 0;
+  if (session.costUsd !== undefined) {
+    counters.costSamples.push(session.costUsd);
+  }
+  if (session.durationMs !== undefined) {
+    counters.durationSamples.push(session.durationMs);
+  }
   counters.scenarios.read_heavy_debugging += session.readSearchToolCalls >= 3 && session.failedToolResults === 0 ? 1 : 0;
   counters.scenarios.repeated_failure += session.repeatedFailure ? 1 : 0;
   counters.scenarios.validation_command_loop += session.validationLoopUnrecovered ? 1 : 0;
@@ -311,6 +405,14 @@ function summarizeSession(lines: string[]): SessionCounters {
       continue;
     }
     usage = mergeUsage(usage, extractUsage(entry), extractUsage(asRecord(entry.message)));
+    const costUsd = costUsdFromEntry(entry);
+    if (costUsd !== undefined) {
+      session.costUsd = Math.max(session.costUsd ?? 0, costUsd);
+    }
+    const durationMs = durationMsFromEntry(entry);
+    if (durationMs !== undefined) {
+      session.durationMs = Math.max(session.durationMs ?? 0, durationMs);
+    }
 
     for (const toolUse of extractToolUses(entry)) {
       session.toolCalls += 1;
@@ -419,6 +521,27 @@ function summarizeSession(lines: string[]): SessionCounters {
   addFailureEpisodeCounters(session.failureRecovery, extractFailureEpisodesFromTranscriptLines(lines));
 
   return session;
+}
+
+function costUsdFromEntry(entry: Record<string, unknown>): number | undefined {
+  const cost = asRecord(entry.cost);
+  const value =
+    numberField(cost?.total_cost_usd) ??
+    numberField(cost?.totalCostUsd) ??
+    numberField(cost?.cost_usd) ??
+    numberField(entry.total_cost_usd) ??
+    numberField(entry.costUsd);
+  return value !== undefined && value >= 0 ? value : undefined;
+}
+
+function durationMsFromEntry(entry: Record<string, unknown>): number | undefined {
+  const cost = asRecord(entry.cost);
+  const value =
+    numberField(cost?.total_duration_ms) ??
+    numberField(cost?.totalDurationMs) ??
+    numberField(entry.duration_ms) ??
+    numberField(entry.durationMs);
+  return value !== undefined && value >= 0 ? value : undefined;
 }
 
 function addFailureEpisodeCounters(
@@ -732,8 +855,38 @@ function baselineFromCounters(
     editValidation: editValidationFromCounters(counters.editValidation),
     toolCategories: toolCategoryAggregatesFromCounters(counters.toolCategories),
     failureRecovery: recoveryAggregatesFromCounters(counters.failureRecovery),
-    blindRetry: blindRetryAggregatesFromCounters(counters.failureRecovery)
+    blindRetry: blindRetryAggregatesFromCounters(counters.failureRecovery),
+    activity: {
+      highActivitySessions: counters.highActivitySessions,
+      busyNoProgressSessions: counters.busyNoProgressSessions,
+      observedProgressSessions: counters.observedProgressSessions,
+      readHeavySessions: counters.readHeavySessions,
+      confidence: confidenceForSeen(counters.highActivitySessions)
+    },
+    budget: {
+      costSamples: counters.costSamples.length,
+      durationSamples: counters.durationSamples.length,
+      p75CostUsd: percentile(counters.costSamples, 0.75),
+      p90CostUsd: percentile(counters.costSamples, 0.9),
+      p75DurationMs: percentile(counters.durationSamples, 0.75),
+      p90DurationMs: percentile(counters.durationSamples, 0.9),
+      confidence: confidenceForSeen(Math.max(counters.costSamples.length, counters.durationSamples.length))
+    }
   };
+}
+
+function isHighActivitySession(session: Pick<SessionCounters, "toolCalls" | "readSearchToolCalls" | "successfulEditResults">): boolean {
+  return session.toolCalls >= HIGH_ACTIVITY_TOOL_CALLS || session.readSearchToolCalls >= HIGH_ACTIVITY_TOOL_CALLS || session.successfulEditResults >= 3;
+}
+
+function hasObservedProgress(
+  session: Pick<SessionCounters, "validationPassedAfterEdit" | "validationRecovered" | "toolFailureRecovered">
+): boolean {
+  return session.validationPassedAfterEdit || session.validationRecovered || session.toolFailureRecovered;
+}
+
+function isReadHeavyNoFailureSession(session: Pick<SessionCounters, "readSearchToolCalls" | "failedToolResults">): boolean {
+  return session.readSearchToolCalls >= 3 && session.failedToolResults === 0;
 }
 
 function scenario(seen: number, recentSeen: number): { seen: number; recentSeen: number; confidence: BaselineConfidence } {
@@ -781,6 +934,12 @@ function emptyCounters(): BuildCounters {
     readSearchToolCalls: 0,
     cacheWritesHighSessions: 0,
     repeatedFailureSessions: 0,
+    highActivitySessions: 0,
+    busyNoProgressSessions: 0,
+    observedProgressSessions: 0,
+    readHeavySessions: 0,
+    costSamples: [],
+    durationSamples: [],
     scenarios: {
       read_heavy_debugging: 0,
       repeated_failure: 0,
@@ -839,6 +998,8 @@ function emptySessionCounters(): SessionCounters {
     toolLoopUnrecovered: false,
     sessionEndedInFailureLoop: false,
     repeatedFailure: false,
+    costUsd: undefined,
+    durationMs: undefined,
     validation: emptyValidationCounters(),
     editValidation: emptyEditValidationCounters(),
     toolCategories: {},

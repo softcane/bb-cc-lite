@@ -6,6 +6,7 @@ import {
   extractSafeToolResultEventsFromTranscriptLines,
   type SafeToolResultEvent
 } from "./failure-episodes.js";
+import { asRecord, numberField } from "./status-input.js";
 import {
   addFailureEpisodeToRecoveryCounters,
   blindRetryAggregatesFromCounters,
@@ -31,15 +32,27 @@ export interface HistoricalReplayOptions {
 }
 
 export interface HistoricalReplayMetrics {
+  sessionsEvaluated: number;
   holdoutSessions: number;
   evaluatedFailureEpisodes: number;
+  warnings: number;
   stopPrecisionOnUnrecoveredEpisodes: number | undefined;
+  falseStopCount: number;
   falseStopCountOnRecoveredEpisodes: number;
   missedUnrecoveredLoopCount: number;
   blindRetryPrecision: number | undefined;
   averageAttemptsBeforeWarning: number;
+  averageToolResultsBeforeWarning: number;
+  averageCostBeforeWarning: number | undefined;
+  averageDurationBeforeWarning: number | undefined;
+  projectBaselineSuppressions: number | undefined;
   lowSampleSuppressions: number;
   categoryCoverage: Partial<Record<FailureRecoveryCategory, number>>;
+}
+
+interface ReplayToolResultEvent extends SafeToolResultEvent {
+  costUsd?: number;
+  durationMs?: number;
 }
 
 interface TranscriptCandidate {
@@ -57,6 +70,9 @@ interface ReplayEpisode {
   warningAttempt?: number;
   stopIssued: boolean;
   blindRetryWarningIssued: boolean;
+  warningToolResultCount?: number;
+  warningCostUsd?: number;
+  warningDurationMs?: number;
 }
 
 interface ReplayOutcome {
@@ -64,6 +80,9 @@ interface ReplayOutcome {
   attemptCount: number;
   recovered: boolean;
   warningAttempt?: number;
+  warningToolResultCount?: number;
+  warningCostUsd?: number;
+  warningDurationMs?: number;
   stopIssued: boolean;
   blindRetryWarningIssued: boolean;
 }
@@ -85,20 +104,27 @@ export async function evaluateHistoricalReplay(options: HistoricalReplayOptions 
 
 export function formatHistoricalReplayMetrics(metrics: HistoricalReplayMetrics): string {
   return [
+    `sessions evaluated ${metrics.sessionsEvaluated}`,
     `holdout sessions ${metrics.holdoutSessions}`,
+    `warnings ${metrics.warnings}`,
     `evaluated failure episodes ${metrics.evaluatedFailureEpisodes}`,
     `Stop precision on unrecovered episodes ${formatMetricRate(metrics.stopPrecisionOnUnrecoveredEpisodes)}`,
+    `false Stop count ${metrics.falseStopCount}`,
     `false Stop count on recovered episodes ${metrics.falseStopCountOnRecoveredEpisodes}`,
     `missed unrecovered loop count ${metrics.missedUnrecoveredLoopCount}`,
     `blind retry precision ${formatMetricRate(metrics.blindRetryPrecision)}`,
     `average attempts before warning ${metrics.averageAttemptsBeforeWarning.toFixed(2)}`,
+    `average tool results before warning ${metrics.averageToolResultsBeforeWarning.toFixed(2)}`,
+    `average cost before warning ${formatOptionalCurrencyAverage(metrics.averageCostBeforeWarning)}`,
+    `average duration before warning ${formatOptionalDurationAverage(metrics.averageDurationBeforeWarning)}`,
+    `project-baseline suppressions ${metrics.projectBaselineSuppressions === undefined ? "n/a (not replayed)" : metrics.projectBaselineSuppressions}`,
     `low-sample suppressions ${metrics.lowSampleSuppressions}`,
     `category coverage ${formatCategoryCoverage(metrics.categoryCoverage)}`
   ].join("; ");
 }
 
 function evaluateHoldout(
-  holdoutEventsBySession: SafeToolResultEvent[][],
+  holdoutEventsBySession: ReplayToolResultEvent[][],
   baseline: DecisionPersonalBaseline
 ): HistoricalReplayMetrics {
   let evaluatedFailureEpisodes = 0;
@@ -109,7 +135,11 @@ function evaluateHoldout(
   let blindRetryTruePositive = 0;
   let blindRetryTotal = 0;
   let lowSampleSuppressions = 0;
+  let warnings = 0;
   const attemptsBeforeWarning: number[] = [];
+  const toolResultsBeforeWarning: number[] = [];
+  const costBeforeWarning: number[] = [];
+  const durationBeforeWarning: number[] = [];
   const categoryCoverage: Partial<Record<FailureRecoveryCategory, number>> = {};
 
   for (const events of holdoutEventsBySession) {
@@ -119,7 +149,17 @@ function evaluateHoldout(
       evaluatedFailureEpisodes += 1;
       categoryCoverage[outcome.category] = (categoryCoverage[outcome.category] || 0) + 1;
       if (outcome.warningAttempt !== undefined) {
+        warnings += 1;
         attemptsBeforeWarning.push(outcome.warningAttempt);
+        if (outcome.warningToolResultCount !== undefined) {
+          toolResultsBeforeWarning.push(outcome.warningToolResultCount);
+        }
+        if (outcome.warningCostUsd !== undefined) {
+          costBeforeWarning.push(outcome.warningCostUsd);
+        }
+        if (outcome.warningDurationMs !== undefined) {
+          durationBeforeWarning.push(outcome.warningDurationMs);
+        }
       }
 
       if (outcome.stopIssued) {
@@ -146,9 +186,12 @@ function evaluateHoldout(
   }
 
   return {
+    sessionsEvaluated: holdoutEventsBySession.length,
     holdoutSessions: holdoutEventsBySession.length,
     evaluatedFailureEpisodes,
+    warnings,
     stopPrecisionOnUnrecoveredEpisodes: stopTotal > 0 ? roundRate(stopTruePositive / stopTotal) : undefined,
+    falseStopCount: falseStopCountOnRecoveredEpisodes,
     falseStopCountOnRecoveredEpisodes,
     missedUnrecoveredLoopCount,
     blindRetryPrecision: blindRetryTotal > 0 ? roundRate(blindRetryTruePositive / blindRetryTotal) : undefined,
@@ -156,20 +199,28 @@ function evaluateHoldout(
       attemptsBeforeWarning.length > 0
         ? Number((attemptsBeforeWarning.reduce((total, value) => total + value, 0) / attemptsBeforeWarning.length).toFixed(2))
         : 0,
+    averageToolResultsBeforeWarning:
+      toolResultsBeforeWarning.length > 0
+        ? Number((toolResultsBeforeWarning.reduce((total, value) => total + value, 0) / toolResultsBeforeWarning.length).toFixed(2))
+        : 0,
+    averageCostBeforeWarning: averageOrUndefined(costBeforeWarning),
+    averageDurationBeforeWarning: averageOrUndefined(durationBeforeWarning),
+    projectBaselineSuppressions: undefined,
     lowSampleSuppressions,
     categoryCoverage
   };
 }
 
 function replaySession(
-  events: SafeToolResultEvent[],
+  events: ReplayToolResultEvent[],
   baseline: DecisionPersonalBaseline
 ): { outcomes: ReplayOutcome[]; lowSampleSuppressions: number } {
   const active = new Map<string, ReplayEpisode>();
   const outcomes: ReplayOutcome[] = [];
   let lowSampleSuppressions = 0;
 
-  for (const event of events) {
+  for (const [index, event] of events.entries()) {
+    const toolResultCount = index + 1;
     if (event.outcome === "success") {
       const sameIdentityEpisode = active.get(event.identity);
       if (sameIdentityEpisode) {
@@ -206,6 +257,9 @@ function replaySession(
     const currentState = replayDecisionState(episode);
     if (currentState !== "Healthy" && episode.warningAttempt === undefined) {
       episode.warningAttempt = episode.attemptCount;
+      episode.warningToolResultCount = toolResultCount;
+      episode.warningCostUsd = event.costUsd;
+      episode.warningDurationMs = event.durationMs;
     }
     if (currentState !== "Healthy" && !recoveryInsight(baseline, episode.category, episode.attemptCount)) {
       lowSampleSuppressions += 1;
@@ -242,6 +296,9 @@ function toReplayOutcome(episode: ReplayEpisode, recovered: boolean): ReplayOutc
     attemptCount: episode.attemptCount,
     recovered,
     warningAttempt: episode.warningAttempt,
+    warningToolResultCount: episode.warningToolResultCount,
+    warningCostUsd: episode.warningCostUsd,
+    warningDurationMs: episode.warningDurationMs,
     stopIssued: episode.stopIssued,
     blindRetryWarningIssued: episode.blindRetryWarningIssued
   };
@@ -274,15 +331,121 @@ async function readEpisodesBySession(files: string[], maxBytesPerTranscript: num
   return sessions;
 }
 
-async function readEventsBySession(files: string[], maxBytesPerTranscript: number): Promise<SafeToolResultEvent[][]> {
-  const sessions: SafeToolResultEvent[][] = [];
+async function readEventsBySession(files: string[], maxBytesPerTranscript: number): Promise<ReplayToolResultEvent[][]> {
+  const sessions: ReplayToolResultEvent[][] = [];
   for (const file of files) {
     const tail = await readTranscriptTail(file, { maxBytes: maxBytesPerTranscript });
     if (tail.pathReadable) {
-      sessions.push(extractSafeToolResultEventsFromTranscriptLines(tail.lines));
+      sessions.push(extractReplayToolResultEvents(tail.lines));
     }
   }
   return sessions;
+}
+
+function extractReplayToolResultEvents(lines: string[]): ReplayToolResultEvent[] {
+  const events = extractSafeToolResultEventsFromTranscriptLines(lines);
+  const measurements = extractToolResultMeasurements(lines);
+  return events.map((event, index) => ({
+    ...event,
+    ...measurements[index]
+  }));
+}
+
+function extractToolResultMeasurements(lines: string[]): Array<{ costUsd?: number; durationMs?: number }> {
+  const measurements: Array<{ costUsd?: number; durationMs?: number }> = [];
+  let latestCostUsd: number | undefined;
+  let latestDurationMs: number | undefined;
+  let firstTimestampMs: number | undefined;
+
+  for (const line of lines) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+
+    const entry = asRecord(parsed);
+    if (!entry) {
+      continue;
+    }
+    const timestampMs = timestampMsFromEntry(entry);
+    if (timestampMs !== undefined) {
+      firstTimestampMs ??= timestampMs;
+      latestDurationMs = Math.max(0, timestampMs - firstTimestampMs);
+    }
+    const costUsd = costUsdFromEntry(entry);
+    if (costUsd !== undefined) {
+      latestCostUsd = costUsd;
+    }
+    const durationMs = durationMsFromEntry(entry);
+    if (durationMs !== undefined) {
+      latestDurationMs = durationMs;
+    }
+
+    for (let index = 0; index < countToolResults(entry); index += 1) {
+      measurements.push({ costUsd: latestCostUsd, durationMs: latestDurationMs });
+    }
+  }
+
+  return measurements;
+}
+
+function countToolResults(entry: Record<string, unknown>): number {
+  let count = 0;
+  for (const part of contentParts(entry)) {
+    if (part.type === "tool_result") {
+      count += 1;
+    }
+  }
+  if (entry.type === "tool_result" || entry.type === "tool_result_delta") {
+    count += 1;
+  }
+  return count;
+}
+
+function contentParts(entry: Record<string, unknown>): Record<string, unknown>[] {
+  const message = asRecord(entry.message);
+  const candidates = [entry.content, message?.content];
+  const parts: Record<string, unknown>[] = [];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      parts.push(...candidate.flatMap((part) => (asRecord(part) ? [asRecord(part)!] : [])));
+    } else if (asRecord(candidate)) {
+      parts.push(asRecord(candidate)!);
+    }
+  }
+  return parts;
+}
+
+function costUsdFromEntry(entry: Record<string, unknown>): number | undefined {
+  const cost = asRecord(entry.cost);
+  const value =
+    numberField(cost?.total_cost_usd) ??
+    numberField(cost?.totalCostUsd) ??
+    numberField(cost?.cost_usd) ??
+    numberField(entry.total_cost_usd) ??
+    numberField(entry.costUsd);
+  return value !== undefined && value >= 0 ? value : undefined;
+}
+
+function durationMsFromEntry(entry: Record<string, unknown>): number | undefined {
+  const cost = asRecord(entry.cost);
+  const value =
+    numberField(cost?.total_duration_ms) ??
+    numberField(cost?.totalDurationMs) ??
+    numberField(entry.duration_ms) ??
+    numberField(entry.durationMs);
+  return value !== undefined && value >= 0 ? value : undefined;
+}
+
+function timestampMsFromEntry(entry: Record<string, unknown>): number | undefined {
+  const timestamp = entry.timestamp;
+  if (typeof timestamp !== "string") {
+    return undefined;
+  }
+  const value = Date.parse(timestamp);
+  return Number.isFinite(value) ? value : undefined;
 }
 
 async function listTranscriptFiles(root: string, maxFiles: number): Promise<string[]> {
@@ -338,6 +501,27 @@ function holdoutSessionCount(total: number, ratio: number): number {
 
 function formatMetricRate(value: number | undefined): string {
   return value === undefined ? "n/a" : value.toFixed(2);
+}
+
+function formatOptionalCurrencyAverage(value: number | undefined): string {
+  if (value === undefined) {
+    return "n/a";
+  }
+  return `$${value.toFixed(2)}`;
+}
+
+function formatOptionalDurationAverage(value: number | undefined): string {
+  if (value === undefined) {
+    return "n/a";
+  }
+  if (value < 60_000) {
+    return `${Math.round(value / 1000)}s`;
+  }
+  return `${Number((value / 60_000).toFixed(1))}m`;
+}
+
+function averageOrUndefined(values: number[]): number | undefined {
+  return values.length > 0 ? Number((values.reduce((total, value) => total + value, 0) / values.length).toFixed(2)) : undefined;
 }
 
 function formatCategoryCoverage(coverage: Partial<Record<FailureRecoveryCategory, number>>): string {

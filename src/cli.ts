@@ -80,7 +80,7 @@ async function commandInstall(args: ParsedArgs): Promise<void> {
     console.log("Personal baseline skipped (--no-learn).");
     return;
   }
-  const baseline = await buildPersonalBaseline({ homeDir: stringFlag(args, "home") });
+  const baseline = await buildPersonalBaseline({ homeDir: stringFlag(args, "home"), projectDir: result.target.projectDir });
   console.log(baseline.message);
 }
 
@@ -98,8 +98,8 @@ async function commandUninstall(args: ParsedArgs): Promise<void> {
 }
 
 async function commandUnlearn(args: ParsedArgs): Promise<void> {
-  await clearPersonalBaseline({ homeDir: stringFlag(args, "home") });
-  console.log("Cleared personal baseline.");
+  const result = await clearPersonalBaseline({ homeDir: stringFlag(args, "home") });
+  console.log(result.message.replace(/^cleared/u, "Cleared") + ".");
 }
 
 async function commandStatusLine(): Promise<void> {
@@ -113,16 +113,20 @@ async function commandStatusLine(): Promise<void> {
 
 async function commandBaselineRefresh(args: ParsedArgs): Promise<void> {
   const quiet = Boolean(args.flags.quiet);
-  const result = await runBaselineRefresh({ homeDir: stringFlag(args, "home") });
+  const result = await runBaselineRefresh({
+    homeDir: stringFlag(args, "home"),
+    projectDir: stringFlag(args, "project"),
+    transcriptPath: stringFlag(args, "transcript")
+  });
   if (!quiet) {
     if (result.ok && result.skipped === "disabled") {
-      console.log("Personal baseline auto refresh disabled.");
+      console.log("Baseline auto refresh disabled.");
     } else if (result.ok && result.skipped === "locked") {
-      console.log("Personal baseline refresh already running.");
+      console.log("Baseline refresh already running.");
     } else if (result.ok) {
-      console.log("Personal baseline refreshed.");
+      console.log("Baseline refreshed.");
     } else {
-      console.log("Could not refresh personal baseline.");
+      console.log("Could not refresh baseline.");
     }
   }
   if (!result.ok) {
@@ -233,7 +237,7 @@ Learning:
   doctor --baseline shows a safe aggregate summary, including recent and validation categories.
   doctor --build-baseline refreshes the baseline.
   doctor --replay-baseline evaluates aggregate holdout metrics from local JSONL history.
-  doctor --clear-baseline and unlearn remove only the baseline.
+  doctor --clear-baseline and unlearn remove learned baselines.
 `);
 }
 

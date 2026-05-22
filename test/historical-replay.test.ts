@@ -41,6 +41,12 @@ describe("historical replay evaluation", () => {
         }
       });
       expect(formatted).toContain("holdout sessions 2");
+      expect(formatted).toContain("sessions evaluated 2");
+      expect(formatted).toContain("warnings ");
+      expect(formatted).toContain("project-baseline suppressions n/a (not replayed)");
+      expect(formatted).toContain("average tool results before warning");
+      expect(formatted).toContain("average cost before warning n/a");
+      expect(formatted).toContain("average duration before warning n/a");
       expect(formatted).toContain("evaluated failure episodes 2");
       expect(formatted).toContain("Stop precision on unrecovered episodes");
       expect(formatted).toContain("blind retry precision 1.00");
@@ -48,6 +54,80 @@ describe("historical replay evaluation", () => {
       expect(formatted).not.toContain(claudeProjectsDir);
       expect(formatted).not.toContain("npm test");
       expect(formatted).not.toContain("BB_CC_LITE_RAW");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps MCP and session identifiers out of replay metrics", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-replay-private-"));
+    try {
+      const claudeProjectsDir = join(tempDir, ".claude", "projects", "project");
+      await mkdir(claudeProjectsDir, { recursive: true });
+      const rawMcpName = "mcp__privateServer__BB_CC_LITE_RAW_MCP_SENTINEL";
+      const rawSessionId = "BB_CC_LITE_RAW_SESSION_SENTINEL";
+      const rawPrompt = "BB_CC_LITE_RAW_PROMPT_SENTINEL";
+      const rawPath = "/private/BB_CC_LITE_RAW_PATH_SENTINEL.ts";
+
+      const older = join(claudeProjectsDir, "older-mcp-recovered.jsonl");
+      const newer = join(claudeProjectsDir, "newer-mcp-unrecovered.jsonl");
+      await writeJsonl(older, recoveredMcpTranscript("older-mcp", rawMcpName, rawSessionId, rawPrompt, rawPath));
+      await writeJsonl(newer, unrecoveredMcpTranscript("newer-mcp", rawMcpName, rawSessionId, rawPrompt));
+      await setMtime(older, "2026-05-18T00:00:00.000Z");
+      await setMtime(newer, "2026-05-19T00:00:00.000Z");
+
+      const metrics = await evaluateHistoricalReplay({
+        claudeProjectsDir: join(tempDir, ".claude", "projects"),
+        maxFiles: 2,
+        holdoutRatio: 0.5
+      });
+      const formatted = formatHistoricalReplayMetrics(metrics);
+      const serializedMetrics = JSON.stringify(metrics);
+
+      expect(metrics).toMatchObject({
+        holdoutSessions: 1,
+        evaluatedFailureEpisodes: 1,
+        categoryCoverage: {
+          mcp: 1
+        }
+      });
+      expect(formatted).toContain("category coverage mcp:1");
+      for (const sentinel of [rawMcpName, rawSessionId, rawPrompt, rawPath, "BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL"]) {
+        expect(formatted).not.toContain(sentinel);
+        expect(serializedMetrics).not.toContain(sentinel);
+      }
+      expect(formatted).not.toContain(claudeProjectsDir);
+      expect(formatted).not.toContain("mcp__");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("measures safe cost and duration before warning when transcript metrics are available", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-replay-budget-"));
+    try {
+      const claudeProjectsDir = join(tempDir, ".claude", "projects", "project");
+      await mkdir(claudeProjectsDir, { recursive: true });
+      const older = join(claudeProjectsDir, "older-training.jsonl");
+      const newer = join(claudeProjectsDir, "newer-holdout.jsonl");
+      await writeJsonl(older, recoveredTestTranscript("older-budget"));
+      await writeJsonl(newer, unrecoveredBlindTestTranscriptWithMetrics("holdout-budget"));
+      await setMtime(older, "2026-05-18T00:00:00.000Z");
+      await setMtime(newer, "2026-05-19T00:00:00.000Z");
+
+      const metrics = await evaluateHistoricalReplay({
+        claudeProjectsDir: join(tempDir, ".claude", "projects"),
+        maxFiles: 2,
+        holdoutRatio: 0.5
+      });
+      const formatted = formatHistoricalReplayMetrics(metrics);
+
+      expect(metrics.averageToolResultsBeforeWarning).toBe(2);
+      expect(metrics.averageCostBeforeWarning).toBeGreaterThan(0);
+      expect(metrics.averageDurationBeforeWarning).toBeGreaterThan(0);
+      expect(formatted).toContain("average cost before warning $");
+      expect(formatted).toContain("average duration before warning ");
+      expect(formatted).not.toContain(claudeProjectsDir);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -81,11 +161,48 @@ function unrecoveredBlindTestTranscript(prefix: string): string[] {
   ];
 }
 
+function unrecoveredBlindTestTranscriptWithMetrics(prefix: string): string[] {
+  return [
+    toolUse(`${prefix}-fail-1`, "Bash", { command: "npm test -- BB_CC_LITE_RAW_COMMAND_SENTINEL" }),
+    toolResultWithMetrics(`${prefix}-fail-1`, true, "2026-05-19T00:00:01.000Z", 0.04, 1000),
+    toolUse(`${prefix}-fail-2`, "Bash", { command: "npm test" }),
+    toolResultWithMetrics(`${prefix}-fail-2`, true, "2026-05-19T00:02:00.000Z", 0.12, 120000),
+    toolUse(`${prefix}-fail-3`, "Bash", { command: "npm test" }),
+    toolResultWithMetrics(`${prefix}-fail-3`, true, "2026-05-19T00:03:00.000Z", 0.2, 180000)
+  ];
+}
+
+function recoveredMcpTranscript(
+  prefix: string,
+  rawMcpName: string,
+  rawSessionId: string,
+  rawPrompt: string,
+  rawPath: string
+): string[] {
+  return [
+    ...failedMcpCommand(`${prefix}-fail-1`, rawMcpName, rawSessionId, rawPrompt),
+    ...successfulEditWithPath(`${prefix}-edit`, rawPath),
+    ...successfulMcpCommand(`${prefix}-pass`, rawMcpName, rawSessionId, rawPrompt)
+  ];
+}
+
+function unrecoveredMcpTranscript(prefix: string, rawMcpName: string, rawSessionId: string, rawPrompt: string): string[] {
+  return [
+    ...failedMcpCommand(`${prefix}-fail-1`, rawMcpName, rawSessionId, rawPrompt),
+    ...failedMcpCommand(`${prefix}-fail-2`, rawMcpName, rawSessionId, rawPrompt),
+    ...failedMcpCommand(`${prefix}-fail-3`, rawMcpName, rawSessionId, rawPrompt)
+  ];
+}
+
 function successfulEdit(id: string): string[] {
   return [
     toolUse(id, "Edit", { file_path: "/private/BB_CC_LITE_RAW_PATH_SENTINEL.ts", new_string: "private" }),
     toolResult(id, false)
   ];
+}
+
+function successfulEditWithPath(id: string, rawPath: string): string[] {
+  return [toolUse(id, "Edit", { file_path: rawPath, new_string: "BB_CC_LITE_RAW_FILE_CONTENT_SENTINEL" }), toolResult(id, false)];
 }
 
 function failedBashCommand(id: string, command: string): string[] {
@@ -94,6 +211,14 @@ function failedBashCommand(id: string, command: string): string[] {
 
 function successfulBashCommand(id: string, command: string): string[] {
   return [toolUse(id, "Bash", { command }), toolResult(id, false)];
+}
+
+function failedMcpCommand(id: string, rawMcpName: string, rawSessionId: string, rawPrompt: string): string[] {
+  return [toolUseWithSession(id, rawMcpName, { query: rawPrompt }, rawSessionId), toolResult(id, true)];
+}
+
+function successfulMcpCommand(id: string, rawMcpName: string, rawSessionId: string, rawPrompt: string): string[] {
+  return [toolUseWithSession(id, rawMcpName, { query: rawPrompt }, rawSessionId), toolResult(id, false)];
 }
 
 function toolUse(id: string, name: string, input: Record<string, unknown>): string {
@@ -105,9 +230,40 @@ function toolUse(id: string, name: string, input: Record<string, unknown>): stri
   });
 }
 
+function toolUseWithSession(id: string, name: string, input: Record<string, unknown>, rawSessionId: string): string {
+  return JSON.stringify({
+    session_id: rawSessionId,
+    type: "assistant",
+    message: {
+      content: [{ type: "tool_use", id, name, input }]
+    }
+  });
+}
+
 function toolResult(id: string, isError: boolean): string {
   return JSON.stringify({
     type: "user",
+    message: {
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: id,
+          is_error: isError,
+          content: "BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL"
+        }
+      ]
+    }
+  });
+}
+
+function toolResultWithMetrics(id: string, isError: boolean, timestamp: string, totalCostUsd: number, totalDurationMs: number): string {
+  return JSON.stringify({
+    timestamp,
+    type: "user",
+    cost: {
+      total_cost_usd: totalCostUsd,
+      total_duration_ms: totalDurationMs
+    },
     message: {
       content: [
         {
