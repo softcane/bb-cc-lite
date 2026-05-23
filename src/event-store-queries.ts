@@ -1,5 +1,6 @@
 import { readStore } from "./event-store-persistence.js";
 import { safeToolResultEventFromHookEvent, summarizeBlindRetry, summarizeFailureEpisodes } from "./failure-episodes.js";
+import { isEditTool, isReadSearchTool } from "./tool-metadata.js";
 import type { BlindRetrySummary, StoredDecision, ToolFailureSummary } from "./types.js";
 
 export async function latestDecision(sessionKey?: string, storePath?: string): Promise<StoredDecision | undefined> {
@@ -14,6 +15,13 @@ export async function hookSummary(
 ): Promise<{
   failedToolResults: number;
   toolCalls: number;
+  readToolCalls: number;
+  successfulEditResults: number;
+  validationChecks: number;
+  validationSuccesses: number;
+  validationRecovered: boolean;
+  hasUnvalidatedEdits: boolean;
+  unvalidatedEditToolSteps?: number;
   compactionEvents: number;
   postCompactionActivity: number;
   repeatedFailures: ToolFailureSummary[];
@@ -27,6 +35,14 @@ export async function hookSummary(
   const failures = new Map<string, ToolFailureSummary>();
   let failedToolResults = 0;
   let toolCalls = 0;
+  let readToolCalls = 0;
+  let successfulEditResults = 0;
+  let validationChecks = 0;
+  let validationSuccesses = 0;
+  let validationRecovered = false;
+  let hasOpenUnvalidatedEdit = false;
+  let unvalidatedEditToolSteps: number | undefined;
+  let validationFailureOpen = false;
   let compactionEvents = 0;
   let postCompactionActivity = 0;
   let latestTimestamp: string | undefined;
@@ -38,12 +54,40 @@ export async function hookSummary(
     if (event.kind === "tool_failure") {
       failedToolResults += 1;
       toolCalls += 1;
+      if (isReadSearchTool(event.toolName || "tool")) {
+        readToolCalls += 1;
+      }
+      if (isValidationPurpose(event.purpose)) {
+        validationChecks += 1;
+        validationFailureOpen = true;
+      }
+      if (hasOpenUnvalidatedEdit) {
+        unvalidatedEditToolSteps = (unvalidatedEditToolSteps || 0) + 1;
+      }
       const toolName = event.toolName || "tool";
       const key = failureKey(event);
       const existing = failures.get(key);
       failures.set(key, failureSummary(event, toolName, (existing?.count || 0) + 1));
     } else if (event.kind === "tool_success") {
       toolCalls += 1;
+      const toolName = event.toolName || "tool";
+      if (isReadSearchTool(toolName)) {
+        readToolCalls += 1;
+      }
+      if (isEditTool(toolName)) {
+        successfulEditResults += 1;
+        hasOpenUnvalidatedEdit = true;
+        unvalidatedEditToolSteps = 0;
+      } else if (isValidationPurpose(event.purpose)) {
+        validationChecks += 1;
+        validationSuccesses += 1;
+        validationRecovered = validationRecovered || validationFailureOpen;
+        validationFailureOpen = false;
+        hasOpenUnvalidatedEdit = false;
+        unvalidatedEditToolSteps = undefined;
+      } else if (hasOpenUnvalidatedEdit) {
+        unvalidatedEditToolSteps = (unvalidatedEditToolSteps || 0) + 1;
+      }
       failures.delete(failureKey(event));
     } else if (event.kind === "tool_batch") {
       toolCalls += event.toolCount || 0;
@@ -60,6 +104,13 @@ export async function hookSummary(
   return {
     failedToolResults,
     toolCalls,
+    readToolCalls,
+    successfulEditResults,
+    validationChecks,
+    validationSuccesses,
+    validationRecovered,
+    hasUnvalidatedEdits: hasOpenUnvalidatedEdit,
+    unvalidatedEditToolSteps,
     compactionEvents,
     postCompactionActivity,
     repeatedFailures: [...failures.values()].filter((failure) => failure.count >= 2),
@@ -67,6 +118,10 @@ export async function hookSummary(
     latestTimestamp,
     latestCompactionTimestamp
   };
+}
+
+function isValidationPurpose(value: string | undefined): boolean {
+  return value === "tests" || value === "lint" || value === "typecheck" || value === "build";
 }
 
 function failureKey(event: { toolName?: string; purpose?: string; category?: "MCP"; identityHash?: string }): string {

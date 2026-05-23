@@ -5,6 +5,13 @@ export function mergeHookSummary(
   hookData: {
     failedToolResults: number;
     toolCalls: number;
+    readToolCalls?: number;
+    successfulEditResults?: number;
+    validationChecks?: number;
+    validationSuccesses?: number;
+    validationRecovered?: boolean;
+    hasUnvalidatedEdits?: boolean;
+    unvalidatedEditToolSteps?: number;
     compactionEvents: number;
     postCompactionActivity: number;
     repeatedFailures: TranscriptSummary["repeatedFailures"];
@@ -26,9 +33,16 @@ export function mergeHookSummary(
   return {
     ...transcript,
     toolCalls: Math.max(transcript.toolCalls, hookData.toolCalls),
+    readToolCalls: Math.max(transcript.readToolCalls, hookData.readToolCalls || 0),
+    successfulEditResults: Math.max(transcript.successfulEditResults || 0, hookData.successfulEditResults || 0),
+    validationChecks: Math.max(transcript.validationChecks || 0, hookData.validationChecks || 0),
+    validationSuccesses: Math.max(transcript.validationSuccesses || 0, hookData.validationSuccesses || 0),
     failedToolResults: Math.max(transcript.failedToolResults, hookData.failedToolResults),
     repeatedFailures: [...repeatedFailures.values()].filter((failure) => failure.count >= 2),
     blindRetry: strongestBlindRetry(transcript.blindRetry, hookData.blindRetry),
+    hasUnvalidatedEdits: transcript.hasUnvalidatedEdits || Boolean(hookData.hasUnvalidatedEdits),
+    unvalidatedEditToolSteps: Math.max(transcript.unvalidatedEditToolSteps || 0, hookData.unvalidatedEditToolSteps || 0) || undefined,
+    validationRecovered: transcript.validationRecovered || Boolean(hookData.validationRecovered),
     compactionEvents: Math.max(transcript.compactionEvents, hookData.compactionEvents),
     postCompactionActivity: mergedPostCompactionActivity(transcript, hookData, latestTimestamp, latestCompactionTimestamp),
     latestTimestamp,

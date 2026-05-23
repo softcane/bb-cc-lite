@@ -79,7 +79,8 @@ describe("settings install and uninstall", () => {
       projectDir: dirs.projectDir,
       homeDir: dirs.homeDir,
       cliFilePath,
-      hooks: true
+      hooks: true,
+      mode: "observe"
     });
 
     const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
@@ -101,7 +102,7 @@ describe("settings install and uninstall", () => {
             {
               type: "command",
               command: hookLauncherPath,
-              args: ["--bb-cc-lite-hook", eventName],
+              args: ["--bb-cc-lite-hook", eventName, "--bb-cc-lite-mode", "observe", "--bb-cc-lite-learn", "1"],
               async: true,
               timeout: 1
             }
@@ -112,6 +113,109 @@ describe("settings install and uninstall", () => {
     expect(hookLauncher).toBe(
       `#!/bin/sh\nexport BB_CC_LITE_HOME=${quoteShell(dirs.appHome)}\nexec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} hook "$@"\n`
     );
+  });
+
+  it("installs default coach hooks without prompt-boundary hooks", async () => {
+    const dirs = mustHaveWorkspace(workspace);
+    const cliFilePath = await createFakeRuntime(dirs.root);
+
+    await installStatusLine({
+      projectDir: dirs.projectDir,
+      homeDir: dirs.homeDir,
+      cliFilePath,
+      hooks: true,
+      mode: "coach"
+    });
+
+    const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
+    const settings = await readJson<{
+      hooks: Record<string, Array<{ matcher: string; hooks: Array<{ args: string[]; async?: boolean }> }>>;
+    }>(target.settingsPath);
+
+    expect(Object.keys(settings.hooks).sort()).toEqual([
+      "PostCompact",
+      "PostToolBatch",
+      "PostToolUse",
+      "PostToolUseFailure",
+      "PreCompact",
+      "PreToolUse",
+      "SessionEnd",
+      "SessionStart",
+      "Stop"
+    ]);
+    expect(settings.hooks.UserPromptSubmit).toBeUndefined();
+    expect(settings.hooks.PreToolUse[0].matcher).toBe("Bash");
+    expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("--bb-cc-lite-mode");
+    expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("coach");
+    expect(settings.hooks.PostToolUseFailure[0].hooks[0].async).toBeUndefined();
+  });
+
+  it("installs observe-only telemetry without Claude-facing feedback hooks", async () => {
+    const dirs = mustHaveWorkspace(workspace);
+
+    await installStatusLine({
+      projectDir: dirs.projectDir,
+      homeDir: dirs.homeDir,
+      cliFilePath: await createFakeRuntime(dirs.root),
+      hooks: true,
+      mode: "observe"
+    });
+
+    const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
+    const settings = await readJson<{
+      hooks: Record<string, Array<{ hooks: Array<{ args: string[]; async?: boolean }> }>>;
+    }>(target.settingsPath);
+
+    expect(Object.keys(settings.hooks).sort()).toEqual([...SAFE_HOOK_EVENTS].sort());
+    expect(settings.hooks.SessionStart).toBeUndefined();
+    expect(settings.hooks.PreToolUse).toBeUndefined();
+    expect(settings.hooks.PostToolUseFailure[0].hooks[0].args).toContain("observe");
+    expect(settings.hooks.PostToolUseFailure[0].hooks[0].async).toBe(true);
+  });
+
+  it("installs guard hooks only when guard mode is requested", async () => {
+    const dirs = mustHaveWorkspace(workspace);
+
+    await installStatusLine({
+      projectDir: dirs.projectDir,
+      homeDir: dirs.homeDir,
+      cliFilePath: await createFakeRuntime(dirs.root),
+      hooks: true,
+      mode: "guard"
+    });
+
+    const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
+    const settings = await readJson<{
+      hooks: Record<string, Array<{ hooks: Array<{ args: string[] }> }>>;
+    }>(target.settingsPath);
+
+    expect(settings.hooks.PreToolUse[0].hooks[0].args).toContain("guard");
+    expect(settings.hooks.Stop[0].hooks[0].args).toContain("guard");
+  });
+
+  it("writes no-learn runtime launchers that disable baseline and lesson learning", async () => {
+    const dirs = mustHaveWorkspace(workspace);
+
+    await installStatusLine({
+      projectDir: dirs.projectDir,
+      homeDir: dirs.homeDir,
+      cliFilePath: await createFakeRuntime(dirs.root),
+      hooks: true,
+      mode: "coach",
+      learn: false
+    });
+
+    const statuslineLauncher = await readFile(join(dirs.appHome, "bin", "statusline"), "utf8");
+    const hookLauncher = await readFile(join(dirs.appHome, "bin", "hook"), "utf8");
+    const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
+    const settings = await readJson<{
+      hooks: Record<string, Array<{ hooks: Array<{ args: string[] }> }>>;
+    }>(target.settingsPath);
+
+    expect(statuslineLauncher).toContain("export BB_CC_LITE_AUTO_LEARN=0");
+    expect(hookLauncher).toContain("export BB_CC_LITE_LESSON_MEMORY=0");
+    expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("--bb-cc-lite-learn");
+    expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("0");
   });
 
   it("preserves a custom statusLine by default and asks for --replace", async () => {
@@ -205,7 +309,8 @@ describe("settings install and uninstall", () => {
       projectDir: dirs.projectDir,
       homeDir: dirs.homeDir,
       cliFilePath,
-      hooks: true
+      hooks: true,
+      mode: "observe"
     });
     const partial = await readJson<{
       hooks: Record<string, unknown>;
@@ -219,7 +324,8 @@ describe("settings install and uninstall", () => {
       projectDir: dirs.projectDir,
       homeDir: dirs.homeDir,
       cliFilePath,
-      hooks: true
+      hooks: true,
+      mode: "observe"
     });
     const repaired = await readJson<{
       hooks: Record<string, unknown>;
@@ -401,6 +507,56 @@ describe("settings install and uninstall", () => {
               {
                 type: "command",
                 command: "custom-bb-cc-lite-wrapper-hook"
+              }
+            ]
+          }
+        ]
+      }
+    });
+  });
+
+  it("uninstall removes guard hooks without deleting unrelated hooks", async () => {
+    const dirs = mustHaveWorkspace(workspace);
+    const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
+    await installStatusLine({
+      projectDir: dirs.projectDir,
+      homeDir: dirs.homeDir,
+      cliFilePath: await createFakeRuntime(dirs.root),
+      hooks: true,
+      mode: "guard"
+    });
+    const installed = await readJson<{
+      hooks: Record<string, Array<{ matcher: string; hooks: Array<{ type: string; command: string }> }>>;
+    }>(target.settingsPath);
+    installed.hooks.PreToolUse.push({
+      matcher: "Read",
+      hooks: [
+        {
+          type: "command",
+          command: "custom-read-hook"
+        }
+      ]
+    });
+    await writeJson(target.settingsPath, installed);
+
+    const result = await uninstallStatusLine({
+      projectDir: dirs.projectDir,
+      homeDir: dirs.homeDir
+    });
+    const remaining = await readJson<{
+      hooks: Record<string, Array<{ matcher: string; hooks: Array<{ command: string }> }>>;
+    }>(target.settingsPath);
+
+    expect(result.status).toBe("removed");
+    expect(remaining).toEqual({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: "Read",
+            hooks: [
+              {
+                type: "command",
+                command: "custom-read-hook"
               }
             ]
           }

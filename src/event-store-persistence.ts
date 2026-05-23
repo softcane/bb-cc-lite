@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { eventStorePath } from "./paths.js";
 import type { DecisionEvidence, DecisionState, EventStoreData, HookEventKind, StoredDecision, StoredHookEvent } from "./types.js";
@@ -26,10 +26,25 @@ export async function readStore(storePath = eventStorePath()): Promise<EventStor
 
 export async function writeStore(store: EventStoreData, storePath: string): Promise<void> {
   await mkdir(dirname(storePath), { recursive: true, mode: 0o700 });
-  const tempPath = `${storePath}.${process.pid}.tmp`;
+  const tempPath = `${storePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
   await writeFile(tempPath, `${JSON.stringify(store, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   await chmod(tempPath, 0o600);
   await rename(tempPath, storePath);
+}
+
+export async function updateStore<T>(
+  storePath: string,
+  update: (store: EventStoreData) => { store: EventStoreData; result: T } | Promise<{ store: EventStoreData; result: T }>
+): Promise<T> {
+  const release = await acquireStoreLock(storePath);
+  try {
+    const current = await readStore(storePath);
+    const { store, result } = await update(current);
+    await writeStore(store, storePath);
+    return result;
+  } finally {
+    await release();
+  }
 }
 
 function sanitizeStoredDecision(value: unknown): StoredDecision | undefined {
@@ -85,7 +100,9 @@ function sanitizeStoredHookEvent(value: unknown): StoredHookEvent | undefined {
     purpose: stringField(record.purpose),
     category: hookCategory(record.category),
     identityHash: stringField(record.identityHash),
-    toolCount: numberField(record.toolCount)
+    toolCount: numberField(record.toolCount),
+    feedbackAction: feedbackAction(record.feedbackAction),
+    cooldownKey: stringField(record.cooldownKey)
   };
 }
 
@@ -134,13 +151,70 @@ function hookKind(value: unknown): HookEventKind | undefined {
     value === "tool_batch" ||
     value === "compaction" ||
     value === "stop" ||
-    value === "session_end"
+    value === "session_end" ||
+    value === "feedback"
     ? value
     : undefined;
 }
 
 function hookCategory(value: unknown): StoredHookEvent["category"] {
   return value === "MCP" ? value : undefined;
+}
+
+function feedbackAction(value: unknown): StoredHookEvent["feedbackAction"] {
+  return value === "coach" || value === "guard" ? value : undefined;
+}
+
+async function acquireStoreLock(storePath: string): Promise<() => Promise<void>> {
+  const lockPath = `${storePath}.lock`;
+  await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 });
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    try {
+      await writeFile(
+        lockPath,
+        `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`,
+        {
+          encoding: "utf8",
+          mode: 0o600,
+          flag: "wx"
+        }
+      );
+      await chmod(lockPath, 0o600);
+      return async () => {
+        await rm(lockPath, { force: true });
+      };
+    } catch (error) {
+      if (!isErrno(error, "EEXIST")) {
+        throw error;
+      }
+      if (await lockIsStale(lockPath)) {
+        await rm(lockPath, { force: true });
+        continue;
+      }
+      await wait(20);
+    }
+  }
+  throw new Error("event store lock timed out");
+}
+
+async function lockIsStale(lockPath: string): Promise<boolean> {
+  try {
+    const lockStat = await stat(lockPath);
+    return Date.now() - lockStat.mtimeMs > 5000;
+  } catch {
+    return true;
+  }
+}
+
+async function wait(ms: number): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function isErrno(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && (error as NodeJS.ErrnoException).code === code;
 }
 
 function containsForbiddenRawDataKey(value: unknown): boolean {

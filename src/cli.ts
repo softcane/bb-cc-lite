@@ -6,11 +6,10 @@ import {
   runDoctor
 } from "./doctor.js";
 import { runBaselineRefresh } from "./baseline-refresh.js";
-import { parseHookPayload } from "./hook-payload.js";
-import { installStatusLine, uninstallStatusLine, type SettingsScope } from "./settings.js";
+import { handleHook } from "./hook-control.js";
+import { installStatusLine, uninstallStatusLine, type InstallMode, type SettingsScope } from "./settings.js";
 import { readStdin } from "./status-input.js";
 import { createStatusLine } from "./statusline.js";
-import { recordHookEvent } from "./store.js";
 import { formatWhy, getWhyDecision } from "./why.js";
 
 interface ParsedArgs {
@@ -64,10 +63,13 @@ async function main(): Promise<void> {
 
 async function commandInstall(args: ParsedArgs): Promise<void> {
   const shouldLearn = !args.flags["no-learn"];
+  const mode = installMode(args);
   const result = await installStatusLine({
     scope: scopeFlag(args),
     replace: Boolean(args.flags.replace),
-    hooks: Boolean(args.flags.hooks),
+    hooks: true,
+    mode,
+    learn: shouldLearn,
     projectDir: stringFlag(args, "project"),
     homeDir: stringFlag(args, "home")
   });
@@ -138,9 +140,13 @@ async function commandHook(args: ParsedArgs): Promise<void> {
   try {
     const fallbackEventName =
       stringFlag(args, "bb-cc-lite-hook") || args.positionals.find((value) => value !== "--bb-cc-lite-hook");
-    const event = parseHookPayload(await readStdin(), fallbackEventName);
-    if (event) {
-      await recordHookEvent(event);
+    const response = await handleHook(await readStdin(), {
+      fallbackEventName,
+      mode: hookMode(args),
+      learn: stringFlag(args, "bb-cc-lite-learn") !== "0"
+    });
+    if (response) {
+      process.stdout.write(`${JSON.stringify(response)}\n`);
     }
   } catch {
     // Hooks are telemetry-only and must never block Claude Code.
@@ -212,6 +218,27 @@ function scopeFlag(args: ParsedArgs): SettingsScope {
   throw new Error(`Invalid --scope ${scope}; expected local, project, or user`);
 }
 
+function installMode(args: ParsedArgs): InstallMode {
+  if (args.flags.guard && args.flags["observe-only"]) {
+    throw new Error("--guard cannot be combined with --observe-only");
+  }
+  if (args.flags.guard) {
+    return "guard";
+  }
+  if (args.flags["observe-only"]) {
+    return "observe";
+  }
+  return "coach";
+}
+
+function hookMode(args: ParsedArgs): InstallMode {
+  const mode = stringFlag(args, "bb-cc-lite-mode");
+  if (mode === "observe" || mode === "coach" || mode === "guard") {
+    return mode;
+  }
+  return "coach";
+}
+
 function stringFlag(args: ParsedArgs, name: string): string | undefined {
   const value = args.flags[name];
   return typeof value === "string" ? value : undefined;
@@ -221,8 +248,8 @@ function printHelp(): void {
   console.log(`bb-cc-lite
 
 Usage:
-  bb-cc-lite install [--scope local|project|user] [--hooks]
-                     [--no-learn]
+  bb-cc-lite install [--scope local|project|user] [--observe-only] [--guard]
+                     [--replace] [--no-learn]
   bb-cc-lite statusline
   bb-cc-lite why [--session <id>] [--json]
   bb-cc-lite doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing]
@@ -231,9 +258,11 @@ Usage:
   bb-cc-lite uninstall [--scope local|project|user] [--force]
 
 Learning:
-  install builds a small local baseline by default.
+  install enables coach mode and builds a small local baseline by default.
+  --observe-only keeps display and local telemetry without Claude-facing feedback.
+  --guard enables coach feedback plus strict repeated-validation retry denial.
   install preserves an existing Claude statusLine unless --replace is passed.
-  --no-learn skips baseline creation.
+  --no-learn skips baseline creation and disables lesson memory.
   doctor --baseline shows a safe aggregate summary, including recent and validation categories.
   doctor --build-baseline refreshes the baseline.
   doctor --replay-baseline evaluates aggregate holdout metrics from local JSONL history.

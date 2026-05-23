@@ -8,6 +8,8 @@ Claude Code can look busy while it is doing the wrong thing: retrying the same b
 
 > Should I let this Claude Code session keep going?
 
+By default, it also gives Claude a short safe nudge when the pattern is clear. If the same test keeps failing without a fix, Claude can be told to inspect the first failure before retrying again. If you turn on guard mode, bb can deny the obvious repeated retry before it runs.
+
 ![bb-cc-lite statusline examples](./assets/statusline-demo.gif)
 
 ## Requirements
@@ -18,12 +20,16 @@ Claude Code can look busy while it is doing the wrong thing: retrying the same b
 ## Install
 
 ```bash
-npx --yes bb-cc-lite install --scope local --hooks
+npx --yes bb-cc-lite install --scope local
 ```
 
 Restart Claude Code in the project. The status line appears at the bottom.
 
-Install preserves an existing Claude Code `statusLine` unless you pass `--replace`. `--hooks` is optional, but gives faster loop detection.
+Default install uses coach mode. It keeps the status line for you and sends Claude short safe feedback when a risky loop is visible. Coach feedback can say things like: a validation check has failed repeatedly, inspect the failure pattern, make one targeted fix, then run one focused check.
+
+Coach feedback does not include prompts, command text, tool output, file contents, raw paths, raw session ids, or raw MCP names.
+
+Install preserves an existing Claude Code `statusLine` unless you pass `--replace`.
 
 To uninstall:
 
@@ -41,7 +47,27 @@ bb-cc-lite install --scope local --hooks
 To replace an existing status line:
 
 ```bash
-npx --yes bb-cc-lite install --scope local --replace --hooks
+npx --yes bb-cc-lite install --scope local --replace
+```
+
+To observe only, without sending feedback to Claude:
+
+```bash
+npx --yes bb-cc-lite install --scope local --observe-only
+```
+
+To enable stricter guard behavior:
+
+```bash
+npx --yes bb-cc-lite install --scope local --guard
+```
+
+Guard mode includes coach feedback. It may deny a high-confidence repeated validation retry with a safe reason. It does not broadly block normal reads or edits.
+
+To disable baseline learning and lesson memory:
+
+```bash
+npx --yes bb-cc-lite install --scope local --no-learn
 ```
 
 ## What It Catches
@@ -52,6 +78,14 @@ npx --yes bb-cc-lite install --scope local --replace --hooks
 - Context pressure before the session gets too full to reason clearly.
 - Cost and time budget signals that make a stuck session easier to spot.
 - Project baseline patterns, when there is enough local aggregate history.
+
+## How It Helps Claude
+
+In observe-only mode, bb records the pattern and updates the status line, but Claude does not receive feedback.
+
+In coach mode, bb can send Claude a short note during the session. Claude can then inspect the failure, make a targeted fix, run a focused check, or summarize why retrying is not useful.
+
+In guard mode, bb can deny a high-confidence repeated validation retry. The retry does not run, and Claude sees a safe reason.
 
 ## What It Shows
 
@@ -79,7 +113,7 @@ bb-cc-lite unlearn
 bb-cc-lite uninstall --scope local
 ```
 
-`why` explains the latest statusline decision. `doctor --baseline` shows safe aggregate baseline facts. `unlearn` clears learned personal and project baselines. `uninstall` restores the previous Claude Code status line when a backup exists.
+`why` explains the latest statusline decision. `doctor --baseline` shows safe aggregate baseline facts. `unlearn` clears learned personal baselines, project baselines, and lesson memory. `uninstall` restores the previous Claude Code status line when a backup exists.
 
 Budget guard thresholds can be changed with environment variables:
 
@@ -96,5 +130,7 @@ Everything stays local. `bb-cc-lite` does not upload transcripts, prompts, tool 
 It stores derived data only: counts, rates, percentiles, confidence labels, reason codes, cost/time/context numbers, weak pattern labels, hashed session keys, and hashed project keys.
 
 Project baselines are stored under the bb app home, not inside the repo. They use only a hashed project key and safe summary data from that project. Sparse or corrupt project data falls back to the personal baseline or fixed rules.
+
+Lesson memory is also stored under the bb app home by hashed project key. A lesson card contains only safe fields such as a reason code, safe category, confidence, counts, timestamps, and templated wording. Lesson cards decay and can be removed with `bb-cc-lite unlearn`.
 
 LiteLLM is used only as public pricing data for cost estimates. `bb-cc-lite` does not run a proxy, gateway, dashboard, or message router.

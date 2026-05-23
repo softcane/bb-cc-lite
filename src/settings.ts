@@ -7,6 +7,7 @@ import { SAFE_HOOK_EVENTS } from "./hook-payload.js";
 import { appHome, backupDir, cliPath, quoteShell } from "./paths.js";
 
 export type SettingsScope = "local" | "project" | "user";
+export type InstallMode = "observe" | "coach" | "guard";
 
 export interface SettingsTarget {
   scope: SettingsScope;
@@ -22,6 +23,8 @@ export interface InstallOptions {
   replace?: boolean;
   cliFilePath?: string;
   hooks?: boolean;
+  mode?: InstallMode;
+  learn?: boolean;
 }
 
 export interface UninstallOptions {
@@ -105,6 +108,8 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
   const targetRead = await readSettings(target.settingsPath);
   const existing = targetRead.settings.statusLine;
   const existingHooks = targetRead.settings.hooks;
+  const mode = options.mode || "coach";
+  const learn = options.learn !== false;
 
   if (existing && !isBbStatusLine(existing) && !options.replace) {
     return {
@@ -114,7 +119,7 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
     };
   }
 
-  const launchers = await ensureRuntimeLaunchers(options.cliFilePath || cliPath(), target.homeDir);
+  const launchers = await ensureRuntimeLaunchers(options.cliFilePath || cliPath(), target.homeDir, { learn });
   const statusLine = {
     type: "command",
     command: quoteShell(launchers.statusline),
@@ -122,7 +127,7 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
   };
 
   if (existing && isBbStatusLine(existing)) {
-    const afterHooks = options.hooks ? mergeBbHooks(existingHooks, launchers.hook) : existingHooks;
+    const afterHooks = options.hooks ? mergeBbHooks(existingHooks, launchers.hook, mode, learn) : existingHooks;
     const shouldWriteStatusLine = JSON.stringify(existing) !== JSON.stringify(statusLine);
     const shouldWriteHooks = options.hooks && JSON.stringify(existingHooks) !== JSON.stringify(afterHooks);
     if (shouldWriteStatusLine || shouldWriteHooks) {
@@ -142,7 +147,7 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
         target,
         command: statusLine.command,
         backupId: installId,
-        message: `bb-cc-lite statusLine is already installed in ${describeSettingsTarget(target)}; ${options.hooks ? "repaired optional hooks and " : ""}refreshed runtime launcher.`
+        message: `bb-cc-lite statusLine is already installed in ${describeSettingsTarget(target)}; ${options.hooks ? `repaired ${hooksLabel(mode)} and ` : ""}refreshed runtime launcher.`
       };
     }
     return {
@@ -158,7 +163,7 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
   const afterSettings = {
     ...beforeSettings,
     statusLine,
-    ...(options.hooks ? { hooks: mergeBbHooks(beforeSettings.hooks, launchers.hook) } : {})
+    ...(options.hooks ? { hooks: mergeBbHooks(beforeSettings.hooks, launchers.hook, mode, learn) } : {})
   };
   const afterRaw = `${JSON.stringify(afterSettings, null, 2)}\n`;
   const installId = randomUUID();
@@ -171,8 +176,8 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
     command: statusLine.command,
     backupId: installId,
     message: existing
-      ? `Replaced existing Claude statusLine with bb-cc-lite${options.hooks ? " and optional hooks" : ""} in ${describeSettingsTarget(target)}. Previous settings were backed up.`
-      : `Installed bb-cc-lite statusLine${options.hooks ? " and optional hooks" : ""} in ${describeSettingsTarget(target)}.`
+      ? `Replaced existing Claude statusLine with bb-cc-lite${options.hooks ? ` and ${hooksLabel(mode)}` : ""} in ${describeSettingsTarget(target)}. Previous settings were backed up.`
+      : `Installed bb-cc-lite statusLine${options.hooks ? ` and ${hooksLabel(mode)}` : ""} in ${describeSettingsTarget(target)}.`
   };
 }
 
@@ -286,16 +291,22 @@ export function isBbStatusLine(value: unknown): boolean {
   return commandReferencesBbCcLite(command) || normalizedCommand.includes(join(appHome(), "bin", "statusline"));
 }
 
-async function ensureRuntimeLaunchers(cliFilePath: string, homeDir: string): Promise<{ statusline: string; hook: string }> {
+async function ensureRuntimeLaunchers(
+  cliFilePath: string,
+  homeDir: string,
+  options: { learn?: boolean } = {}
+): Promise<{ statusline: string; hook: string }> {
   const home = appHome(homeDir);
   const binDir = join(home, "bin");
   const statuslinePath = join(binDir, "statusline");
   const hookPath = join(binDir, "hook");
   const stableCliPath = await copyRuntime(cliFilePath, home);
+  const learningExports =
+    options.learn === false ? "export BB_CC_LITE_AUTO_LEARN=0\nexport BB_CC_LITE_LESSON_MEMORY=0\n" : "";
   await mkdir(binDir, { recursive: true, mode: 0o700 });
   await writeFile(
     statuslinePath,
-    `#!/bin/sh\nexport BB_CC_LITE_HOME=${quoteShell(home)}\nexec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} statusline "$@"\n`,
+    `#!/bin/sh\nexport BB_CC_LITE_HOME=${quoteShell(home)}\n${learningExports}exec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} statusline "$@"\n`,
     {
       encoding: "utf8",
       mode: 0o700
@@ -303,7 +314,7 @@ async function ensureRuntimeLaunchers(cliFilePath: string, homeDir: string): Pro
   );
   await writeFile(
     hookPath,
-    `#!/bin/sh\nexport BB_CC_LITE_HOME=${quoteShell(home)}\nexec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} hook "$@"\n`,
+    `#!/bin/sh\nexport BB_CC_LITE_HOME=${quoteShell(home)}\n${learningExports}exec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} hook "$@"\n`,
     {
       encoding: "utf8",
       mode: 0o700
@@ -314,25 +325,65 @@ async function ensureRuntimeLaunchers(cliFilePath: string, homeDir: string): Pro
   return { statusline: statuslinePath, hook: hookPath };
 }
 
-function mergeBbHooks(existingHooks: unknown, hookPath: string): Record<string, unknown> {
+function mergeBbHooks(existingHooks: unknown, hookPath: string, mode: InstallMode, learn: boolean): Record<string, unknown> {
   const result = removeBbHooks(existingHooks, undefined) ?? {};
-  for (const eventName of SAFE_HOOK_EVENTS) {
+  for (const spec of hookSpecsForMode(mode)) {
+    const eventName = spec.eventName;
     const entries = Array.isArray(result[eventName]) ? [...result[eventName]] : [];
     entries.push({
-      matcher: "*",
+      matcher: spec.matcher,
       hooks: [
         {
           type: "command",
           command: hookPath,
-          args: ["--bb-cc-lite-hook", eventName],
-          async: true,
-          timeout: 1
+          args: [
+            "--bb-cc-lite-hook",
+            eventName,
+            "--bb-cc-lite-mode",
+            mode,
+            "--bb-cc-lite-learn",
+            learn ? "1" : "0"
+          ],
+          ...(spec.async ? { async: true } : {}),
+          timeout: spec.timeout
         }
       ]
     });
     result[eventName] = entries;
   }
   return result;
+}
+
+function hookSpecsForMode(mode: InstallMode): Array<{ eventName: string; matcher: string; async: boolean; timeout: number }> {
+  if (mode === "observe") {
+    return SAFE_HOOK_EVENTS.map((eventName) => ({
+      eventName,
+      matcher: "*",
+      async: true,
+      timeout: 1
+    }));
+  }
+  return [
+    { eventName: "SessionStart", matcher: "*", async: false, timeout: 2 },
+    { eventName: "PreToolUse", matcher: "Bash", async: false, timeout: 2 },
+    { eventName: "PostToolUse", matcher: "*", async: false, timeout: 2 },
+    { eventName: "PostToolUseFailure", matcher: "*", async: false, timeout: 2 },
+    { eventName: "PostToolBatch", matcher: "*", async: false, timeout: 2 },
+    { eventName: "PreCompact", matcher: "*", async: true, timeout: 1 },
+    { eventName: "PostCompact", matcher: "*", async: true, timeout: 1 },
+    { eventName: "Stop", matcher: "*", async: false, timeout: 2 },
+    { eventName: "SessionEnd", matcher: "*", async: false, timeout: 2 }
+  ];
+}
+
+function hooksLabel(mode: InstallMode): string {
+  if (mode === "observe") {
+    return "observe-only telemetry hooks";
+  }
+  if (mode === "guard") {
+    return "guard hooks";
+  }
+  return "coach hooks";
 }
 
 function removeBbHooks(existingHooks: unknown, homeDir: string | undefined): Record<string, unknown> | undefined {

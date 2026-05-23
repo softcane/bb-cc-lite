@@ -102,7 +102,14 @@ export interface TranscriptSummary {
   latestCompactionTimestamp?: string;
 }
 
-export type HookEventKind = "tool_success" | "tool_failure" | "tool_batch" | "compaction" | "stop" | "session_end";
+export type HookEventKind =
+  | "tool_success"
+  | "tool_failure"
+  | "tool_batch"
+  | "compaction"
+  | "stop"
+  | "session_end"
+  | "feedback";
 
 export interface DerivedHookEvent {
   kind: HookEventKind;
@@ -114,6 +121,8 @@ export interface DerivedHookEvent {
   category?: "MCP";
   identityHash?: string;
   toolCount?: number;
+  feedbackAction?: "coach" | "guard";
+  cooldownKey?: string;
 }
 
 export interface StoredHookEvent extends DerivedHookEvent {

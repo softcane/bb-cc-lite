@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { clearAllBaselines, readBaseline, readBaselineForProject, summarizeBaseline, type PersonalBaseline } from "./baseline.js";
 import { buildBaseline } from "./baseline-builder.js";
 import { evaluateHistoricalReplay, formatHistoricalReplayMetrics } from "./historical-replay.js";
+import { clearLessonMemory } from "./memory-lessons.js";
 import { baselinePath, pricingCachePath } from "./paths.js";
 import { refreshPricing } from "./pricing.js";
 import {
@@ -230,9 +231,10 @@ export async function clearPersonalBaseline(
   options: { homeDir?: string; appHomePath?: string } = {}
 ): Promise<PersonalBaselineResult> {
   await clearAllBaselines(options);
+  await clearLessonMemory(options);
   return {
     ok: true,
-    message: "cleared learned baselines"
+    message: "cleared learned baselines and lesson memory"
   };
 }
 

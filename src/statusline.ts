@@ -13,6 +13,13 @@ import { parseTranscriptTail } from "./transcript.js";
 const EMPTY_HOOK_SUMMARY = {
   failedToolResults: 0,
   toolCalls: 0,
+  readToolCalls: 0,
+  successfulEditResults: 0,
+  validationChecks: 0,
+  validationSuccesses: 0,
+  validationRecovered: false,
+  hasUnvalidatedEdits: false,
+  unvalidatedEditToolSteps: undefined,
   compactionEvents: 0,
   postCompactionActivity: 0,
   repeatedFailures: [],

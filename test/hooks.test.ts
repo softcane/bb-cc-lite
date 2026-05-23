@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { mergeHookSummary, parseHookPayload } from "../src/hooks.js";
 import { hashValue } from "../src/paths.js";
 import { decide } from "../src/signals.js";
-import { hookSummary, recordHookEvent } from "../src/store.js";
+import { hookSummary, readStore, recordHookEvent } from "../src/store.js";
 import type { StatusLineInput, TranscriptSummary } from "../src/types.js";
 
 const privacySentinels = [
@@ -163,6 +163,37 @@ describe("optional Claude Code hooks", () => {
 
       await recordHookEvent(event, storePath);
 
+      expectNoPrivacySentinels(await readFile(storePath, "utf8"));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps concurrent hook writes from losing recent events", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-concurrent-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      const events = Array.from({ length: 20 }, (_value, index) => {
+        const event = parseHookPayload(
+          JSON.stringify({
+            session_id: "session-alpha",
+            hook_event_name: "PostToolUseFailure",
+            tool_name: "Bash",
+            tool_input: {
+              command: index % 2 === 0 ? "npm test" : "npm run lint"
+            }
+          })
+        );
+        if (!event) {
+          throw new Error("expected hook event");
+        }
+        return event;
+      });
+
+      await Promise.all(events.map((event) => recordHookEvent(event, storePath)));
+
+      const store = await readStore(storePath);
+      expect(store.hookEvents).toHaveLength(20);
       expectNoPrivacySentinels(await readFile(storePath, "utf8"));
     } finally {
       await rm(tempDir, { recursive: true, force: true });
@@ -383,7 +414,7 @@ describe("optional Claude Code hooks", () => {
       const decision = decide(input({ sessionId, contextPercent: 42 }), mergeHookSummary(transcript(), summary));
       expect(decision).toMatchObject({
         state: "Healthy",
-        reasonCode: "healthy"
+        reasonCode: "validation_recovered"
       });
     } finally {
       await rm(tempDir, { recursive: true, force: true });

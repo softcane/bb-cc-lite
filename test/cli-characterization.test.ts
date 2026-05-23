@@ -6,6 +6,7 @@ import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { baselineRefreshLockPath } from "../src/baseline-refresh.js";
+import { lessonMemoryPath } from "../src/memory-lessons.js";
 import { projectBaselinePath, projectKeyFromPath } from "../src/paths.js";
 import { createTempWorkspace, pathExists, removeTempWorkspace, type TempWorkspace, writeJson } from "./helpers/temp.js";
 
@@ -64,12 +65,95 @@ describe("CLI behavior characterization", () => {
       const result = await runCli(["install", "--project", workspace.projectDir, "--home", workspace.homeDir, "--no-learn"], {
         env: cliEnv(workspace)
       });
+      const settingsPath = join(workspace.projectDir, ".claude", "settings.local.json");
+      const settings = JSON.parse(await readFile(settingsPath, "utf8")) as {
+        hooks: Record<string, Array<{ hooks: Array<{ args: string[] }> }>>;
+      };
+      const launcher = await readFile(join(workspace.appHome, "bin", "statusline"), "utf8");
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain("Installed bb-cc-lite statusLine");
       expect(result.stdout).toContain("Personal baseline skipped (--no-learn).");
+      expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("--bb-cc-lite-learn");
+      expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("0");
+      expect(launcher).toContain("BB_CC_LITE_AUTO_LEARN=0");
       await expect(pathExists(join(workspace.appHome, "baseline.json"))).resolves.toBe(false);
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("install defaults to coach mode hooks", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const result = await runCli(["install", "--project", workspace.projectDir, "--home", workspace.homeDir], {
+        env: cliEnv(workspace)
+      });
+      const settings = JSON.parse(await readFile(join(workspace.projectDir, ".claude", "settings.local.json"), "utf8")) as {
+        hooks: Record<string, Array<{ matcher: string; hooks: Array<{ args: string[]; async?: boolean }> }>>;
+      };
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("Installed bb-cc-lite statusLine and coach hooks");
+      expect(Object.keys(settings.hooks).sort()).toEqual([
+        "PostCompact",
+        "PostToolBatch",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "PreCompact",
+        "PreToolUse",
+        "SessionEnd",
+        "SessionStart",
+        "Stop"
+      ]);
+      expect(settings.hooks.PreToolUse[0].matcher).toBe("Bash");
+      expect(settings.hooks.PostToolUseFailure[0].hooks[0].args).toContain("coach");
+      expect(settings.hooks.PostToolUseFailure[0].hooks[0].async).toBeUndefined();
+      expect(settings.hooks.UserPromptSubmit).toBeUndefined();
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("install --observe-only keeps Claude-facing feedback hooks out", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const result = await runCli(["install", "--observe-only", "--project", workspace.projectDir, "--home", workspace.homeDir], {
+        env: cliEnv(workspace)
+      });
+      const settings = JSON.parse(await readFile(join(workspace.projectDir, ".claude", "settings.local.json"), "utf8")) as {
+        hooks: Record<string, Array<{ hooks: Array<{ args: string[]; async?: boolean }> }>>;
+      };
+
+      expect(result.exitCode).toBe(0);
+      expect(settings.hooks.SessionStart).toBeUndefined();
+      expect(settings.hooks.PreToolUse).toBeUndefined();
+      expect(settings.hooks.PostToolUseFailure[0].hooks[0].args).toContain("observe");
+      expect(settings.hooks.PostToolUseFailure[0].hooks[0].async).toBe(true);
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("install --guard is explicit and cannot be combined with observe-only", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const guard = await runCli(["install", "--guard", "--project", workspace.projectDir, "--home", workspace.homeDir], {
+        env: cliEnv(workspace)
+      });
+      const settings = JSON.parse(await readFile(join(workspace.projectDir, ".claude", "settings.local.json"), "utf8")) as {
+        hooks: Record<string, Array<{ hooks: Array<{ args: string[] }> }>>;
+      };
+      const invalid = await runCli(
+        ["install", "--guard", "--observe-only", "--project", workspace.projectDir, "--home", workspace.homeDir, "--replace"],
+        { env: cliEnv(workspace) }
+      );
+
+      expect(guard.exitCode).toBe(0);
+      expect(settings.hooks.PreToolUse[0].hooks[0].args).toContain("guard");
+      expect(invalid.exitCode).toBe(1);
+      expect(invalid.stderr).toContain("--guard cannot be combined with --observe-only");
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -201,8 +285,10 @@ describe("CLI behavior characterization", () => {
       const baselinePath = join(workspace.appHome, "baseline.json");
       const projectKey = projectKeyFromPath(workspace.projectDir);
       const projectBaselineFile = projectBaselinePath({ appHomePath: workspace.appHome, projectKey });
+      const lessonFile = lessonMemoryPath({ appHomePath: workspace.appHome, projectKey });
       await writeFile(baselinePath, '{"schema":"bb-cc-lite.baseline.v1"}\n', "utf8");
       await writeJson(projectBaselineFile, { schema: "bb-cc-lite.baseline.v1" });
+      await writeJson(lessonFile, { schema: "bb-cc-lite.lesson-memory.v1" });
 
       const result = await runCli(["unlearn", "--home", workspace.homeDir], {
         env: cliEnv(workspace)
@@ -210,9 +296,10 @@ describe("CLI behavior characterization", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
-      expect(result.stdout.trim()).toBe("Cleared learned baselines.");
+      expect(result.stdout.trim()).toBe("Cleared learned baselines and lesson memory.");
       await expect(pathExists(baselinePath)).resolves.toBe(false);
       await expect(pathExists(projectBaselineFile)).resolves.toBe(false);
+      await expect(pathExists(lessonFile)).resolves.toBe(false);
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -523,7 +610,7 @@ describe("CLI behavior characterization", () => {
       });
       expect(new Date(refreshed.updatedAt).getTime()).toBeGreaterThan(new Date(staleBaseline.updatedAt).getTime());
       expectNoPrivacySentinels(JSON.stringify(refreshed), statusline.stdout);
-      await expect(pathExists(baselineRefreshLockPath({ appHomePath: workspace.appHome }))).resolves.toBe(false);
+      await waitForPathAbsent(baselineRefreshLockPath({ appHomePath: workspace.appHome }));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -564,7 +651,7 @@ describe("CLI behavior characterization", () => {
       await wait(200);
       const secondBaseline = JSON.parse(await readFile(enabledBaselinePath, "utf8")) as { updatedAt: string };
       expect(secondBaseline.updatedAt).toBe(firstBaseline.updatedAt);
-      await expect(pathExists(baselineRefreshLockPath({ appHomePath: enabledWorkspace.appHome }))).resolves.toBe(false);
+      await waitForPathAbsent(baselineRefreshLockPath({ appHomePath: enabledWorkspace.appHome }));
     } finally {
       await removeTempWorkspace(enabledWorkspace);
     }
@@ -589,7 +676,7 @@ describe("CLI behavior characterization", () => {
       expect(disabled.stdout.split("\n").filter(Boolean)).toHaveLength(1);
       await wait(200);
       await expect(pathExists(join(disabledWorkspace.appHome, "baseline.json"))).resolves.toBe(false);
-      await expect(pathExists(baselineRefreshLockPath({ appHomePath: disabledWorkspace.appHome }))).resolves.toBe(false);
+      await waitForPathAbsent(baselineRefreshLockPath({ appHomePath: disabledWorkspace.appHome }));
     } finally {
       await removeTempWorkspace(disabledWorkspace);
     }
@@ -1718,6 +1805,17 @@ async function waitForBaselineUpdated(
     await wait(50);
   }
   throw new Error(`Timed out waiting for refreshed baseline${lastError instanceof Error ? `: ${lastError.message}` : ""}`);
+}
+
+async function waitForPathAbsent(path: string): Promise<void> {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (!(await pathExists(path))) {
+      return;
+    }
+    await wait(50);
+  }
+  throw new Error(`Timed out waiting for ${path} to be removed`);
 }
 
 async function wait(ms: number): Promise<void> {
