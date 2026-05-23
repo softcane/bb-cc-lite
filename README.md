@@ -8,7 +8,7 @@ Claude Code can look busy while it is doing the wrong thing: retrying the same b
 
 > Should I let this Claude Code session keep going?
 
-By default, it also gives Claude a short safe nudge when the pattern is clear. If the same test keeps failing without a fix, Claude can be told to inspect the first failure before retrying again. If you turn on guard mode, bb can deny the obvious repeated retry before it runs.
+By default, it also gives Claude a short nudge when the pattern is clear. If the same test keeps failing without a fix, Claude can be told to inspect the first failure before retrying again. If you turn on guard mode, bb can deny the obvious repeated retry before it runs.
 
 ![bb-cc-lite statusline examples](./assets/statusline-demo.gif)
 
@@ -41,7 +41,7 @@ Prefer a global install?
 
 ```bash
 npm install -g bb-cc-lite
-bb-cc-lite install --scope local --hooks
+bb-cc-lite install --scope local
 ```
 
 To replace an existing status line:
