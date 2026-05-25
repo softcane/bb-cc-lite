@@ -8,9 +8,10 @@ export interface DecisionPresentation {
   evidence: DecisionEvidence[];
   impact: string;
   action: string;
+  feedbackNote?: string;
 }
 
-export function toDecisionPresentation(decision: Decision): DecisionPresentation {
+export function toDecisionPresentation(decision: Decision, feedbackNote?: string): DecisionPresentation {
   return {
     state: decision.state,
     diagnosis: decision.diagnosis,
@@ -18,6 +19,7 @@ export function toDecisionPresentation(decision: Decision): DecisionPresentation
     primaryEvidence: decision.primaryEvidence,
     evidence: decision.evidence,
     impact: decision.impact,
-    action: decision.action
+    action: decision.action,
+    feedbackNote
   };
 }

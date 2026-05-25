@@ -825,6 +825,71 @@ describe("CLI behavior characterization", () => {
     }
   });
 
+  it("shows the recent feedback loop in why after hook feedback is resolved", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const env = cliEnv(workspace);
+      const sessionId = `session-feedback-${privacySentinels[6]}`;
+      const editHook = await runCli(["hook", "--bb-cc-lite-hook", "PostToolUse"], {
+        env,
+        input: hookInput({
+          session_id: sessionId,
+          hook_event_name: "PostToolUse",
+          tool_name: "Edit",
+          tool_input: {
+            file_path: privacySentinels[4],
+            old_string: "before",
+            new_string: privacySentinels[3]
+          }
+        })
+      });
+      const validationHook = await runCli(["hook", "--bb-cc-lite-hook", "PostToolUse"], {
+        env,
+        input: hookInput({
+          session_id: sessionId,
+          hook_event_name: "PostToolUse",
+          tool_name: "Bash",
+          tool_input: {
+            command: `npm test -- ${privacySentinels[5]}`
+          }
+        })
+      });
+
+      const statusline = await runCli(["statusline"], {
+        env,
+        input: statusInput({
+          session_id: sessionId,
+          terminal_width: 180
+        })
+      });
+      const why = await runCli(["why", "--session", sessionId], { env });
+      const whyJson = await runCli(["why", "--session", sessionId, "--json"], { env });
+      const parsedWhy = JSON.parse(whyJson.stdout) as { feedbackOutcomes?: Array<{ outcome?: string; reasonCode?: string }> };
+
+      expect(editHook.exitCode).toBe(0);
+      expect(editHook.stdout).toContain("edits have not been validated yet");
+      expect(validationHook.exitCode).toBe(0);
+      expect(statusline.exitCode).toBe(0);
+      expect(statusline.stdout).toContain("bb: Healthy");
+      expect(statusline.stdout).toContain("validation resolved");
+      expect(why.stdout).toContain("Recent bb loop:");
+      expect(why.stdout).toContain("Coach feedback: edits needed validation.");
+      expect(why.stdout).toContain("Claude ran tests.");
+      expect(why.stdout).toContain("Tests passed.");
+      expect(why.stdout).toContain("Outcome: resolved.");
+      expect(parsedWhy.feedbackOutcomes).toEqual([
+        expect.objectContaining({
+          reasonCode: "edit_without_validation",
+          outcome: "resolved"
+        })
+      ]);
+      expect(whyJson.stdout).not.toContain("\u001b[");
+      expectNoPrivacySentinels(editHook.stdout, validationHook.stdout, statusline.stdout, why.stdout, whyJson.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
   it("uses edit-check history through the real statusline path without internal wording", async () => {
     const workspace = await createTempWorkspace();
     try {
@@ -1233,6 +1298,22 @@ function statusInput(overrides: Record<string, unknown>): string {
     environment: {
       ANTHROPIC_API_KEY: privacySentinels[2]
     },
+    ...overrides
+  })}\n`;
+}
+
+function hookInput(overrides: Record<string, unknown>): string {
+  return `${JSON.stringify({
+    session_id: "session-default",
+    hook_event_name: "PostToolUse",
+    prompt: privacySentinels[0],
+    tool_response: {
+      stdout: privacySentinels[1],
+      content: privacySentinels[3]
+    },
+    cwd: privacySentinels[4],
+    transcript_path: join(privacySentinels[4], "transcript.jsonl"),
+    mcp_server_name: privacySentinels[7],
     ...overrides
   })}\n`;
 }

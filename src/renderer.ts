@@ -25,16 +25,17 @@ function defaultCandidates(decision: DecisionPresentation): string[][] {
   const evidence = decision.evidence.map((item) => item.label);
   const headline = decision.diagnosis || decision.primaryEvidence;
   const badge = decision.baselineNote || "";
+  const feedbackNote = decision.feedbackNote || "";
   if (decision.diagnosis) {
     return [
-      [`bb: ${decision.state}`, headline, badge, decision.action],
-      [`bb: ${decision.state}`, headline, decision.action],
+      [`bb: ${decision.state}`, headline, badge, feedbackNote, decision.action],
+      [`bb: ${decision.state}`, headline, feedbackNote, decision.action],
       [`bb: ${decision.state}`, headline]
     ];
   }
   return [
-    [`bb: ${decision.state}`, headline, badge, ...evidence.filter((item) => item !== headline), decision.action],
-    [`bb: ${decision.state}`, headline, decision.action],
+    [`bb: ${decision.state}`, headline, badge, feedbackNote, ...evidence.filter((item) => item !== headline), decision.action],
+    [`bb: ${decision.state}`, headline, feedbackNote, decision.action],
     [`bb: ${decision.state}`, headline]
   ];
 }
@@ -42,8 +43,9 @@ function defaultCandidates(decision: DecisionPresentation): string[][] {
 function stopCandidates(decision: DecisionPresentation): string[][] {
   const costEvidence = decision.evidence.filter((item) => item.detail).map((item) => item.label);
   const headline = decision.diagnosis || decision.primaryEvidence;
+  const feedbackNote = decision.feedbackNote ? `; ${decision.feedbackNote}` : "";
   const fullWhy =
-    decision.impact && decision.impact !== headline ? `why: ${headline}; ${decision.impact}` : `why: ${headline}`;
+    decision.impact && decision.impact !== headline ? `why: ${headline}; ${decision.impact}${feedbackNote}` : `why: ${headline}${feedbackNote}`;
   const shortWhy = `why: ${headline}`;
   const action = `do: ${decision.action}`;
   return [

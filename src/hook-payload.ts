@@ -1,4 +1,5 @@
 import { hashValue } from "./paths.js";
+import type { ProjectConfig } from "./project-config.js";
 import { asRecord, numberField, stringField } from "./status-input.js";
 import { classifyToolIdentity } from "./tool-metadata.js";
 import type { DerivedHookEvent } from "./types.js";
@@ -13,7 +14,11 @@ export const SAFE_HOOK_EVENTS = [
   "SessionEnd"
 ] as const;
 
-export function parseHookPayload(raw: string, fallbackEventName?: string): DerivedHookEvent | undefined {
+export function parseHookPayload(
+  raw: string,
+  fallbackEventName?: string,
+  options: { projectConfig?: ProjectConfig } = {}
+): DerivedHookEvent | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw.trim() || "{}");
@@ -34,7 +39,9 @@ export function parseHookPayload(raw: string, fallbackEventName?: string): Deriv
   };
 
   if (hookEventName === "PostToolUseFailure") {
-    const identity = classifyToolIdentity(stringField(root.tool_name) || stringField(root.toolName), root.tool_input ?? root.toolInput);
+    const identity = classifyToolIdentity(stringField(root.tool_name) || stringField(root.toolName), root.tool_input ?? root.toolInput, {
+      projectConfig: options.projectConfig
+    });
     return {
       ...base,
       kind: "tool_failure",
@@ -46,7 +53,9 @@ export function parseHookPayload(raw: string, fallbackEventName?: string): Deriv
   }
 
   if (hookEventName === "PostToolUse") {
-    const identity = classifyToolIdentity(stringField(root.tool_name) || stringField(root.toolName), root.tool_input ?? root.toolInput);
+    const identity = classifyToolIdentity(stringField(root.tool_name) || stringField(root.toolName), root.tool_input ?? root.toolInput, {
+      projectConfig: options.projectConfig
+    });
     return {
       ...base,
       kind: "tool_success",

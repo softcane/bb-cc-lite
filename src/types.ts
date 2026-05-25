@@ -129,6 +129,44 @@ export interface StoredHookEvent extends DerivedHookEvent {
   id: string;
 }
 
+export type FeedbackExpectedAction =
+  | "run_validation"
+  | "intervene_before_retry"
+  | "summarize_or_narrow"
+  | "validate_or_summarize";
+
+export type FeedbackOutcomeState = "pending" | "followed" | "ignored" | "resolved" | "superseded";
+
+export type FeedbackOutcomeSafeCategory =
+  | "tests"
+  | "lint"
+  | "typecheck"
+  | "build"
+  | "tool"
+  | "mcp"
+  | "edit"
+  | "budget"
+  | "activity"
+  | "finish";
+
+export interface FeedbackOutcomeRecord {
+  kind: "feedback_outcome";
+  sessionKey?: string;
+  feedbackAction: "coach" | "guard";
+  cooldownKey: string;
+  expectedAction: FeedbackExpectedAction;
+  outcome: FeedbackOutcomeState;
+  timestamp: string;
+  safeCategory?: FeedbackOutcomeSafeCategory;
+  reasonCode?: string;
+  stateBefore?: DecisionState;
+  stateAfter?: DecisionState;
+}
+
+export interface StoredFeedbackOutcome extends FeedbackOutcomeRecord {
+  id: string;
+}
+
 export interface DecisionEvidence {
   label: string;
   detail?: string;
@@ -269,4 +307,5 @@ export interface EventStoreData {
   updatedAt: string;
   decisions: StoredDecision[];
   hookEvents: StoredHookEvent[];
+  feedbackOutcomes: StoredFeedbackOutcome[];
 }

@@ -54,7 +54,7 @@ export async function hookSummary(
     if (event.kind === "tool_failure") {
       failedToolResults += 1;
       toolCalls += 1;
-      if (isReadSearchTool(event.toolName || "tool")) {
+      if (isReadActivity(event)) {
         readToolCalls += 1;
       }
       if (isValidationPurpose(event.purpose)) {
@@ -71,7 +71,7 @@ export async function hookSummary(
     } else if (event.kind === "tool_success") {
       toolCalls += 1;
       const toolName = event.toolName || "tool";
-      if (isReadSearchTool(toolName)) {
+      if (isReadActivity(event)) {
         readToolCalls += 1;
       }
       if (isEditTool(toolName)) {
@@ -122,6 +122,10 @@ export async function hookSummary(
 
 function isValidationPurpose(value: string | undefined): boolean {
   return value === "tests" || value === "lint" || value === "typecheck" || value === "build";
+}
+
+function isReadActivity(event: { toolName?: string; purpose?: string }): boolean {
+  return event.purpose === "read" || isReadSearchTool(event.toolName || "tool");
 }
 
 function failureKey(event: { toolName?: string; purpose?: string; category?: "MCP"; identityHash?: string }): string {

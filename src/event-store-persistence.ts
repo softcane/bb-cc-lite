@@ -1,10 +1,22 @@
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { eventStorePath } from "./paths.js";
-import type { DecisionEvidence, DecisionState, EventStoreData, HookEventKind, StoredDecision, StoredHookEvent } from "./types.js";
+import type {
+  DecisionEvidence,
+  DecisionState,
+  EventStoreData,
+  FeedbackExpectedAction,
+  FeedbackOutcomeSafeCategory,
+  FeedbackOutcomeState,
+  HookEventKind,
+  StoredDecision,
+  StoredFeedbackOutcome,
+  StoredHookEvent
+} from "./types.js";
 
 export const STORE_LIMIT = 100;
 export const HOOK_STORE_LIMIT = 500;
+export const FEEDBACK_OUTCOME_STORE_LIMIT = 500;
 
 export async function readStore(storePath = eventStorePath()): Promise<EventStoreData> {
   try {
@@ -17,10 +29,15 @@ export async function readStore(storePath = eventStorePath()): Promise<EventStor
         : [],
       hookEvents: Array.isArray(parsed.hookEvents)
         ? parsed.hookEvents.flatMap((event) => sanitizeStoredHookEvent(event) ?? []).slice(-HOOK_STORE_LIMIT)
+        : [],
+      feedbackOutcomes: Array.isArray(parsed.feedbackOutcomes)
+        ? parsed.feedbackOutcomes
+            .flatMap((outcome) => sanitizeStoredFeedbackOutcome(outcome) ?? [])
+            .slice(-FEEDBACK_OUTCOME_STORE_LIMIT)
         : []
     };
   } catch {
-    return { version: 1, updatedAt: new Date(0).toISOString(), decisions: [], hookEvents: [] };
+    return { version: 1, updatedAt: new Date(0).toISOString(), decisions: [], hookEvents: [], feedbackOutcomes: [] };
   }
 }
 
@@ -106,6 +123,37 @@ function sanitizeStoredHookEvent(value: unknown): StoredHookEvent | undefined {
   };
 }
 
+function sanitizeStoredFeedbackOutcome(value: unknown): StoredFeedbackOutcome | undefined {
+  const record = asRecord(value);
+  if (!record || containsForbiddenRawDataKey(record) || containsRawMcpName(record)) {
+    return undefined;
+  }
+  const id = stringField(record.id);
+  const kind = record.kind === "feedback_outcome" ? "feedback_outcome" : undefined;
+  const feedbackActionValue = feedbackAction(record.feedbackAction);
+  const cooldownKey = stringField(record.cooldownKey);
+  const expectedAction = feedbackExpectedAction(record.expectedAction);
+  const outcome = feedbackOutcome(record.outcome);
+  const timestamp = stringField(record.timestamp);
+  if (!id || !kind || !feedbackActionValue || !cooldownKey || !expectedAction || !outcome || !timestamp) {
+    return undefined;
+  }
+  return {
+    id,
+    kind,
+    sessionKey: stringField(record.sessionKey),
+    feedbackAction: feedbackActionValue,
+    cooldownKey,
+    expectedAction,
+    outcome,
+    timestamp,
+    safeCategory: feedbackSafeCategory(record.safeCategory),
+    reasonCode: stringField(record.reasonCode),
+    stateBefore: decisionState(record.stateBefore),
+    stateAfter: decisionState(record.stateAfter)
+  };
+}
+
 function sanitizeEvidence(value: unknown): DecisionEvidence[] {
   if (!Array.isArray(value)) {
     return [];
@@ -163,6 +211,36 @@ function hookCategory(value: unknown): StoredHookEvent["category"] {
 
 function feedbackAction(value: unknown): StoredHookEvent["feedbackAction"] {
   return value === "coach" || value === "guard" ? value : undefined;
+}
+
+function feedbackExpectedAction(value: unknown): FeedbackExpectedAction | undefined {
+  return value === "run_validation" ||
+    value === "intervene_before_retry" ||
+    value === "summarize_or_narrow" ||
+    value === "validate_or_summarize"
+    ? value
+    : undefined;
+}
+
+function feedbackOutcome(value: unknown): FeedbackOutcomeState | undefined {
+  return value === "pending" || value === "followed" || value === "ignored" || value === "resolved" || value === "superseded"
+    ? value
+    : undefined;
+}
+
+function feedbackSafeCategory(value: unknown): FeedbackOutcomeSafeCategory | undefined {
+  return value === "tests" ||
+    value === "lint" ||
+    value === "typecheck" ||
+    value === "build" ||
+    value === "tool" ||
+    value === "mcp" ||
+    value === "edit" ||
+    value === "budget" ||
+    value === "activity" ||
+    value === "finish"
+    ? value
+    : undefined;
 }
 
 async function acquireStoreLock(storePath: string): Promise<() => Promise<void>> {

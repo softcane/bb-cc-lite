@@ -10,7 +10,7 @@ import { handleHook } from "./hook-control.js";
 import { installStatusLine, uninstallStatusLine, type InstallMode, type SettingsScope } from "./settings.js";
 import { readStdin } from "./status-input.js";
 import { createStatusLine } from "./statusline.js";
-import { formatWhy, getWhyDecision } from "./why.js";
+import { formatWhy, formatWhyJson, getWhyContext, shouldColorWhy } from "./why.js";
 
 interface ParsedArgs {
   command: string;
@@ -154,16 +154,17 @@ async function commandHook(args: ParsedArgs): Promise<void> {
 }
 
 async function commandWhy(args: ParsedArgs): Promise<void> {
-  const decision = await getWhyDecision({ sessionId: stringFlag(args, "session") });
+  const context = await getWhyContext({ sessionId: stringFlag(args, "session") });
+  const decision = context.decision;
   if (args.flags.json) {
-    console.log(JSON.stringify(decision || null, null, 2));
+    console.log(JSON.stringify(decision ? formatWhyJson(decision, context.feedbackOutcomes) : null, null, 2));
     return;
   }
   if (!decision) {
     console.log("No bb-cc-lite decision has been recorded yet. Run the statusline command from Claude Code first.");
     return;
   }
-  console.log(formatWhy(decision));
+  console.log(formatWhy(decision, { feedbackOutcomes: context.feedbackOutcomes, color: shouldColorWhy() }));
 }
 
 async function commandDoctor(args: ParsedArgs): Promise<void> {

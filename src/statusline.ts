@@ -1,14 +1,17 @@
 import { mergeHookSummary } from "./hook-summary.js";
 import { readBaselineForProject } from "./baseline.js";
 import { maybeTriggerBaselineRefresh, type MaybeTriggerBaselineRefreshOptions } from "./baseline-refresh.js";
+import { statuslineFeedbackNote } from "./feedback-outcomes.js";
 import { toDecisionPresentation } from "./decision-presentation.js";
 import { estimateCostUsd, loadPricing } from "./pricing.js";
+import { loadProjectConfig } from "./project-config.js";
 import { renderStatusLine } from "./renderer.js";
 import { sessionKeyFromId } from "./session.js";
 import { decide } from "./signals.js";
 import { mergeUsage, parseStatusLineInput } from "./status-input.js";
-import { hookSummary, latestDecision, recordDecision } from "./store.js";
+import { hookSummary, latestDecision, recentFeedbackOutcomes, recordDecision } from "./store.js";
 import { parseTranscriptTail } from "./transcript.js";
+import type { StoredFeedbackOutcome } from "./types.js";
 
 const EMPTY_HOOK_SUMMARY = {
   failedToolResults: 0,
@@ -37,8 +40,9 @@ export async function createStatusLine(
 ): Promise<string> {
   const input = parseStatusLineInput(rawInput);
   const sessionKey = sessionKeyFromId(input.sessionId);
+  const projectConfig = await loadProjectConfig(input.cwd);
   const transcript = mergeHookSummary(
-    await parseTranscriptTail(input.transcriptPath),
+    await parseTranscriptTail(input.transcriptPath, { projectConfig }),
     sessionKey ? await hookSummary(sessionKey) : EMPTY_HOOK_SUMMARY
   );
   const usage = mergeUsage(input.usage, transcript.usage);
@@ -57,5 +61,10 @@ export async function createStatusLine(
   const decision = decide(input, transcript, { previous, baseline });
   await recordDecision(decision);
   await maybeTriggerBaselineRefresh({ ...options.baselineRefresh, baseline, projectDir: input.cwd, transcriptPath: input.transcriptPath });
-  return renderStatusLine(toDecisionPresentation(decision), input.terminalWidth || terminalColumns);
+  const feedbackNote = statuslineFeedbackNote(latestResolvedFeedbackOutcome(sessionKey ? await recentFeedbackOutcomes(sessionKey) : []));
+  return renderStatusLine(toDecisionPresentation(decision, feedbackNote), input.terminalWidth || terminalColumns);
+}
+
+function latestResolvedFeedbackOutcome(outcomes: StoredFeedbackOutcome[]): StoredFeedbackOutcome | undefined {
+  return outcomes.filter((outcome) => outcome.outcome !== "pending").at(-1);
 }

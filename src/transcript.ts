@@ -2,9 +2,12 @@ import { asRecord, extractUsage, mergeUsage, stringField } from "./status-input.
 import { extractFailureEpisodesFromTranscriptLines, summarizeBlindRetry } from "./failure-episodes.js";
 import { classifyResultPurpose, classifyToolIdentity } from "./tool-metadata.js";
 import { readTranscriptTail, type ReadTranscriptTailOptions } from "./transcript-reader.js";
+import type { ProjectConfig } from "./project-config.js";
 import type { ToolFailureSummary, TokenUsage, TranscriptSummary } from "./types.js";
 
-export type ParseTranscriptOptions = ReadTranscriptTailOptions;
+export type ParseTranscriptOptions = ReadTranscriptTailOptions & {
+  projectConfig?: ProjectConfig;
+};
 
 interface ToolMeta {
   name: string;
@@ -23,11 +26,15 @@ export async function parseTranscriptTail(
   if (!tail.pathReadable) {
     return emptySummary(false);
   }
-  return parseTranscriptLines(tail.lines, tail.bytesRead);
+  return parseTranscriptLines(tail.lines, tail.bytesRead, { projectConfig: options.projectConfig });
 }
 
-export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLength(lines.join("\n"))): TranscriptSummary {
-  const failureEpisodes = extractFailureEpisodesFromTranscriptLines(lines);
+export function parseTranscriptLines(
+  lines: string[],
+  bytesRead = Buffer.byteLength(lines.join("\n")),
+  options: { projectConfig?: ProjectConfig } = {}
+): TranscriptSummary {
+  const failureEpisodes = extractFailureEpisodesFromTranscriptLines(lines, { projectConfig: options.projectConfig });
   const blindRetry = summarizeBlindRetry(failureEpisodes);
   const toolById = new Map<string, ToolMeta>();
   const failureCounts = new Map<string, ToolFailureSummary>();
@@ -90,7 +97,7 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
 
     for (const toolUse of toolUses) {
       toolCalls += 1;
-      const identity = classifyToolIdentity(toolUse.name, toolUse.input, { basenameOnly: true });
+      const identity = classifyToolIdentity(toolUse.name, toolUse.input, { basenameOnly: true, projectConfig: options.projectConfig });
       if (identity.isReadSearch) {
         readToolCalls += 1;
       }
@@ -114,7 +121,7 @@ export function parseTranscriptLines(lines: string[], bytesRead = Buffer.byteLen
       const meta =
         (toolResult.toolUseId ? toolById.get(toolResult.toolUseId) : undefined) ||
         (toolResult.toolName
-          ? metaFromToolName(toolResult.toolName)
+          ? metaFromToolName(toolResult.toolName, options.projectConfig)
           : undefined) ||
         { name: "tool", purpose: undefined, isEdit: false, isReadSearch: false };
       const purpose = meta.name === "Bash" ? toolResult.purpose || meta.purpose : meta.purpose;
@@ -217,8 +224,8 @@ function isValidationPurpose(purpose: string | undefined): boolean {
   return purpose === "tests" || purpose === "lint" || purpose === "typecheck" || purpose === "build";
 }
 
-function metaFromToolName(toolName: string): ToolMeta {
-  const identity = classifyToolIdentity(toolName, undefined, { basenameOnly: true });
+function metaFromToolName(toolName: string, projectConfig: ProjectConfig | undefined): ToolMeta {
+  const identity = classifyToolIdentity(toolName, undefined, { basenameOnly: true, projectConfig });
   return {
     name: identity.displayName,
     purpose: identity.purpose,

@@ -324,6 +324,45 @@ describe("parseTranscriptLines", () => {
     expect(summary.repeatedFailures).toEqual([]);
   });
 
+  it("treats read-only shell exploration as read activity, not missing validation", () => {
+    const summary = parseTranscriptLines(
+      Array.from({ length: 9 }, (_value, index) => index + 1).flatMap((index) => [
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: `read-only-bash-${index}`,
+                name: "Bash",
+                input: {
+                  command: index % 2 === 0 ? "git status --short" : "pwd"
+                }
+              }
+            ]
+          }
+        }),
+        JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: `read-only-bash-${index}`, is_error: false, content: "safe output" }]
+          }
+        })
+      ])
+    );
+    const decision = decide(input({ contextPercent: 42 }), summary);
+
+    expect(summary.toolCalls).toBe(9);
+    expect(summary.readToolCalls).toBe(9);
+    expect(decision).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy"
+    });
+    expect(renderStatusLine(decision, 140)).not.toContain("no check or recovery seen");
+  });
+
   it("keeps compaction as an open boundary only until later activity appears", () => {
     const summary = parseTranscriptLines([
       JSON.stringify({

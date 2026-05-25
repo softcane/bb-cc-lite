@@ -1,11 +1,20 @@
+import { expectedActionForFeedback, refreshFeedbackOutcomesForSession } from "./feedback-outcomes.js";
 import { decideFeedback, type FeedbackMode } from "./feedback-policy.js";
 import { responseForFeedback, type HookResponse } from "./hook-response.js";
 import { parseHookPayload } from "./hook-payload.js";
 import { lessonContextForProject, recordLessonFromSummary } from "./memory-lessons.js";
 import { hashValue, projectKeyFromPath } from "./paths.js";
+import { loadProjectConfig, type ProjectConfig } from "./project-config.js";
 import { asRecord, stringField } from "./status-input.js";
 import { classifyToolIdentity } from "./tool-metadata.js";
-import { hookSummary, latestDecision, recentFeedbackEvents, recordFeedbackEvent, recordHookEvent } from "./store.js";
+import {
+  hookSummary,
+  latestDecision,
+  recentFeedbackEvents,
+  recordFeedbackEvent,
+  recordFeedbackOutcome,
+  recordHookEvent
+} from "./store.js";
 import type { TranscriptSummary } from "./types.js";
 
 export interface HandleHookOptions {
@@ -49,13 +58,17 @@ export async function handleHook(raw: string, options: HandleHookOptions = {}): 
   const sessionKey = hashValue(stringField(root.session_id) || stringField(root.sessionId));
   const mode = options.mode || "coach";
   const learn = options.learn !== false && process.env.BB_CC_LITE_LESSON_MEMORY !== "0";
-  const event = parseHookPayload(raw, hookEventName);
+  const projectConfig = await loadProjectConfig(cwdFromHook(root));
+  const event = parseHookPayload(raw, hookEventName, { projectConfig });
 
   if (event && hookEventName !== "PreToolUse" && hookEventName !== "SessionStart") {
     await recordHookEvent(event, options.storePath);
   }
 
   const summary = sessionKey ? await summaryForSession(sessionKey, options.storePath) : EMPTY_TRANSCRIPT;
+  await refreshFeedbackOutcomesForSession(sessionKey, options.storePath, {
+    hasUnvalidatedEdits: summary.hasUnvalidatedEdits
+  });
 
   if (hookEventName === "SessionEnd") {
     if (learn) {
@@ -97,18 +110,33 @@ export async function handleHook(raw: string, options: HandleHookOptions = {}): 
     hookEventName,
     decision,
     summary,
-    currentTool: currentTool(root),
+    currentTool: currentTool(root, projectConfig),
     recentFeedback,
     stopHookActive: root.stop_hook_active === true || root.stopHookActive === true
   });
 
   if (feedback.kind !== "none") {
-    await recordFeedbackEvent(
+    const storedFeedback = await recordFeedbackEvent(
       {
         sessionKey,
         hookEventName,
         feedbackAction: feedback.kind,
         cooldownKey: feedback.cooldownKey
+      },
+      options.storePath
+    );
+    await recordFeedbackOutcome(
+      {
+        kind: "feedback_outcome",
+        sessionKey,
+        feedbackAction: feedback.kind,
+        cooldownKey: feedback.cooldownKey,
+        expectedAction: expectedActionForFeedback(feedback.reasonCode),
+        outcome: "pending",
+        timestamp: storedFeedback.timestamp,
+        reasonCode: feedback.reasonCode,
+        safeCategory: feedback.safeCategory,
+        stateBefore: decision?.state
       },
       options.storePath
     );
@@ -125,8 +153,10 @@ async function summaryForSession(sessionKey: string, storePath: string | undefin
   };
 }
 
-function currentTool(root: Record<string, unknown>): { toolName: string; purpose?: string } | undefined {
-  const identity = classifyToolIdentity(stringField(root.tool_name) || stringField(root.toolName), root.tool_input ?? root.toolInput);
+function currentTool(root: Record<string, unknown>, projectConfig: ProjectConfig): { toolName: string; purpose?: string } | undefined {
+  const identity = classifyToolIdentity(stringField(root.tool_name) || stringField(root.toolName), root.tool_input ?? root.toolInput, {
+    projectConfig
+  });
   return {
     toolName: identity.displayName,
     purpose: identity.purpose
@@ -142,6 +172,10 @@ function parseRoot(raw: string): Record<string, unknown> | undefined {
 }
 
 function projectKeyFromHook(root: Record<string, unknown>): string | undefined {
-  const cwd = stringField(root.cwd) || stringField(asRecord(root.workspace)?.current_dir) || stringField(asRecord(root.workspace)?.project_dir);
+  const cwd = cwdFromHook(root);
   return cwd ? projectKeyFromPath(cwd) : undefined;
+}
+
+function cwdFromHook(root: Record<string, unknown>): string | undefined {
+  return stringField(root.cwd) || stringField(asRecord(root.workspace)?.current_dir) || stringField(asRecord(root.workspace)?.project_dir);
 }

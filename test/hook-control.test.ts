@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { handleHook } from "../src/hook-control.js";
 import { parseHookPayload } from "../src/hook-payload.js";
-import { recordHookEvent } from "../src/store.js";
+import { recentFeedbackOutcomes, recordHookEvent } from "../src/store.js";
 
 const privacySentinels = [
   "BB_CC_LITE_RAW_PROMPT_SENTINEL",
@@ -43,6 +43,89 @@ describe("hook control", () => {
         }
       });
       expectNoPrivacySentinels(second, await readFile(storePath, "utf8"));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("creates a pending feedback outcome when coach feedback is emitted", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-outcome-pending-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+
+      await handleHook(successfulEditHook("session-alpha"), {
+        fallbackEventName: "PostToolUse",
+        mode: "coach",
+        learn: false,
+        storePath
+      });
+
+      const outcomes = await recentFeedbackOutcomes(undefined, storePath);
+      expect(outcomes).toHaveLength(1);
+      expect(outcomes[0]).toMatchObject({
+        kind: "feedback_outcome",
+        feedbackAction: "coach",
+        reasonCode: "edit_without_validation",
+        safeCategory: "edit",
+        expectedAction: "run_validation",
+        outcome: "pending"
+      });
+      expectNoPrivacySentinels(await readFile(storePath, "utf8"));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("marks edit_without_validation feedback resolved after a recognized validation success", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-outcome-resolved-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+
+      await handleHook(successfulEditHook("session-alpha"), {
+        fallbackEventName: "PostToolUse",
+        mode: "coach",
+        learn: false,
+        storePath
+      });
+      await handleHook(successfulValidationHook("session-alpha"), {
+        fallbackEventName: "PostToolUse",
+        mode: "coach",
+        learn: false,
+        storePath
+      });
+
+      const outcomes = await recentFeedbackOutcomes(undefined, storePath);
+      expect(outcomes).toHaveLength(1);
+      expect(outcomes[0]).toMatchObject({
+        reasonCode: "edit_without_validation",
+        safeCategory: "tests",
+        outcome: "resolved",
+        stateAfter: "Healthy"
+      });
+      expectNoPrivacySentinels(await readFile(storePath, "utf8"));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("marks repeated validation feedback ignored when Claude retries without intervention", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-outcome-ignored-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+
+      await handleHook(failedTestHook("session-alpha"), { fallbackEventName: "PostToolUseFailure", mode: "coach", learn: false, storePath });
+      await handleHook(failedTestHook("session-alpha"), { fallbackEventName: "PostToolUseFailure", mode: "coach", learn: false, storePath });
+      await handleHook(failedTestHook("session-alpha"), { fallbackEventName: "PostToolUseFailure", mode: "coach", learn: false, storePath });
+
+      const validationOutcome = (await recentFeedbackOutcomes(undefined, storePath)).find(
+        (outcome) => outcome.reasonCode === "validation_repeated"
+      );
+      expect(validationOutcome).toMatchObject({
+        safeCategory: "tests",
+        expectedAction: "intervene_before_retry",
+        outcome: "ignored"
+      });
+      expectNoPrivacySentinels(await readFile(storePath, "utf8"));
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -226,6 +309,42 @@ function failedTestHook(sessionId: string): string {
     cwd: privacySentinels[6],
     transcript_path: join(privacySentinels[6], "transcript.jsonl"),
     mcp_server_name: privacySentinels[5]
+  });
+}
+
+function successfulEditHook(sessionId: string): string {
+  return JSON.stringify({
+    session_id: `${sessionId}-${privacySentinels[4]}`,
+    hook_event_name: "PostToolUse",
+    tool_name: "Edit",
+    tool_input: {
+      file_path: privacySentinels[6],
+      old_string: "before",
+      new_string: privacySentinels[3]
+    },
+    tool_response: {
+      content: privacySentinels[3]
+    },
+    prompt: privacySentinels[0],
+    cwd: privacySentinels[6],
+    transcript_path: join(privacySentinels[6], "transcript.jsonl")
+  });
+}
+
+function successfulValidationHook(sessionId: string): string {
+  return JSON.stringify({
+    session_id: `${sessionId}-${privacySentinels[4]}`,
+    hook_event_name: "PostToolUse",
+    tool_name: "Bash",
+    tool_input: {
+      command: `npm test -- ${privacySentinels[1]}`
+    },
+    tool_response: {
+      stdout: privacySentinels[2]
+    },
+    prompt: privacySentinels[0],
+    cwd: privacySentinels[6],
+    transcript_path: join(privacySentinels[6], "transcript.jsonl")
   });
 }
 

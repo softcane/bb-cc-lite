@@ -1,6 +1,7 @@
 import { asRecord, stringField } from "./status-input.js";
 import { classifyResultPurpose, classifyToolIdentity, isEditTool, isReadSearchTool } from "./tool-metadata.js";
 import { categoryFailureSingular, type FailureRecoveryCategory } from "./recovery-stats.js";
+import type { ProjectConfig } from "./project-config.js";
 import type { BlindRetrySummary, FailureEpisodeSummary, StoredHookEvent } from "./types.js";
 
 type ToolResultOutcome = "success" | "failure";
@@ -28,6 +29,10 @@ interface ToolMeta {
   isReadSearch: boolean;
 }
 
+interface ExtractSafeToolResultOptions {
+  projectConfig?: ProjectConfig;
+}
+
 interface ActiveEpisode {
   identity: string;
   category: FailureRecoveryCategory;
@@ -40,11 +45,17 @@ interface ActiveEpisode {
   interventionEvidence: Set<InterventionKind>;
 }
 
-export function extractFailureEpisodesFromTranscriptLines(lines: string[]): FailureEpisodeSummary[] {
-  return summarizeFailureEpisodes(extractSafeToolResultEventsFromTranscriptLines(lines));
+export function extractFailureEpisodesFromTranscriptLines(
+  lines: string[],
+  options: ExtractSafeToolResultOptions = {}
+): FailureEpisodeSummary[] {
+  return summarizeFailureEpisodes(extractSafeToolResultEventsFromTranscriptLines(lines, options));
 }
 
-export function extractSafeToolResultEventsFromTranscriptLines(lines: string[]): SafeToolResultEvent[] {
+export function extractSafeToolResultEventsFromTranscriptLines(
+  lines: string[],
+  options: ExtractSafeToolResultOptions = {}
+): SafeToolResultEvent[] {
   const toolById = new Map<string, ToolMeta>();
   const events: SafeToolResultEvent[] = [];
 
@@ -63,7 +74,7 @@ export function extractSafeToolResultEventsFromTranscriptLines(lines: string[]):
 
     for (const toolUse of extractToolUses(entry)) {
       if (toolUse.id) {
-        toolById.set(toolUse.id, metaFromToolName(toolUse.name, toolUse.input));
+        toolById.set(toolUse.id, metaFromToolName(toolUse.name, toolUse.input, options.projectConfig));
       }
     }
 
@@ -187,7 +198,7 @@ function failureRecoveryCategory(meta: ToolMeta): FailureRecoveryCategory {
   }
   if (meta.name === "Bash") {
     const category = validationCategoryForPurpose(meta.purpose);
-    return category || "tool";
+    return category || (meta.purpose === "read" ? "read" : "tool");
   }
   if (meta.name === "Read") {
     return "read";
@@ -229,8 +240,8 @@ function validationCategoryForPurpose(purpose: string | undefined): FailureRecov
   return purpose === "tests" || purpose === "lint" || purpose === "typecheck" || purpose === "build" ? purpose : undefined;
 }
 
-function metaFromToolName(toolName: string | undefined, input: unknown): ToolMeta {
-  const identity = classifyToolIdentity(toolName, input, { basenameOnly: true });
+function metaFromToolName(toolName: string | undefined, input: unknown, projectConfig?: ProjectConfig): ToolMeta {
+  const identity = classifyToolIdentity(toolName, input, { basenameOnly: true, projectConfig });
   return {
     name: identity.displayName,
     purpose: identity.purpose,
@@ -249,7 +260,7 @@ function metaFromStoredHookEvent(event: StoredHookEvent): ToolMeta {
     category: event.category,
     identityHash: event.identityHash,
     isEdit: isEditTool(name),
-    isReadSearch: isReadSearchTool(name)
+    isReadSearch: isReadSearchTool(name) || event.purpose === "read"
   };
 }
 

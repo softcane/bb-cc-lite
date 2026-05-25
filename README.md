@@ -4,11 +4,11 @@
 
 Claude Code can look busy while it is doing the wrong thing: retrying the same broken test, editing without checking, filling context, or spending money on a stuck loop.
 
-`bb-cc-lite` adds a small status line that answers one question:
+`bb-cc-lite` is a small local Claude Code session supervisor. It adds a status line that answers one question:
 
 > Should I let this Claude Code session keep going?
 
-By default, it also gives Claude a short nudge when the pattern is clear. If the same test keeps failing without a fix, Claude can be told to inspect the first failure before retrying again. If you turn on guard mode, bb can deny the obvious repeated retry before it runs.
+By default, it also gives Claude a short nudge when the pattern is clear. If the same test keeps failing without a fix, Claude can be told to inspect the first failure before retrying again. If Claude follows that feedback and recovers, `why` can show the loop. If you turn on guard mode, bb can deny the obvious repeated retry before it runs.
 
 ![bb-cc-lite statusline examples](./assets/statusline-demo.gif)
 
@@ -87,22 +87,37 @@ In coach mode, bb can send Claude a short note during the session. Claude can th
 
 In guard mode, bb can deny a high-confidence repeated validation retry. The retry does not run, and Claude sees a safe reason.
 
+bb also records safe feedback outcomes. For example, if bb asks Claude to validate after an edit and Claude runs a passing test, `bb-cc-lite why` can show that the feedback was resolved.
+
 ## What It Shows
 
 ```text
 bb: Healthy | ctx 42% | $0.18 | cache warm | continue normally
+bb: Healthy | validation resolved | continue normally
+bb: Healthy | read-only exploration | continue normally
 bb: Careful | edits have not been checked yet | ask Claude to run the smallest relevant check
-bb: Careful | 9 tool calls, no check or recovery seen | pause and ask Claude what changed
-bb: Careful | session ran 1h plus 9 tool calls, no check or recovery seen | pause and ask Claude what changed before continuing
+bb: Careful | 9 non-read tool calls, no check or recovery seen | pause and ask Claude what changed
+bb: Careful | session ran 1h plus 9 non-read tool calls, no check or recovery seen | pause and ask Claude what changed before continuing
 bb: Careful | same test failed twice without a fix | inspect first failure
 bb: Careful | tests failed twice; usually passes after one targeted fix | inspect first failure
 bb: Careful | estimated cost $2.25 | ask Claude to summarize progress before continuing
 bb: Stop | why: same failure retried 3x without a fix | do: stop and inspect first failure
+bb: Stop | why: same test retried after feedback | do: inspect first failure
 bb: Stop | why: test loop rarely recovered after 3 failures | do: stop retrying and inspect first failure
 bb: Stop | why: high cost plus repeated failures | do: stop and inspect first failure
 ```
 
 `Healthy` means keep going. `Careful` means slow down and verify. `Stop` means take over before Claude burns more turns.
+
+When available, `why` includes the recent bb loop:
+
+```text
+Recent bb loop:
+1. Coach feedback: edits needed validation.
+2. Claude ran tests.
+3. Tests passed.
+4. Outcome: resolved.
+```
 
 ## Useful Commands
 
@@ -113,7 +128,7 @@ bb-cc-lite unlearn
 bb-cc-lite uninstall --scope local
 ```
 
-`why` explains the latest statusline decision. `doctor --baseline` shows safe aggregate baseline facts. `unlearn` clears learned personal baselines, project baselines, and lesson memory. `uninstall` restores the previous Claude Code status line when a backup exists.
+`why` explains the latest statusline decision and recent feedback outcomes when available. Interactive `why` output is lightly colored; set `NO_COLOR=1` or `BB_CC_LITE_COLOR=0` for plain text. `doctor --baseline` shows safe aggregate baseline facts. `unlearn` clears learned personal baselines, project baselines, and lesson memory. `uninstall` restores the previous Claude Code status line when a backup exists.
 
 Budget guard thresholds can be changed with environment variables:
 
@@ -123,11 +138,29 @@ BB_CC_LITE_BUDGET_COST_DELTA_USD=0.25
 BB_CC_LITE_BUDGET_DURATION_MINUTES=30
 ```
 
+## Project-Specific Checks
+
+bb already recognizes common checks such as `npm test`, `pytest`, `cargo test`, `go test`, `npm run lint`, and `npm run build`.
+
+If your project uses custom validation commands, you can add an optional `.bb-cc-lite.json`:
+
+```json
+{
+  "validationCommands": {
+    "tests": ["make test"],
+    "lint": ["make lint"],
+    "build": ["make build"]
+  }
+}
+```
+
+This file is not generated automatically. It is only needed when you want to teach bb what your project's test, lint, typecheck, or build commands look like. bb uses it for classification, but does not copy those raw commands into its event history.
+
 ## Privacy
 
 Everything stays local. `bb-cc-lite` does not upload transcripts, prompts, tool output, shell output, file contents, API keys, raw commands, raw paths, raw Claude session ids, or raw MCP server or tool names.
 
-It stores derived data only: counts, rates, percentiles, confidence labels, reason codes, cost/time/context numbers, weak pattern labels, hashed session keys, and hashed project keys.
+It stores derived data only: counts, rates, percentiles, confidence labels, reason codes, feedback outcomes such as `resolved` or `ignored`, safe categories such as `tests`, cost/time/context numbers, weak pattern labels, hashed session keys, and hashed project keys.
 
 Project baselines are stored under the bb app home, not inside the repo. They use only a hashed project key and safe summary data from that project. Sparse or corrupt project data falls back to the personal baseline or fixed rules.
 

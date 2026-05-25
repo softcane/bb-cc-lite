@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { hashValue } from "./paths.js";
+import { classifyConfiguredValidationCommand, type ProjectConfig } from "./project-config.js";
 import { asRecord, stringField } from "./status-input.js";
 
 const TEST_COMMAND_RE =
@@ -7,9 +8,12 @@ const TEST_COMMAND_RE =
 const LINT_COMMAND_RE = /\b(npm|pnpm|yarn|bun)\s+(run\s+)?lint\b|\b(eslint|ruff|flake8|cargo\s+clippy)\b/i;
 const TYPECHECK_COMMAND_RE = /\b(npm|pnpm|yarn|bun)\s+(run\s+)?typecheck\b|\btsc\s+--noEmit\b|\bmypy\b/i;
 const BUILD_COMMAND_RE = /\b(npm|pnpm|yarn|bun)\s+(run\s+)?(build|compile)\b|\b(tsc|vite\s+build|cargo\s+build|go\s+build)\b/i;
+const READ_ONLY_BASH_COMMAND_RE = /^(pwd|ls\b|git\s+(status|diff|log|show)\b|rg\b|grep\b|sed\s+-n\b|head\b|tail\b|wc\b)/iu;
+const SHELL_MUTATION_HINT_RE = /(\s>|>>|\|\s*(tee|xargs)\b|&&|\|\||;)/iu;
 
 interface SafeToolNameOptions {
   basenameOnly?: boolean;
+  projectConfig?: ProjectConfig;
 }
 
 export interface ToolIdentity {
@@ -38,11 +42,12 @@ export function classifyToolIdentity(
   }
 
   const displayName = safeToolName(toolName, options);
+  const purpose = classifyToolPurpose(displayName, input, options);
   return {
     displayName,
-    purpose: classifyToolPurpose(displayName, input),
+    purpose,
     isEdit: isEditTool(displayName),
-    isReadSearch: isReadSearchTool(displayName)
+    isReadSearch: isReadSearchTool(displayName) || purpose === "read"
   };
 }
 
@@ -55,6 +60,10 @@ export function classifyToolPurpose(
     return undefined;
   }
   const command = stringField(asRecord(input)?.command);
+  const configured = classifyConfiguredValidationCommand(command, options.projectConfig);
+  if (configured) {
+    return configured;
+  }
   if (command && TEST_COMMAND_RE.test(command)) {
     return "tests";
   }
@@ -66,6 +75,9 @@ export function classifyToolPurpose(
   }
   if (command && BUILD_COMMAND_RE.test(command)) {
     return "build";
+  }
+  if (isReadOnlyBashCommand(command)) {
+    return "read";
   }
   return undefined;
 }
@@ -112,6 +124,14 @@ function rawToolNameCandidate(toolName: string | undefined, options: SafeToolNam
 
 function isMcpToolName(toolName: string): boolean {
   return toolName.startsWith("mcp__");
+}
+
+function isReadOnlyBashCommand(command: string | undefined): boolean {
+  if (!command) {
+    return false;
+  }
+  const normalized = command.trim().replace(/\s+/gu, " ");
+  return READ_ONLY_BASH_COMMAND_RE.test(normalized) && !SHELL_MUTATION_HINT_RE.test(normalized);
 }
 
 const APPROVED_BUILT_IN_TOOL_NAMES = new Set([
