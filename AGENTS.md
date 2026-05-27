@@ -14,6 +14,7 @@ This file governs the whole repository.
 ## Command Map
 
 - `bb-cc-lite install [--scope local|project|user] [--replace] [--hooks] [--no-learn]`
+- `bb-cc-lite audit [--project <path>] [--all-projects] [--transcript <path>] [--recent <count>] [--json]`
 - `bb-cc-lite statusline`
 - `bb-cc-lite why [--session <raw-claude-session-id>] [--json]`
 - `bb-cc-lite doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing] [--baseline] [--build-baseline] [--replay-baseline] [--clear-baseline]`

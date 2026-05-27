@@ -5,6 +5,7 @@ import {
   formatDoctorChecks,
   runDoctor
 } from "./doctor.js";
+import { formatAuditReport, runAudit } from "./audit.js";
 import { runBaselineRefresh } from "./baseline-refresh.js";
 import { handleHook } from "./hook-control.js";
 import { installStatusLine, uninstallStatusLine, type InstallMode, type SettingsScope } from "./settings.js";
@@ -38,6 +39,9 @@ async function main(): Promise<void> {
       break;
     case "doctor":
       await commandDoctor(args);
+      break;
+    case "audit":
+      await commandAudit(args);
       break;
     case "baseline-refresh":
       await commandBaselineRefresh(args);
@@ -185,6 +189,31 @@ async function commandDoctor(args: ParsedArgs): Promise<void> {
   }
 }
 
+async function commandAudit(args: ParsedArgs): Promise<void> {
+  if (args.flags["all-projects"] && args.flags.transcript) {
+    throw new Error("--all-projects cannot be combined with --transcript");
+  }
+  if (args.flags["all-projects"] && args.flags.project) {
+    throw new Error("--all-projects cannot be combined with --project");
+  }
+  const report = await runAudit({
+    projectDir: stringFlag(args, "project"),
+    homeDir: stringFlag(args, "home"),
+    transcriptPath: stringFlag(args, "transcript"),
+    allProjects: Boolean(args.flags["all-projects"]),
+    recent: numberFlag(args, "recent")
+  });
+  if (args.flags.json) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+  console.log(formatAuditReport(report, { color: shouldUseColor() }));
+}
+
+function shouldUseColor(): boolean {
+  return Boolean(process.stdout.isTTY && !process.env.NO_COLOR && process.env.BB_CC_LITE_COLOR !== "0");
+}
+
 function parseArgs(argv: string[]): ParsedArgs {
   const [command = "help", ...rest] = argv;
   const flags: Record<string, string | boolean> = {};
@@ -245,10 +274,24 @@ function stringFlag(args: ParsedArgs, name: string): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function numberFlag(args: ParsedArgs, name: string): number | undefined {
+  const value = stringFlag(args, name);
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+  throw new Error(`Invalid --${name} ${value}; expected a positive number`);
+}
+
 function printHelp(): void {
   console.log(`bb-cc-lite
 
 Usage:
+  bb-cc-lite audit [--project <path>] [--all-projects] [--transcript <path>]
+                   [--recent <count>] [--json]
   bb-cc-lite install [--scope local|project|user] [--observe-only] [--guard]
                      [--replace] [--no-learn]
   bb-cc-lite statusline
@@ -259,6 +302,8 @@ Usage:
   bb-cc-lite uninstall [--scope local|project|user] [--force]
 
 Learning:
+  audit scans recent local Claude JSONL history without installing bb-cc-lite.
+  --all-projects scans newest local transcripts across ~/.claude/projects.
   install enables coach mode and builds a small local baseline by default.
   --observe-only keeps display and local telemetry without Claude-facing feedback.
   --guard enables coach feedback plus strict repeated-validation retry denial.

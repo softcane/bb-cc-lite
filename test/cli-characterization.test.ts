@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -208,6 +208,70 @@ describe("CLI behavior characterization", () => {
         maxBytesPerTranscript: 1048576
       });
       expectNoPrivacySentinels(result.stdout, baselineText);
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("audit scans project history without installing into Claude settings", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const transcriptPath = join(
+        workspace.homeDir,
+        ".claude",
+        "projects",
+        claudeProjectDirectoryName(workspace.projectDir),
+        "session.jsonl"
+      );
+      await writeTranscript(transcriptPath, repeatedFailedTestTranscript(3));
+
+      const result = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir], {
+        env: cliEnv(workspace)
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("bb retrospective audit");
+      expect(result.stdout).toContain("Would have helped: 1 session");
+      expect(result.stdout).toContain("Stop");
+      expect(result.stdout).toContain("same test failed 3x without a fix");
+      expect(result.stdout).toContain("Repeated retries spotted: 2");
+      expect(result.stdout).toContain("Cost/time: not estimated");
+      expect(result.stdout).not.toContain("Estimated saved:");
+      expect(result.stdout).toContain("Report confidence: high");
+      expect(result.stdout).toContain("npx --yes bb-cc-lite install --scope local");
+      await expect(pathExists(join(workspace.projectDir, ".claude", "settings.local.json"))).resolves.toBe(false);
+      expectNoPrivacySentinels(result.stdout);
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("audit --all-projects scans wider local history without project names", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const privateProjectName = "BB_CC_LITE_RAW_PROJECT_NAME_SENTINEL";
+      await writeTranscript(
+        join(workspace.homeDir, ".claude", "projects", privateProjectName, "session.jsonl"),
+        repeatedFailedTestTranscript(3)
+      );
+      await writeTranscript(join(workspace.homeDir, ".claude", "projects", "other-project", "healthy.jsonl"), successfulRawCommandTranscript("healthy"));
+
+      const result = await runCli(["audit", "--all-projects", "--recent", "10", "--home", workspace.homeDir], {
+        env: cliEnv(workspace)
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("Scope: all local project transcripts, newest 10");
+      expect(result.stdout).toContain("Scanned: 2 Claude Code sessions");
+      expect(result.stdout).toContain("Would have helped: 1 session");
+      expect(result.stdout).toContain("Repeated retries spotted: 2");
+      expect(result.stdout).toContain("Cost/time: not estimated");
+      expect(result.stdout).not.toContain("Estimated saved:");
+      expect(result.stdout).not.toContain(privateProjectName);
+      await expect(pathExists(join(workspace.projectDir, ".claude", "settings.local.json"))).resolves.toBe(false);
+      expectNoPrivacySentinels(result.stdout);
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -1353,6 +1417,10 @@ function repeatedFailedTestTranscript(count: number): string[] {
       }
     })
   ]);
+}
+
+function claudeProjectDirectoryName(projectDir: string): string {
+  return resolve(projectDir).replaceAll(/[\\/]/gu, "-");
 }
 
 function repeatedFailedTestWithEditInterventionTranscript(): string[] {
