@@ -230,7 +230,7 @@ function findingFromSummary(summary: TranscriptSummary, session: number): AuditF
       session,
       state: "Careful",
       confidence: "medium",
-      reasonCode: "compaction_boundary",
+      reasonCode: "compaction_goal_preservation",
       evidence: "compaction event ended the scanned window",
       action: "ask Claude to restate current goal and next 3 steps"
     };

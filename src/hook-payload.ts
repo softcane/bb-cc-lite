@@ -77,7 +77,8 @@ export function parseHookPayload(
   if (hookEventName === "PreCompact" || hookEventName === "PostCompact") {
     return {
       ...base,
-      kind: "compaction"
+      kind: "compaction",
+      compactionStage: hookEventName === "PreCompact" ? "pre" : "post"
     };
   }
 

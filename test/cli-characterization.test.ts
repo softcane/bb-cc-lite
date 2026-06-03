@@ -108,6 +108,8 @@ describe("CLI behavior characterization", () => {
         "Stop"
       ]);
       expect(settings.hooks.PreToolUse[0].matcher).toBe("Bash");
+      expect(settings.hooks.PreCompact[0].hooks[0].async).toBe(true);
+      expect(settings.hooks.PostCompact[0].hooks[0].async).toBeUndefined();
       expect(settings.hooks.PostToolUseFailure[0].hooks[0].args).toContain("coach");
       expect(settings.hooks.PostToolUseFailure[0].hooks[0].async).toBeUndefined();
       expect(settings.hooks.UserPromptSubmit).toBeUndefined();

@@ -268,6 +268,7 @@ describe("feedback outcome policy", () => {
     expect(expectedActionForFeedback("validation_repeated")).toBe("intervene_before_retry");
     expect(expectedActionForFeedback("blind_retry_loop")).toBe("intervene_before_retry");
     expect(expectedActionForFeedback("budget_busy_no_observed_progress")).toBe("summarize_or_narrow");
+    expect(expectedActionForFeedback("compaction_goal_preservation")).toBe("summarize_or_narrow");
     expect(expectedActionForFeedback("finish_with_unresolved_risk")).toBe("validate_or_summarize");
   });
 });

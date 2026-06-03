@@ -136,6 +136,8 @@ function feedbackStep(action: string, outcome: StoredFeedbackOutcome, category: 
       return `${action} feedback: inspect before retrying ${category}.`;
     case "finish_with_unresolved_risk":
       return `${action} feedback: resolve or summarize risk before finishing.`;
+    case "compaction_goal_preservation":
+      return `${action} feedback: restate goal after compaction.`;
     default:
       return `${action} feedback: ${expectedActionLabel(outcome.expectedAction)}.`;
   }

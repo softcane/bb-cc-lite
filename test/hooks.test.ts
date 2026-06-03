@@ -10,8 +10,12 @@ import type { StatusLineInput, TranscriptSummary } from "../src/types.js";
 
 const privacySentinels = [
   "BB_CC_LITE_RAW_PROMPT_SENTINEL",
+  "BB_CC_LITE_ASSISTANT_TEXT_SENTINEL",
   "BB_CC_LITE_TOOL_OUTPUT_SENTINEL",
-  "BB_CC_LITE_API_KEY_SENTINEL"
+  "BB_CC_LITE_FILE_CONTENT_SENTINEL",
+  "BB_CC_LITE_API_KEY_SENTINEL",
+  "BB_CC_LITE_RAW_SESSION_SENTINEL",
+  "/tmp/bb-cc-lite/private/workspace/src/secret.ts"
 ];
 
 function input(overrides: Partial<StatusLineInput> = {}): StatusLineInput {
@@ -99,6 +103,64 @@ describe("optional Claude Code hooks", () => {
     });
   });
 
+  it("parses PreCompact as safe derived compaction metadata", () => {
+    const rawSessionId = `session-alpha-${privacySentinels[5]}`;
+    const event = parseHookPayload(
+      JSON.stringify({
+        session_id: rawSessionId,
+        hook_event_name: "PreCompact",
+        timestamp: "2026-06-03T10:00:00.000Z",
+        prompt: privacySentinels[0],
+        assistant_text: privacySentinels[1],
+        tool_response: {
+          stdout: privacySentinels[2],
+          content: privacySentinels[3]
+        },
+        cwd: privacySentinels[6],
+        transcript_path: `${privacySentinels[6]}/transcript.jsonl`
+      })
+    );
+
+    expect(event).toMatchObject({
+      kind: "compaction",
+      hookEventName: "PreCompact",
+      compactionStage: "pre",
+      timestamp: "2026-06-03T10:00:00.000Z",
+      sessionKey: hashValue(rawSessionId)
+    });
+    expect(JSON.stringify(event)).not.toContain(rawSessionId);
+    expectNoPrivacySentinels(event);
+  });
+
+  it("parses PostCompact as safe derived compaction metadata", () => {
+    const event = parseHookPayload(
+      JSON.stringify({
+        session_id: "session-alpha",
+        hook_event_name: "PostCompact",
+        timestamp: "2026-06-03T10:01:00.000Z",
+        last_assistant_message: privacySentinels[1],
+        tool_response: {
+          stderr: privacySentinels[2]
+        },
+        cwd: privacySentinels[6]
+      })
+    );
+
+    expect(event).toMatchObject({
+      kind: "compaction",
+      hookEventName: "PostCompact",
+      compactionStage: "post",
+      timestamp: "2026-06-03T10:01:00.000Z",
+      sessionKey: hashValue("session-alpha")
+    });
+    expectNoPrivacySentinels(event);
+  });
+
+  it("returns no derived event for malformed hook payloads", () => {
+    expect(parseHookPayload("{", "PreCompact")).toBeUndefined();
+    expect(parseHookPayload("[]", "PostCompact")).toBeUndefined();
+  });
+
   it("sanitizes unsafe hook tool names so statusline evidence stays one-line", () => {
     const event = parseHookPayload(
       JSON.stringify({
@@ -164,6 +226,56 @@ describe("optional Claude Code hooks", () => {
       await recordHookEvent(event, storePath);
 
       expectNoPrivacySentinels(await readFile(storePath, "utf8"));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("stores compaction metadata without raw prompt, assistant, output, file, path, or session data", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-compaction-privacy-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      const rawSessionId = `session-alpha-${privacySentinels[5]}`;
+      for (const hookEventName of ["PreCompact", "PostCompact"]) {
+        const event = parseHookPayload(
+          JSON.stringify({
+            session_id: rawSessionId,
+            hook_event_name: hookEventName,
+            prompt: privacySentinels[0],
+            last_assistant_message: privacySentinels[1],
+            tool_response: {
+              stdout: privacySentinels[2],
+              content: privacySentinels[3],
+              api_key: privacySentinels[4]
+            },
+            cwd: privacySentinels[6],
+            transcript_path: `${privacySentinels[6]}/transcript.jsonl`
+          })
+        );
+        if (!event) {
+          throw new Error("expected compaction event");
+        }
+        await recordHookEvent(event, storePath);
+      }
+
+      const store = await readStore(storePath);
+      expect(store.hookEvents).toEqual([
+        expect.objectContaining({
+          kind: "compaction",
+          hookEventName: "PreCompact",
+          compactionStage: "pre",
+          sessionKey: hashValue(rawSessionId)
+        }),
+        expect.objectContaining({
+          kind: "compaction",
+          hookEventName: "PostCompact",
+          compactionStage: "post",
+          sessionKey: hashValue(rawSessionId)
+        })
+      ]);
+      const storeText = await readFile(storePath, "utf8");
+      expect(storeText).not.toContain(rawSessionId);
+      expectNoPrivacySentinels(storeText);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -472,7 +584,7 @@ describe("optional Claude Code hooks", () => {
     });
     expect(decide(input(), summary)).toMatchObject({
       state: "Careful",
-      reasonCode: "compaction_boundary"
+      reasonCode: "compaction_goal_preservation"
     });
   });
 
@@ -500,7 +612,7 @@ describe("optional Claude Code hooks", () => {
       });
       expect(decide(input({ sessionId }), mergeHookSummary(transcript(), openBoundarySummary))).toMatchObject({
         state: "Careful",
-        reasonCode: "compaction_boundary"
+        reasonCode: "compaction_goal_preservation"
       });
 
       const success = parseHookPayload(
@@ -524,6 +636,42 @@ describe("optional Claude Code hooks", () => {
         state: "Healthy",
         reasonCode: "healthy"
       });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses PreCompact as an open compaction boundary before later activity", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-precompact-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      const sessionId = "session-alpha";
+      const sessionKey = hashValue(sessionId);
+      const preCompact = parseHookPayload(
+        JSON.stringify({
+          session_id: sessionId,
+          hook_event_name: "PreCompact",
+          timestamp: "2026-06-03T10:00:00.000Z",
+          prompt: privacySentinels[0],
+          cwd: privacySentinels[6]
+        })
+      );
+      if (!preCompact) {
+        throw new Error("expected compact event");
+      }
+      await recordHookEvent(preCompact, storePath);
+
+      const openBoundarySummary = await hookSummary(sessionKey, storePath);
+      expect(openBoundarySummary).toMatchObject({
+        compactionEvents: 1,
+        postCompactionActivity: 0,
+        latestCompactionTimestamp: "2026-06-03T10:00:00.000Z"
+      });
+      expect(decide(input({ sessionId }), mergeHookSummary(transcript(), openBoundarySummary))).toMatchObject({
+        state: "Careful",
+        reasonCode: "compaction_goal_preservation"
+      });
+      expectNoPrivacySentinels(openBoundarySummary, await readFile(storePath, "utf8"));
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

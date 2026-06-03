@@ -13,7 +13,8 @@ const privacySentinels = [
   "BB_CC_LITE_FILE_CONTENT_SENTINEL",
   "BB_CC_LITE_RAW_SESSION_SENTINEL",
   "mcp__privateServer__rawPrivacyTool",
-  "/tmp/bb-cc-lite/private/workspace/src/secret.ts"
+  "/tmp/bb-cc-lite/private/workspace/src/secret.ts",
+  "BB_CC_LITE_ASSISTANT_TEXT_SENTINEL"
 ];
 
 describe("hook control", () => {
@@ -43,6 +44,67 @@ describe("hook control", () => {
         }
       });
       expectNoPrivacySentinels(second, await readFile(storePath, "utf8"));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns fallback PostCompact goal-restatement guidance without raw payload data", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-postcompact-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+
+      const response = await handleHook(compactionHook("session-alpha", "PostCompact"), {
+        fallbackEventName: "PostCompact",
+        mode: "coach",
+        learn: false,
+        storePath
+      });
+
+      expect(response).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: "PostCompact",
+          additionalContext: expect.stringContaining("restate the current goal, key constraints, and next three steps")
+        }
+      });
+      expect(JSON.stringify(response)).not.toContain("permissionDecision");
+      expect(JSON.stringify(response)).not.toContain('"decision":"block"');
+      expect(await recentFeedbackOutcomes(undefined, storePath)).toEqual([
+        expect.objectContaining({
+          kind: "feedback_outcome",
+          feedbackAction: "coach",
+          reasonCode: "compaction_goal_preservation",
+          safeCategory: "activity",
+          expectedAction: "summarize_or_narrow",
+          outcome: "pending"
+        })
+      ]);
+      expectNoPrivacySentinels(response, await readFile(storePath, "utf8"));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not emit direct PreCompact additionalContext before compatibility is proven", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-precompact-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      await handleHook(successfulEditHook("session-alpha"), {
+        fallbackEventName: "PostToolUse",
+        mode: "coach",
+        learn: false,
+        storePath
+      });
+
+      const response = await handleHook(compactionHook("session-alpha", "PreCompact"), {
+        fallbackEventName: "PreCompact",
+        mode: "coach",
+        learn: false,
+        storePath
+      });
+
+      expect(response).toBeUndefined();
+      expectNoPrivacySentinels(await readFile(storePath, "utf8"));
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -355,6 +417,23 @@ function preToolUseHook(sessionId: string, toolName: string, toolInput: unknown)
     tool_name: toolName,
     tool_input: toolInput,
     prompt: privacySentinels[0],
+    cwd: privacySentinels[6],
+    transcript_path: join(privacySentinels[6], "transcript.jsonl"),
+    mcp_server_name: privacySentinels[5]
+  });
+}
+
+function compactionHook(sessionId: string, hookEventName: "PreCompact" | "PostCompact"): string {
+  return JSON.stringify({
+    session_id: `${sessionId}-${privacySentinels[4]}`,
+    hook_event_name: hookEventName,
+    timestamp: "2026-06-03T10:00:00.000Z",
+    prompt: privacySentinels[0],
+    last_assistant_message: privacySentinels[7],
+    tool_response: {
+      stdout: privacySentinels[2],
+      content: privacySentinels[3]
+    },
     cwd: privacySentinels[6],
     transcript_path: join(privacySentinels[6], "transcript.jsonl"),
     mcp_server_name: privacySentinels[5]

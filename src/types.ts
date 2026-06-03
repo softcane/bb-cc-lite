@@ -147,11 +147,14 @@ export type HookEventKind =
   | "session_end"
   | "feedback";
 
+export type CompactionStage = "pre" | "post";
+
 export interface DerivedHookEvent {
   kind: HookEventKind;
   sessionKey?: string;
   timestamp: string;
   hookEventName: string;
+  compactionStage?: CompactionStage;
   toolName?: string;
   purpose?: string;
   category?: "MCP";

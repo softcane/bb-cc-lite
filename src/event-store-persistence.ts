@@ -113,6 +113,7 @@ function sanitizeStoredHookEvent(value: unknown): StoredHookEvent | undefined {
     timestamp,
     hookEventName: stringField(record.hookEventName) || "unknown",
     sessionKey: stringField(record.sessionKey),
+    compactionStage: compactionStage(record.compactionStage),
     toolName: stringField(record.toolName),
     purpose: stringField(record.purpose),
     category: hookCategory(record.category),
@@ -207,6 +208,10 @@ function hookKind(value: unknown): HookEventKind | undefined {
 
 function hookCategory(value: unknown): StoredHookEvent["category"] {
   return value === "MCP" ? value : undefined;
+}
+
+function compactionStage(value: unknown): StoredHookEvent["compactionStage"] {
+  return value === "pre" || value === "post" ? value : undefined;
 }
 
 function feedbackAction(value: unknown): StoredHookEvent["feedbackAction"] {

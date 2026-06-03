@@ -145,6 +145,10 @@ describe("settings install and uninstall", () => {
     ]);
     expect(settings.hooks.UserPromptSubmit).toBeUndefined();
     expect(settings.hooks.PreToolUse[0].matcher).toBe("Bash");
+    expect(settings.hooks.PreCompact[0].hooks[0].async).toBe(true);
+    expect(settings.hooks.PreCompact[0].hooks[0].timeout).toBe(1);
+    expect(settings.hooks.PostCompact[0].hooks[0].async).toBeUndefined();
+    expect(settings.hooks.PostCompact[0].hooks[0].timeout).toBe(2);
     expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("--bb-cc-lite-mode");
     expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("coach");
     expect(settings.hooks.PostToolUseFailure[0].hooks[0].async).toBeUndefined();

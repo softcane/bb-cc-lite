@@ -30,6 +30,9 @@ export function expectedActionForFeedback(reasonCode: string): FeedbackExpectedA
   if (reasonCode.startsWith("budget_") || reasonCode === "cost_budget" || reasonCode === "duration_budget") {
     return "summarize_or_narrow";
   }
+  if (reasonCode === "compaction_goal_preservation") {
+    return "summarize_or_narrow";
+  }
   if (reasonCode === "finish_with_unresolved_risk") {
     return "validate_or_summarize";
   }

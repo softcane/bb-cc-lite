@@ -901,7 +901,7 @@ describe("signals and renderer", () => {
     const compaction = decide(input(), transcript({ compactionEvents: 1 }));
     expect(compaction).toMatchObject({
       state: "Careful",
-      reasonCode: "compaction_boundary",
+      reasonCode: "compaction_goal_preservation",
       action: "ask Claude to restate current goal and next 3 steps"
     });
 

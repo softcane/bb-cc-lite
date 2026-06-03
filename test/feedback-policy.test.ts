@@ -92,6 +92,45 @@ describe("feedback policy", () => {
     expect(feedback).toEqual({ kind: "none" });
   });
 
+  it("emits generic fallback guidance after PostCompact", () => {
+    const feedback = decideFeedback(
+      policyInput({
+        hookEventName: "PostCompact",
+        decision: decision({ state: "Healthy", reasonCode: "healthy" }),
+        summary: transcriptSummary({
+          compactionEvents: 1,
+          postCompactionActivity: 0,
+          latestCompactionTimestamp: "2026-06-03T10:00:00.000Z"
+        })
+      })
+    );
+
+    expect(feedback).toMatchObject({
+      kind: "coach",
+      delivery: "additional_context",
+      reasonCode: "compaction_goal_preservation",
+      safeCategory: "activity",
+      cooldownKey: "coach:compaction_goal_preservation:2026-06-03T10:00:00.000Z"
+    });
+    expect(feedback.kind === "coach" ? feedback.message : "").toContain("restate the current goal");
+  });
+
+  it("does not emit direct PreCompact guidance", () => {
+    const feedback = decideFeedback(
+      policyInput({
+        hookEventName: "PreCompact",
+        summary: transcriptSummary({
+          compactionEvents: 1,
+          latestCompactionTimestamp: "2026-06-03T10:00:00.000Z",
+          hasUnvalidatedEdits: true,
+          successfulEditResults: 1
+        })
+      })
+    );
+
+    expect(feedback).toEqual({ kind: "none" });
+  });
+
   it("emits budget feedback only when a budget decision is already present", () => {
     const highCost = decideFeedback(
       policyInput({

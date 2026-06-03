@@ -389,7 +389,7 @@ export function decide(
   if (hasOpenCompactionBoundary(transcript)) {
     return baseDecision({
       state: "Careful",
-      reasonCode: "compaction_boundary",
+      reasonCode: "compaction_goal_preservation",
       primaryEvidence: `compaction event seen`,
       impact: "Session continuity may have shifted",
       action: "ask Claude to restate current goal and next 3 steps",

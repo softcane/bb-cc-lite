@@ -58,6 +58,15 @@ export function decideFeedback(input: FeedbackPolicyInput): FeedbackDecision {
     return stopFeedback(input);
   }
 
+  if (input.hookEventName === "PreCompact") {
+    return { kind: "none" };
+  }
+
+  const compactionGoalPreservation = postCompactionGoalPreservationFeedback(input);
+  if (compactionGoalPreservation) {
+    return compactionGoalPreservation;
+  }
+
   const coachRetryWarning = coachValidationRetryWarning(input);
   if (coachRetryWarning) {
     return coachRetryWarning;
@@ -94,6 +103,26 @@ export function decideFeedback(input: FeedbackPolicyInput): FeedbackDecision {
     messageKey: risk.messageKey,
     cooldownKey,
     message: messageFor(risk.messageKey)
+  };
+}
+
+function postCompactionGoalPreservationFeedback(input: FeedbackPolicyInput): FeedbackDecision | undefined {
+  if (input.hookEventName !== "PostCompact" || input.summary.compactionEvents <= 0) {
+    return undefined;
+  }
+  const cooldownKey = `coach:compaction_goal_preservation:${input.summary.latestCompactionTimestamp || "current"}`;
+  if (hasRecentCooldown(input.recentFeedback, cooldownKey)) {
+    return undefined;
+  }
+  return {
+    kind: "coach",
+    delivery: "additional_context",
+    reasonCode: "compaction_goal_preservation",
+    safeCategory: "activity",
+    confidence: "medium",
+    messageKey: "compaction_goal_preservation",
+    cooldownKey,
+    message: messageFor("compaction_goal_preservation")
   };
 }
 
@@ -322,6 +351,8 @@ function messageFor(messageKey: string): string {
       return "bb-cc-lite: budget is high for this session; summarize progress, name the next smallest check, and avoid broad retries.";
     case "busy_no_observed_progress":
       return "bb-cc-lite: many tool calls have run without a safe progress signal. Pause, state what changed, and choose one focused next step.";
+    case "compaction_goal_preservation":
+      return "bb-cc-lite: compaction just finished. Before continuing, restate the current goal, key constraints, and next three steps from existing context.";
     case "guard_validation_retry":
       return "bb-cc-lite denied this retry: the same validation category has failed repeatedly without an edit or passing check. Inspect before retrying.";
     case "finish_with_unresolved_risk":
