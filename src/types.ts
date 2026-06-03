@@ -60,6 +60,14 @@ export interface RedundantReadSummary {
   safeFileLabel?: string;
 }
 
+export type ReadKind = "full" | "partial";
+
+export interface ActiveFullFileReadSummary {
+  fileIdentityHash: string;
+  unchangedFullFileReadCount: number;
+  safeFileLabel?: string;
+}
+
 export interface InputTokenJumpSummary {
   previousInputTokens: number;
   currentInputTokens: number;
@@ -134,6 +142,7 @@ export interface TranscriptSummary {
   latestTimestamp?: string;
   latestCompactionTimestamp?: string;
   redundantRead?: RedundantReadSummary;
+  activeFullFileReads?: ActiveFullFileReadSummary[];
   latestInputTokenJump?: InputTokenJumpSummary;
   largestInputTokenJump?: InputTokenJumpSummary;
 }
@@ -159,6 +168,9 @@ export interface DerivedHookEvent {
   purpose?: string;
   category?: "MCP";
   identityHash?: string;
+  fileIdentityHash?: string;
+  safeFileLabel?: string;
+  readKind?: ReadKind;
   toolCount?: number;
   feedbackAction?: "coach" | "guard";
   cooldownKey?: string;

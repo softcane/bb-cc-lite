@@ -366,6 +366,7 @@ function hookSpecsForMode(mode: InstallMode): Array<{ eventName: string; matcher
   return [
     { eventName: "SessionStart", matcher: "*", async: false, timeout: 2 },
     { eventName: "PreToolUse", matcher: "Bash", async: false, timeout: 2 },
+    { eventName: "PreToolUse", matcher: "Read", async: false, timeout: 2 },
     { eventName: "PostToolUse", matcher: "*", async: false, timeout: 2 },
     { eventName: "PostToolUseFailure", matcher: "*", async: false, timeout: 2 },
     { eventName: "PostToolBatch", matcher: "*", async: false, timeout: 2 },

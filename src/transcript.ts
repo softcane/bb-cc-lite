@@ -1,11 +1,12 @@
 import { asRecord, extractUsage, mergeUsage, stringField } from "./status-input.js";
 import { cacheReadSharePoint, updateCacheReadShareSummary } from "./cache-efficiency.js";
 import { extractFailureEpisodesFromTranscriptLines, summarizeBlindRetry } from "./failure-episodes.js";
-import { hashValue } from "./paths.js";
+import { fileIdentityFromToolInput, isFullFileReadInput } from "./file-identity.js";
 import { classifyResultPurpose, classifyToolIdentity } from "./tool-metadata.js";
 import { readTranscriptTail, type ReadTranscriptTailOptions } from "./transcript-reader.js";
 import type { ProjectConfig } from "./project-config.js";
 import type {
+  ActiveFullFileReadSummary,
   CacheReadShareSummary,
   InputTokenJumpSummary,
   RedundantReadSummary,
@@ -33,11 +34,6 @@ interface ToolMeta {
 interface FileReadState {
   count: number;
   lastSeenToolCall: number;
-  safeFileLabel?: string;
-}
-
-interface FileIdentity {
-  fileIdentityHash: string;
   safeFileLabel?: string;
 }
 
@@ -158,7 +154,7 @@ export function parseTranscriptLines(
         readToolCalls += 1;
       }
       const fileIdentity = fileIdentityFromToolInput(identity.displayName, toolUse.input);
-      if (identity.displayName === "Read" && fileIdentity && isFullFileRead(toolUse.input)) {
+      if (identity.displayName === "Read" && fileIdentity && isFullFileReadInput(toolUse.input)) {
         const existing = fullFileReadCounts.get(fileIdentity.fileIdentityHash);
         fullFileReadCounts.set(fileIdentity.fileIdentityHash, {
           count: (existing?.count || 0) + 1,
@@ -267,6 +263,7 @@ export function parseTranscriptLines(
     latestTimestamp,
     latestCompactionTimestamp,
     redundantRead,
+    activeFullFileReads: activeFullFileReadSummaries(fullFileReadCounts),
     latestInputTokenJump,
     largestInputTokenJump
   };
@@ -334,26 +331,6 @@ function failureSummary(meta: ToolMeta, purpose: string | undefined, count: numb
   return summary;
 }
 
-function fileIdentityFromToolInput(toolName: string, input: unknown): FileIdentity | undefined {
-  const root = asRecord(input);
-  if (!root) {
-    return undefined;
-  }
-  const rawPath = stringField(root.file_path) || (toolName === "NotebookEdit" ? stringField(root.notebook_path) : undefined);
-  const fileIdentityHash = hashValue(rawPath);
-  return fileIdentityHash
-    ? {
-        fileIdentityHash,
-        safeFileLabel: safeFileLabel(rawPath)
-      }
-    : undefined;
-}
-
-function isFullFileRead(input: unknown): boolean {
-  const root = asRecord(input);
-  return Boolean(root && root.offset === undefined && root.limit === undefined);
-}
-
 function strongestActiveRedundantRead(readCounts: Map<string, FileReadState>): RedundantReadSummary | undefined {
   let strongest: RedundantReadSummary | undefined;
   let strongestLastSeen = -1;
@@ -378,21 +355,12 @@ function strongestActiveRedundantRead(readCounts: Map<string, FileReadState>): R
   return strongest;
 }
 
-function safeFileLabel(filePath: string | undefined): string | undefined {
-  if (!filePath) {
-    return undefined;
-  }
-  const segment = filePath.split(/[\\/]+/u).filter(Boolean).at(-1);
-  if (!segment || segment === "." || segment === "..") {
-    return undefined;
-  }
-  // Keep only a basename-style hint; never retain the full local path.
-  // eslint-disable-next-line no-control-regex
-  const label = segment.replace(/[\u0000-\u001f\u007f]+/gu, " ").replace(/\s+/gu, " ").trim();
-  if (!label) {
-    return undefined;
-  }
-  return label.length > 80 ? `${label.slice(0, 77)}...` : label;
+function activeFullFileReadSummaries(readCounts: Map<string, FileReadState>): ActiveFullFileReadSummary[] {
+  return [...readCounts.entries()].map(([fileIdentityHash, state]) => ({
+    fileIdentityHash,
+    unchangedFullFileReadCount: state.count,
+    safeFileLabel: state.safeFileLabel
+  }));
 }
 
 function hasUsage(usage: TokenUsage): boolean {

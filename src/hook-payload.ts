@@ -1,4 +1,5 @@
 import { hashValue } from "./paths.js";
+import { fileIdentityFromToolInput, readKindFromInput } from "./file-identity.js";
 import type { ProjectConfig } from "./project-config.js";
 import { asRecord, numberField, stringField } from "./status-input.js";
 import { classifyToolIdentity } from "./tool-metadata.js";
@@ -39,6 +40,7 @@ export function parseHookPayload(
   };
 
   if (hookEventName === "PostToolUseFailure") {
+    const toolInput = root.tool_input ?? root.toolInput;
     const identity = classifyToolIdentity(stringField(root.tool_name) || stringField(root.toolName), root.tool_input ?? root.toolInput, {
       projectConfig: options.projectConfig
     });
@@ -48,21 +50,27 @@ export function parseHookPayload(
       toolName: identity.displayName,
       purpose: identity.purpose,
       category: identity.category,
-      identityHash: identity.identityHash
+      identityHash: identity.identityHash,
+      ...(identity.displayName === "Read" ? { readKind: readKindFromInput(toolInput) } : {})
     };
   }
 
   if (hookEventName === "PostToolUse") {
-    const identity = classifyToolIdentity(stringField(root.tool_name) || stringField(root.toolName), root.tool_input ?? root.toolInput, {
+    const toolInput = root.tool_input ?? root.toolInput;
+    const identity = classifyToolIdentity(stringField(root.tool_name) || stringField(root.toolName), toolInput, {
       projectConfig: options.projectConfig
     });
+    const fileIdentity = fileIdentityFromToolInput(identity.displayName, toolInput);
     return {
       ...base,
       kind: "tool_success",
       toolName: identity.displayName,
       purpose: identity.purpose,
       category: identity.category,
-      identityHash: identity.identityHash
+      identityHash: identity.identityHash,
+      fileIdentityHash: fileIdentity?.fileIdentityHash,
+      safeFileLabel: fileIdentity?.safeFileLabel,
+      ...(identity.displayName === "Read" ? { readKind: readKindFromInput(toolInput) } : {})
     };
   }
 

@@ -185,6 +185,73 @@ describe("feedback policy", () => {
     expect(editAllowed).toEqual({ kind: "none" });
   });
 
+  it("coaches before an unchanged repeated full-file Read", () => {
+    const feedback = decideFeedback(
+      policyInput({
+        hookEventName: "PreToolUse",
+        currentTool: { toolName: "Read", fileIdentityHash: "feedface00000000", readKind: "full" },
+        summary: transcriptSummary({
+          activeFullFileReads: [{ fileIdentityHash: "feedface00000000", unchangedFullFileReadCount: 1 }]
+        })
+      })
+    );
+
+    expect(feedback).toMatchObject({
+      kind: "coach",
+      delivery: "additional_context",
+      reasonCode: "redundant_read",
+      safeCategory: "tool",
+      cooldownKey: "coach:redundant_read:feedface00000000"
+    });
+    expect(feedback.kind === "coach" ? feedback.message : "").toContain("already read recently");
+  });
+
+  it("denies unchanged repeated full-file Reads in guard mode but allows partial Reads", () => {
+    const summary = transcriptSummary({
+      activeFullFileReads: [{ fileIdentityHash: "feedface00000000", unchangedFullFileReadCount: 1 }]
+    });
+    const denied = decideFeedback(
+      policyInput({
+        mode: "guard",
+        hookEventName: "PreToolUse",
+        currentTool: { toolName: "Read", fileIdentityHash: "feedface00000000", readKind: "full" },
+        summary
+      })
+    );
+    const partial = decideFeedback(
+      policyInput({
+        mode: "guard",
+        hookEventName: "PreToolUse",
+        currentTool: { toolName: "Read", fileIdentityHash: "feedface00000000", readKind: "partial" },
+        summary
+      })
+    );
+
+    expect(denied).toMatchObject({
+      kind: "guard",
+      reasonCode: "guard_redundant_read",
+      safeCategory: "tool",
+      cooldownKey: "guard:guard_redundant_read:feedface00000000"
+    });
+    expect(denied.kind === "guard" ? denied.message : "").toContain("denied this Read");
+    expect(partial).toEqual({ kind: "none" });
+  });
+
+  it("suppresses observe-only Read feedback", () => {
+    const feedback = decideFeedback(
+      policyInput({
+        mode: "observe",
+        hookEventName: "PreToolUse",
+        currentTool: { toolName: "Read", fileIdentityHash: "feedface00000000", readKind: "full" },
+        summary: transcriptSummary({
+          activeFullFileReads: [{ fileIdentityHash: "feedface00000000", unchangedFullFileReadCount: 1 }]
+        })
+      })
+    );
+
+    expect(feedback).toEqual({ kind: "none" });
+  });
+
   it("keeps denying repeated guard validation retries until there is an intervention", () => {
     const denied = decideFeedback(
       policyInput({

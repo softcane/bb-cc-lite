@@ -1,5 +1,6 @@
 import { expectedActionForFeedback, refreshFeedbackOutcomesForSession } from "./feedback-outcomes.js";
-import { decideFeedback, type FeedbackMode } from "./feedback-policy.js";
+import { decideFeedback, type CurrentHookTool, type FeedbackMode } from "./feedback-policy.js";
+import { fileIdentityFromToolInput, readKindFromInput } from "./file-identity.js";
 import { responseForFeedback, type HookResponse } from "./hook-response.js";
 import { parseHookPayload } from "./hook-payload.js";
 import { lessonContextForProject, recordLessonFromSummary } from "./memory-lessons.js";
@@ -153,13 +154,17 @@ async function summaryForSession(sessionKey: string, storePath: string | undefin
   };
 }
 
-function currentTool(root: Record<string, unknown>, projectConfig: ProjectConfig): { toolName: string; purpose?: string } | undefined {
-  const identity = classifyToolIdentity(stringField(root.tool_name) || stringField(root.toolName), root.tool_input ?? root.toolInput, {
+function currentTool(root: Record<string, unknown>, projectConfig: ProjectConfig): CurrentHookTool | undefined {
+  const toolInput = root.tool_input ?? root.toolInput;
+  const identity = classifyToolIdentity(stringField(root.tool_name) || stringField(root.toolName), toolInput, {
     projectConfig
   });
+  const fileIdentity = fileIdentityFromToolInput(identity.displayName, toolInput);
   return {
     toolName: identity.displayName,
-    purpose: identity.purpose
+    purpose: identity.purpose,
+    fileIdentityHash: fileIdentity?.fileIdentityHash,
+    readKind: identity.displayName === "Read" ? readKindFromInput(toolInput) : undefined
   };
 }
 

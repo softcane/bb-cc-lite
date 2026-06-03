@@ -121,7 +121,7 @@ describe("parseTranscriptLines", () => {
     expectNoPrivacySentinels(summary);
   });
 
-  it.each(["Edit", "Write", "MultiEdit"] as const)(
+  it.each(["Edit", "Write", "MultiEdit", "NotebookEdit"] as const)(
     "resets unchanged full-file Read tracking after a successful same-file %s",
     (toolName) => {
       const rawPath = `/Users/private/${privacySentinels[3]}/src/secret.ts`;
@@ -1039,7 +1039,7 @@ function readToolPair(id: string, filePath: string, inputOverrides: Record<strin
   ];
 }
 
-function mutationToolPair(id: string, name: "Edit" | "Write" | "MultiEdit", filePath: string): string[] {
+function mutationToolPair(id: string, name: "Edit" | "Write" | "MultiEdit" | "NotebookEdit", filePath: string): string[] {
   return [
     JSON.stringify({
       timestamp: "2026-02-03T00:00:02.000Z",
@@ -1074,7 +1074,7 @@ function mutationToolPair(id: string, name: "Edit" | "Write" | "MultiEdit", file
   ];
 }
 
-function mutationInputFor(name: "Edit" | "Write" | "MultiEdit", filePath: string): Record<string, unknown> {
+function mutationInputFor(name: "Edit" | "Write" | "MultiEdit" | "NotebookEdit", filePath: string): Record<string, unknown> {
   if (name === "Write") {
     return {
       file_path: filePath,
@@ -1090,6 +1090,13 @@ function mutationInputFor(name: "Edit" | "Write" | "MultiEdit", filePath: string
           new_string: "safe replacement"
         }
       ]
+    };
+  }
+  if (name === "NotebookEdit") {
+    return {
+      notebook_path: filePath,
+      cell_id: "safe-cell",
+      new_source: "safe replacement"
     };
   }
   return {

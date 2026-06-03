@@ -33,6 +33,9 @@ export function expectedActionForFeedback(reasonCode: string): FeedbackExpectedA
   if (reasonCode === "compaction_goal_preservation") {
     return "summarize_or_narrow";
   }
+  if (reasonCode === "redundant_read" || reasonCode === "guard_redundant_read") {
+    return "summarize_or_narrow";
+  }
   if (reasonCode === "finish_with_unresolved_risk") {
     return "validate_or_summarize";
   }

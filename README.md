@@ -63,7 +63,7 @@ Humans usually notice too late: after the same check has failed three times, aft
 
 `coach` is the default. It keeps the status line and can send short, safe Claude-facing notes when a risky pattern is visible, such as repeated validation failure, unchecked edits, high budget with no progress signal, or unresolved validation risk at finish.
 
-`guard` includes coach feedback. It may deny a high-confidence repeated Bash validation retry, such as rerunning the same test/lint/typecheck/build category after repeated failures without an edit or passing check. It does not broadly block normal reads, edits, or arbitrary commands.
+`guard` includes coach feedback. It may deny a high-confidence repeated Bash validation retry, such as rerunning the same test/lint/typecheck/build category after repeated failures without an edit or passing check. It may also deny an unchanged repeated full-file `Read` before the file content is injected. It does not broadly block normal reads, partial reads, edits, or arbitrary commands.
 
 `bb-cc-lite` also records safe feedback outcomes. For example, if bb asks Claude to validate after an edit and Claude runs a passing test, `bb-cc-lite why` can show that the feedback was resolved.
 

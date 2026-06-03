@@ -18,6 +18,8 @@ export function mergeHookSummary(
     blindRetry?: TranscriptSummary["blindRetry"];
     latestTimestamp?: string;
     latestCompactionTimestamp?: string;
+    redundantRead?: TranscriptSummary["redundantRead"];
+    activeFullFileReads?: TranscriptSummary["activeFullFileReads"];
   }
 ): TranscriptSummary {
   const repeatedFailures = new Map<string, TranscriptSummary["repeatedFailures"][number]>();
@@ -46,7 +48,9 @@ export function mergeHookSummary(
     compactionEvents: Math.max(transcript.compactionEvents, hookData.compactionEvents),
     postCompactionActivity: mergedPostCompactionActivity(transcript, hookData, latestTimestamp, latestCompactionTimestamp),
     latestTimestamp,
-    latestCompactionTimestamp
+    latestCompactionTimestamp,
+    redundantRead: strongestRedundantRead(transcript.redundantRead, hookData.redundantRead),
+    activeFullFileReads: mergeActiveFullFileReads(transcript.activeFullFileReads, hookData.activeFullFileReads)
   };
 }
 
@@ -74,6 +78,33 @@ function latestIsoTimestamp(first: string | undefined, second: string | undefine
     return first > second ? first : second;
   }
   return first || second;
+}
+
+function strongestRedundantRead(
+  first: TranscriptSummary["redundantRead"],
+  second: TranscriptSummary["redundantRead"]
+): TranscriptSummary["redundantRead"] {
+  if (!first) {
+    return second;
+  }
+  if (!second) {
+    return first;
+  }
+  return second.unchangedFullFileReadCount > first.unchangedFullFileReadCount ? second : first;
+}
+
+function mergeActiveFullFileReads(
+  first: TranscriptSummary["activeFullFileReads"],
+  second: TranscriptSummary["activeFullFileReads"]
+): TranscriptSummary["activeFullFileReads"] {
+  const byFile = new Map<string, NonNullable<TranscriptSummary["activeFullFileReads"]>[number]>();
+  for (const read of [...(first || []), ...(second || [])]) {
+    const existing = byFile.get(read.fileIdentityHash);
+    if (!existing || read.unchangedFullFileReadCount > existing.unchangedFullFileReadCount) {
+      byFile.set(read.fileIdentityHash, read);
+    }
+  }
+  return [...byFile.values()];
 }
 
 function mergedPostCompactionActivity(

@@ -1,7 +1,13 @@
 import { readStore } from "./event-store-persistence.js";
 import { safeToolResultEventFromHookEvent, summarizeBlindRetry, summarizeFailureEpisodes } from "./failure-episodes.js";
 import { isEditTool, isReadSearchTool } from "./tool-metadata.js";
-import type { BlindRetrySummary, StoredDecision, ToolFailureSummary } from "./types.js";
+import type { ActiveFullFileReadSummary, BlindRetrySummary, RedundantReadSummary, StoredDecision, ToolFailureSummary } from "./types.js";
+
+interface FileReadState {
+  count: number;
+  lastSeenToolCall: number;
+  safeFileLabel?: string;
+}
 
 export async function latestDecision(sessionKey?: string, storePath?: string): Promise<StoredDecision | undefined> {
   const store = await readStore(storePath);
@@ -28,6 +34,8 @@ export async function hookSummary(
   blindRetry?: BlindRetrySummary;
   latestTimestamp?: string;
   latestCompactionTimestamp?: string;
+  redundantRead?: RedundantReadSummary;
+  activeFullFileReads: ActiveFullFileReadSummary[];
 }> {
   const store = await readStore(storePath);
   const events = store.hookEvents.filter((event) => !sessionKey || event.sessionKey === sessionKey);
@@ -47,6 +55,8 @@ export async function hookSummary(
   let postCompactionActivity = 0;
   let latestTimestamp: string | undefined;
   let latestCompactionTimestamp: string | undefined;
+  const fullFileReadCounts = new Map<string, FileReadState>();
+  let redundantRead: RedundantReadSummary | undefined;
 
   for (const event of events) {
     latestTimestamp = !latestTimestamp || event.timestamp > latestTimestamp ? event.timestamp : latestTimestamp;
@@ -78,6 +88,10 @@ export async function hookSummary(
         successfulEditResults += 1;
         hasOpenUnvalidatedEdit = true;
         unvalidatedEditToolSteps = 0;
+        if (event.fileIdentityHash) {
+          fullFileReadCounts.delete(event.fileIdentityHash);
+          redundantRead = strongestActiveRedundantRead(fullFileReadCounts);
+        }
       } else if (isValidationPurpose(event.purpose)) {
         validationChecks += 1;
         validationSuccesses += 1;
@@ -95,6 +109,17 @@ export async function hookSummary(
       compactionEvents += 1;
       postCompactionActivity = 0;
       latestCompactionTimestamp = event.timestamp;
+      fullFileReadCounts.clear();
+      redundantRead = undefined;
+    }
+    if (event.kind === "tool_success" && event.toolName === "Read" && event.readKind === "full" && event.fileIdentityHash) {
+      const existing = fullFileReadCounts.get(event.fileIdentityHash);
+      fullFileReadCounts.set(event.fileIdentityHash, {
+        count: (existing?.count || 0) + 1,
+        lastSeenToolCall: toolCalls,
+        safeFileLabel: event.safeFileLabel || existing?.safeFileLabel
+      });
+      redundantRead = strongestActiveRedundantRead(fullFileReadCounts);
     }
     if (!isCompaction && compactionEvents > 0) {
       postCompactionActivity += 1;
@@ -116,7 +141,9 @@ export async function hookSummary(
     repeatedFailures: [...failures.values()].filter((failure) => failure.count >= 2),
     blindRetry: summarizeBlindRetry(summarizeFailureEpisodes(safeEvents)),
     latestTimestamp,
-    latestCompactionTimestamp
+    latestCompactionTimestamp,
+    redundantRead,
+    activeFullFileReads: activeFullFileReadSummaries(fullFileReadCounts)
   };
 }
 
@@ -153,4 +180,36 @@ function failureSummary(
     summary.identityHash = event.identityHash;
   }
   return summary;
+}
+
+function strongestActiveRedundantRead(readCounts: Map<string, FileReadState>): RedundantReadSummary | undefined {
+  let strongest: RedundantReadSummary | undefined;
+  let strongestLastSeen = -1;
+  for (const [fileIdentityHash, state] of readCounts) {
+    if (state.count < 2) {
+      continue;
+    }
+    if (
+      !strongest ||
+      state.count > strongest.unchangedFullFileReadCount ||
+      (state.count === strongest.unchangedFullFileReadCount && state.lastSeenToolCall >= strongestLastSeen)
+    ) {
+      strongest = {
+        fileIdentityHash,
+        unchangedFullFileReadCount: state.count,
+        latestState: state.count >= 3 ? "Stop" : "Careful",
+        safeFileLabel: state.safeFileLabel
+      };
+      strongestLastSeen = state.lastSeenToolCall;
+    }
+  }
+  return strongest;
+}
+
+function activeFullFileReadSummaries(readCounts: Map<string, FileReadState>): ActiveFullFileReadSummary[] {
+  return [...readCounts.entries()].map(([fileIdentityHash, state]) => ({
+    fileIdentityHash,
+    unchangedFullFileReadCount: state.count,
+    safeFileLabel: state.safeFileLabel
+  }));
 }

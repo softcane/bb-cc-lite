@@ -118,6 +118,9 @@ function sanitizeStoredHookEvent(value: unknown): StoredHookEvent | undefined {
     purpose: stringField(record.purpose),
     category: hookCategory(record.category),
     identityHash: stringField(record.identityHash),
+    fileIdentityHash: fileIdentityHash(record.fileIdentityHash),
+    safeFileLabel: safeFileLabel(record.safeFileLabel),
+    readKind: readKind(record.readKind),
     toolCount: numberField(record.toolCount),
     feedbackAction: feedbackAction(record.feedbackAction),
     cooldownKey: stringField(record.cooldownKey)
@@ -212,6 +215,23 @@ function hookCategory(value: unknown): StoredHookEvent["category"] {
 
 function compactionStage(value: unknown): StoredHookEvent["compactionStage"] {
   return value === "pre" || value === "post" ? value : undefined;
+}
+
+function fileIdentityHash(value: unknown): string | undefined {
+  const text = stringField(value);
+  return text && /^[a-f0-9]{16}$/u.test(text) ? text : undefined;
+}
+
+function safeFileLabel(value: unknown): string | undefined {
+  const text = stringField(value);
+  if (!text || /[\\/]/u.test(text)) {
+    return undefined;
+  }
+  return text.length > 80 ? text.slice(0, 80) : text;
+}
+
+function readKind(value: unknown): StoredHookEvent["readKind"] {
+  return value === "full" || value === "partial" ? value : undefined;
 }
 
 function feedbackAction(value: unknown): StoredHookEvent["feedbackAction"] {

@@ -300,6 +300,131 @@ describe("hook control", () => {
     }
   });
 
+  it("returns coach additionalContext before an unchanged repeated full-file Read", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-read-coach-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      await handleHook(successfulReadHook("session-alpha"), {
+        fallbackEventName: "PostToolUse",
+        mode: "coach",
+        learn: false,
+        storePath
+      });
+
+      const response = await handleHook(preToolUseHook("session-alpha", "Read", { file_path: privacySentinels[6] }), {
+        fallbackEventName: "PreToolUse",
+        mode: "coach",
+        learn: false,
+        storePath
+      });
+
+      expect(response).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          additionalContext: expect.stringContaining("already read recently")
+        }
+      });
+      expect(JSON.stringify(response)).not.toContain("permissionDecision");
+      expectNoPrivacySentinels(response, await readFile(storePath, "utf8"));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("denies unchanged repeated full-file Reads in guard mode and allows partial Reads", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-read-guard-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      await handleHook(successfulReadHook("session-alpha"), {
+        fallbackEventName: "PostToolUse",
+        mode: "guard",
+        learn: false,
+        storePath
+      });
+
+      const denied = await handleHook(preToolUseHook("session-alpha", "Read", { file_path: privacySentinels[6] }), {
+        fallbackEventName: "PreToolUse",
+        mode: "guard",
+        learn: false,
+        storePath
+      });
+      const partial = await handleHook(preToolUseHook("session-alpha", "Read", { file_path: privacySentinels[6], limit: 40 }), {
+        fallbackEventName: "PreToolUse",
+        mode: "guard",
+        learn: false,
+        storePath
+      });
+
+      expect(denied).toMatchObject({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: expect.stringContaining("denied this Read")
+        }
+      });
+      expect(partial).toBeUndefined();
+      expectNoPrivacySentinels(denied, partial, await readFile(storePath, "utf8"));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps observe-only Read feedback telemetry-only", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-read-observe-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      await handleHook(successfulReadHook("session-alpha"), {
+        fallbackEventName: "PostToolUse",
+        mode: "observe",
+        learn: false,
+        storePath
+      });
+
+      const response = await handleHook(preToolUseHook("session-alpha", "Read", { file_path: privacySentinels[6] }), {
+        fallbackEventName: "PreToolUse",
+        mode: "observe",
+        learn: false,
+        storePath
+      });
+
+      expect(response).toBeUndefined();
+      expectNoPrivacySentinels(await readFile(storePath, "utf8"));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not deny a full-file Read immediately after compaction clears hook freshness", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-read-compact-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      await handleHook(successfulReadHook("session-alpha"), {
+        fallbackEventName: "PostToolUse",
+        mode: "guard",
+        learn: false,
+        storePath
+      });
+      await handleHook(compactionHook("session-alpha", "PostCompact"), {
+        fallbackEventName: "PostCompact",
+        mode: "guard",
+        learn: false,
+        storePath
+      });
+
+      const response = await handleHook(preToolUseHook("session-alpha", "Read", { file_path: privacySentinels[6] }), {
+        fallbackEventName: "PreToolUse",
+        mode: "guard",
+        learn: false,
+        storePath
+      });
+
+      expect(response).toBeUndefined();
+      expectNoPrivacySentinels(await readFile(storePath, "utf8"));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("blocks Stop once and avoids active stop-hook loops", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-stop-"));
     try {
@@ -383,6 +508,23 @@ function successfulEditHook(sessionId: string): string {
       file_path: privacySentinels[6],
       old_string: "before",
       new_string: privacySentinels[3]
+    },
+    tool_response: {
+      content: privacySentinels[3]
+    },
+    prompt: privacySentinels[0],
+    cwd: privacySentinels[6],
+    transcript_path: join(privacySentinels[6], "transcript.jsonl")
+  });
+}
+
+function successfulReadHook(sessionId: string): string {
+  return JSON.stringify({
+    session_id: `${sessionId}-${privacySentinels[4]}`,
+    hook_event_name: "PostToolUse",
+    tool_name: "Read",
+    tool_input: {
+      file_path: privacySentinels[6]
     },
     tool_response: {
       content: privacySentinels[3]

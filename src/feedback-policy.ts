@@ -1,4 +1,4 @@
-import type { DecisionConfidence, StoredDecision, TranscriptSummary } from "./types.js";
+import type { DecisionConfidence, ReadKind, StoredDecision, TranscriptSummary } from "./types.js";
 
 export type FeedbackMode = "observe" | "coach" | "guard";
 export type FeedbackDelivery = "additional_context" | "stop_block";
@@ -13,6 +13,8 @@ export interface RecentFeedback {
 export interface CurrentHookTool {
   toolName: string;
   purpose?: string;
+  fileIdentityHash?: string;
+  readKind?: ReadKind;
 }
 
 export interface FeedbackPolicyInput {
@@ -65,6 +67,11 @@ export function decideFeedback(input: FeedbackPolicyInput): FeedbackDecision {
   const compactionGoalPreservation = postCompactionGoalPreservationFeedback(input);
   if (compactionGoalPreservation) {
     return compactionGoalPreservation;
+  }
+
+  const readRepeat = redundantReadFeedback(input);
+  if (readRepeat) {
+    return readRepeat;
   }
 
   const coachRetryWarning = coachValidationRetryWarning(input);
@@ -127,6 +134,11 @@ function postCompactionGoalPreservationFeedback(input: FeedbackPolicyInput): Fee
 }
 
 function guardFeedback(input: FeedbackPolicyInput): FeedbackDecision {
+  const readGuard = redundantReadGuardFeedback(input);
+  if (readGuard) {
+    return readGuard;
+  }
+
   const currentCategory = validationCategory(input.currentTool?.purpose);
   if (!currentCategory || input.currentTool?.toolName !== "Bash") {
     return { kind: "none" };
@@ -151,6 +163,73 @@ function guardFeedback(input: FeedbackPolicyInput): FeedbackDecision {
     cooldownKey,
     message: messageFor("guard_validation_retry")
   };
+}
+
+function redundantReadFeedback(input: FeedbackPolicyInput): FeedbackDecision | undefined {
+  if (input.hookEventName !== "PreToolUse" || input.currentTool?.toolName !== "Read") {
+    return undefined;
+  }
+  if (input.mode === "guard") {
+    return redundantReadGuardFeedback(input);
+  }
+  if (input.mode !== "coach") {
+    return undefined;
+  }
+  const repeat = repeatedFullFileReadForCurrentTool(input);
+  if (!repeat) {
+    return undefined;
+  }
+  const cooldownKey = `coach:redundant_read:${repeat.fileIdentityHash}`;
+  if (hasRecentCooldown(input.recentFeedback, cooldownKey)) {
+    return undefined;
+  }
+  return {
+    kind: "coach",
+    delivery: "additional_context",
+    reasonCode: "redundant_read",
+    safeCategory: "tool",
+    confidence: "medium",
+    messageKey: "redundant_read",
+    cooldownKey,
+    message: messageFor("redundant_read")
+  };
+}
+
+function redundantReadGuardFeedback(input: FeedbackPolicyInput): FeedbackDecision | undefined {
+  const repeat = repeatedFullFileReadForCurrentTool(input);
+  if (!repeat) {
+    return undefined;
+  }
+  return {
+    kind: "guard",
+    reasonCode: "guard_redundant_read",
+    safeCategory: "tool",
+    confidence: "high",
+    messageKey: "guard_redundant_read",
+    cooldownKey: `guard:guard_redundant_read:${repeat.fileIdentityHash}`,
+    message: messageFor("guard_redundant_read")
+  };
+}
+
+function repeatedFullFileReadForCurrentTool(input: FeedbackPolicyInput): { fileIdentityHash: string; count: number } | undefined {
+  if (
+    input.hookEventName !== "PreToolUse" ||
+    input.currentTool?.toolName !== "Read" ||
+    input.currentTool.readKind !== "full" ||
+    !input.currentTool.fileIdentityHash
+  ) {
+    return undefined;
+  }
+
+  const match = input.summary.activeFullFileReads?.find(
+    (read) => read.fileIdentityHash === input.currentTool?.fileIdentityHash && read.unchangedFullFileReadCount >= 1
+  );
+  return match
+    ? {
+        fileIdentityHash: match.fileIdentityHash,
+        count: match.unchangedFullFileReadCount
+      }
+    : undefined;
 }
 
 function coachValidationRetryWarning(input: FeedbackPolicyInput): FeedbackDecision | undefined {
@@ -353,6 +432,10 @@ function messageFor(messageKey: string): string {
       return "bb-cc-lite: many tool calls have run without a safe progress signal. Pause, state what changed, and choose one focused next step.";
     case "compaction_goal_preservation":
       return "bb-cc-lite: compaction just finished. Before continuing, restate the current goal, key constraints, and next three steps from existing context.";
+    case "redundant_read":
+      return "bb-cc-lite: this file was already read recently and no edit/write was seen. Use existing context or read a specific range if needed.";
+    case "guard_redundant_read":
+      return "bb-cc-lite denied this Read: this file was already read recently and no edit/write was seen. Read a specific range if needed.";
     case "guard_validation_retry":
       return "bb-cc-lite denied this retry: the same validation category has failed repeatedly without an edit or passing check. Inspect before retrying.";
     case "finish_with_unresolved_risk":

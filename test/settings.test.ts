@@ -144,7 +144,7 @@ describe("settings install and uninstall", () => {
       "Stop"
     ]);
     expect(settings.hooks.UserPromptSubmit).toBeUndefined();
-    expect(settings.hooks.PreToolUse[0].matcher).toBe("Bash");
+    expect(settings.hooks.PreToolUse.map((entry) => entry.matcher).sort()).toEqual(["Bash", "Read"]);
     expect(settings.hooks.PreCompact[0].hooks[0].async).toBe(true);
     expect(settings.hooks.PreCompact[0].hooks[0].timeout).toBe(1);
     expect(settings.hooks.PostCompact[0].hooks[0].async).toBeUndefined();
@@ -190,10 +190,11 @@ describe("settings install and uninstall", () => {
 
     const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
     const settings = await readJson<{
-      hooks: Record<string, Array<{ hooks: Array<{ args: string[] }> }>>;
+      hooks: Record<string, Array<{ matcher: string; hooks: Array<{ args: string[] }> }>>;
     }>(target.settingsPath);
 
-    expect(settings.hooks.PreToolUse[0].hooks[0].args).toContain("guard");
+    expect(settings.hooks.PreToolUse.map((entry) => entry.matcher).sort()).toEqual(["Bash", "Read"]);
+    expect(settings.hooks.PreToolUse.every((entry) => entry.hooks[0].args.includes("guard"))).toBe(true);
     expect(settings.hooks.Stop[0].hooks[0].args).toContain("guard");
   });
 

@@ -156,6 +156,34 @@ describe("optional Claude Code hooks", () => {
     expectNoPrivacySentinels(event);
   });
 
+  it("derives safe hashed file identity for successful full-file Read hooks", () => {
+    const rawPath = privacySentinels[6];
+    const event = parseHookPayload(
+      JSON.stringify({
+        session_id: "session-alpha",
+        hook_event_name: "PostToolUse",
+        tool_name: "Read",
+        tool_input: {
+          file_path: rawPath
+        },
+        tool_response: {
+          content: privacySentinels[3]
+        },
+        prompt: privacySentinels[0]
+      })
+    );
+
+    expect(event).toMatchObject({
+      kind: "tool_success",
+      toolName: "Read",
+      fileIdentityHash: hashValue(rawPath),
+      safeFileLabel: "secret.ts",
+      readKind: "full"
+    });
+    expect(JSON.stringify(event)).not.toContain(rawPath);
+    expectNoPrivacySentinels(event);
+  });
+
   it("returns no derived event for malformed hook payloads", () => {
     expect(parseHookPayload("{", "PreCompact")).toBeUndefined();
     expect(parseHookPayload("[]", "PostCompact")).toBeUndefined();
@@ -473,6 +501,88 @@ describe("optional Claude Code hooks", () => {
       expect(storeText).not.toContain(rawMcpName);
       expect(JSON.stringify(carefulSummary)).not.toContain(rawMcpName);
       expect(JSON.stringify(stopSummary)).not.toContain(rawMcpName);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("turns hook-derived unchanged full-file Reads into redundant-read decisions and resets after NotebookEdit", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-redundant-read-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      const sessionId = "session-alpha";
+      const sessionKey = hashValue(sessionId);
+      const rawPath = privacySentinels[6];
+      for (let count = 0; count < 2; count += 1) {
+        const event = parseHookPayload(
+          JSON.stringify({
+            session_id: sessionId,
+            hook_event_name: "PostToolUse",
+            tool_name: "Read",
+            tool_input: {
+              file_path: rawPath
+            },
+            tool_response: {
+              content: privacySentinels[3]
+            },
+            prompt: privacySentinels[0]
+          })
+        );
+        if (!event) {
+          throw new Error("expected hook event");
+        }
+        await recordHookEvent(event, storePath);
+      }
+
+      const carefulSummary = await hookSummary(sessionKey, storePath);
+      expect(carefulSummary).toMatchObject({
+        readToolCalls: 2,
+        redundantRead: {
+          fileIdentityHash: hashValue(rawPath),
+          unchangedFullFileReadCount: 2,
+          latestState: "Careful",
+          safeFileLabel: "secret.ts"
+        },
+        activeFullFileReads: [
+          {
+            fileIdentityHash: hashValue(rawPath),
+            unchangedFullFileReadCount: 2,
+            safeFileLabel: "secret.ts"
+          }
+        ]
+      });
+      expect(decide(input({ sessionId }), mergeHookSummary(transcript(), carefulSummary))).toMatchObject({
+        state: "Careful",
+        reasonCode: "redundant_read",
+        primaryEvidence: "same file reread twice (secret.ts)"
+      });
+
+      const notebookEdit = parseHookPayload(
+        JSON.stringify({
+          session_id: sessionId,
+          hook_event_name: "PostToolUse",
+          tool_name: "NotebookEdit",
+          tool_input: {
+            notebook_path: rawPath,
+            new_source: privacySentinels[3]
+          },
+          tool_response: {
+            content: privacySentinels[3]
+          },
+          prompt: privacySentinels[0]
+        })
+      );
+      if (!notebookEdit) {
+        throw new Error("expected hook event");
+      }
+      await recordHookEvent(notebookEdit, storePath);
+
+      const resetSummary = await hookSummary(sessionKey, storePath);
+      expect(resetSummary.redundantRead).toBeUndefined();
+      expect(resetSummary.activeFullFileReads).toEqual([]);
+      expectNoPrivacySentinels(carefulSummary);
+      expectNoPrivacySentinels(resetSummary);
+      expectNoPrivacySentinels(await readFile(storePath, "utf8"));
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
