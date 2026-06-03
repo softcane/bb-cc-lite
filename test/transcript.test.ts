@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { renderStatusLine } from "../src/renderer.js";
 import { decide } from "../src/signals.js";
-import { parseTranscriptLines, parseTranscriptTail } from "../src/transcript.js";
+import { TOOL_RESULT_EXPLOSION_THRESHOLD_TOKENS, parseTranscriptLines, parseTranscriptTail } from "../src/transcript.js";
 import type { StatusLineInput } from "../src/types.js";
 
 const privacySentinels = [
@@ -342,6 +342,186 @@ describe("parseTranscriptLines", () => {
     });
     expect(summary.latestUsageTimestamp).toBe("2026-02-03T00:00:01.000Z");
     expect(summary.latestTimestamp).toBe("2026-02-03T00:00:02.000Z");
+  });
+
+  it("tracks small assistant input-token jumps below the tool-result threshold", () => {
+    const summary = parseTranscriptLines([
+      assistantUsageLine(1_000, "2026-02-03T00:00:01.000Z"),
+      toolResultLine("tool-1", "2026-02-03T00:00:02.000Z"),
+      assistantUsageLine(4_900, "2026-02-03T00:00:03.000Z")
+    ]);
+
+    expect(summary.latestInputTokenJump).toEqual({
+      previousInputTokens: 1_000,
+      currentInputTokens: 4_900,
+      inputTokenDelta: 3_900,
+      toolResultCount: 1,
+      thresholdTokens: TOOL_RESULT_EXPLOSION_THRESHOLD_TOKENS,
+      crossedThreshold: false,
+      timestamp: "2026-02-03T00:00:03.000Z"
+    });
+    expect(summary.largestInputTokenJump).toEqual(summary.latestInputTokenJump);
+  });
+
+  it("tracks input-token jumps above 8,000 tokens after one tool result", () => {
+    const summary = parseTranscriptLines([
+      assistantUsageLine(1_000, "2026-02-03T00:00:01.000Z"),
+      toolResultLine("tool-1", "2026-02-03T00:00:02.000Z"),
+      assistantUsageLine(13_400, "2026-02-03T00:00:03.000Z")
+    ]);
+
+    expect(summary.latestInputTokenJump).toMatchObject({
+      previousInputTokens: 1_000,
+      currentInputTokens: 13_400,
+      inputTokenDelta: 12_400,
+      toolResultCount: 1,
+      thresholdTokens: 8_000,
+      crossedThreshold: true
+    });
+    expect(summary.largestInputTokenJump).toEqual(summary.latestInputTokenJump);
+  });
+
+  it("tracks input-token jumps above 8,000 tokens after multiple tool results", () => {
+    const summary = parseTranscriptLines([
+      assistantUsageLine(2_000, "2026-02-03T00:00:01.000Z"),
+      toolResultLine("tool-1", "2026-02-03T00:00:02.000Z"),
+      toolResultLine("tool-2", "2026-02-03T00:00:03.000Z"),
+      assistantUsageLine(15_000, "2026-02-03T00:00:04.000Z")
+    ]);
+
+    expect(summary.latestInputTokenJump).toMatchObject({
+      inputTokenDelta: 13_000,
+      toolResultCount: 2,
+      crossedThreshold: true
+    });
+  });
+
+  it("tracks large input-token jumps with no local tool result without blaming a tool", () => {
+    const summary = parseTranscriptLines([
+      assistantUsageLine(500, "2026-02-03T00:00:01.000Z"),
+      userTextLine("2026-02-03T00:00:02.000Z"),
+      assistantUsageLine(9_500, "2026-02-03T00:00:03.000Z")
+    ]);
+    const decision = decide(input({ contextPercent: 42 }), summary);
+    const rendered = renderStatusLine(decision, 160);
+
+    expect(summary.latestInputTokenJump).toMatchObject({
+      inputTokenDelta: 9_000,
+      toolResultCount: 0,
+      crossedThreshold: true
+    });
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "tool_result_explosion",
+      primaryEvidence: "context jumped by ~9,000 tokens"
+    });
+    expect(rendered).not.toContain("single tool result");
+    expect(rendered).not.toContain("tool output");
+  });
+
+  it("skips assistant records with missing usage fields while keeping the next usage delta safe", () => {
+    const missingPrevious = parseTranscriptLines([
+      assistantWithoutUsageLine("2026-02-03T00:00:01.000Z"),
+      toolResultLine("tool-1", "2026-02-03T00:00:02.000Z"),
+      assistantUsageLine(12_000, "2026-02-03T00:00:03.000Z")
+    ]);
+    const skippedMiddle = parseTranscriptLines([
+      assistantUsageLine(1_000, "2026-02-03T00:00:01.000Z"),
+      assistantWithoutUsageLine("2026-02-03T00:00:02.000Z"),
+      toolResultLine("tool-1", "2026-02-03T00:00:03.000Z"),
+      assistantUsageLine(9_500, "2026-02-03T00:00:04.000Z")
+    ]);
+
+    expect(missingPrevious.latestInputTokenJump).toBeUndefined();
+    expect(skippedMiddle.latestInputTokenJump).toMatchObject({
+      previousInputTokens: 1_000,
+      currentInputTokens: 9_500,
+      inputTokenDelta: 8_500,
+      toolResultCount: 1,
+      crossedThreshold: true
+    });
+  });
+
+  it("ignores negative input-token deltas and deltas across compaction boundaries", () => {
+    const negativeDelta = parseTranscriptLines([
+      assistantUsageLine(20_000, "2026-02-03T00:00:01.000Z"),
+      toolResultLine("tool-1", "2026-02-03T00:00:02.000Z"),
+      assistantUsageLine(12_000, "2026-02-03T00:00:03.000Z")
+    ]);
+    const compacted = parseTranscriptLines([
+      assistantUsageLine(1_000, "2026-02-03T00:00:01.000Z"),
+      toolResultLine("tool-1", "2026-02-03T00:00:02.000Z"),
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:03.000Z",
+        type: "PostCompact"
+      }),
+      assistantUsageLine(12_000, "2026-02-03T00:00:04.000Z")
+    ]);
+
+    expect(negativeDelta.latestInputTokenJump).toBeUndefined();
+    expect(compacted.compactionEvents).toBe(1);
+    expect(compacted.latestInputTokenJump).toBeUndefined();
+  });
+
+  it("keeps token-jump detection resilient across malformed JSONL", () => {
+    const summary = parseTranscriptLines([
+      assistantUsageLine(1_000, "2026-02-03T00:00:01.000Z"),
+      `{"type":"assistant","message":${privacySentinels[0]}`,
+      toolResultLine("tool-1", "2026-02-03T00:00:02.000Z"),
+      assistantUsageLine(10_000, "2026-02-03T00:00:03.000Z")
+    ]);
+
+    expect(summary.malformedLines).toBe(1);
+    expect(summary.latestInputTokenJump).toMatchObject({
+      inputTokenDelta: 9_000,
+      toolResultCount: 1,
+      crossedThreshold: true
+    });
+    expectNoPrivacySentinels(summary);
+  });
+
+  it("keeps token-jump summaries free of raw prompts, tool output, file contents, paths, and session ids", () => {
+    const rawPath = `/tmp/${privacySentinels[3]}/private.ts`;
+    const rawSessionId = `session-${privacySentinels[0]}`;
+    const summary = parseTranscriptLines([
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:01.000Z",
+        type: "assistant",
+        session_id: rawSessionId,
+        raw_path: rawPath,
+        message: {
+          role: "assistant",
+          usage: { input_tokens: 1_000 },
+          content: [{ type: "text", text: privacySentinels[0] }]
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:02.000Z",
+        type: "user",
+        cwd: rawPath,
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-1",
+              is_error: false,
+              content: `${privacySentinels[1]} ${privacySentinels[4]}`
+            }
+          ]
+        }
+      }),
+      assistantUsageLine(13_400, "2026-02-03T00:00:03.000Z")
+    ]);
+
+    expect(summary.latestInputTokenJump).toMatchObject({
+      inputTokenDelta: 12_400,
+      toolResultCount: 1,
+      crossedThreshold: true
+    });
+    expect(JSON.stringify(summary)).not.toContain(rawPath);
+    expect(JSON.stringify(summary)).not.toContain(rawSessionId);
+    expectNoPrivacySentinels(summary);
   });
 
   it("tracks safe tool-step lag after an unvalidated edit", () => {
@@ -913,5 +1093,59 @@ function mcpToolPairs(rawName: string, results: boolean[], offset = 0, title?: s
         }
       })
     ];
+  });
+}
+
+function assistantUsageLine(inputTokens: number, timestamp: string): string {
+  return JSON.stringify({
+    timestamp,
+    type: "assistant",
+    message: {
+      role: "assistant",
+      usage: {
+        input_tokens: inputTokens
+      },
+      content: [{ type: "text", text: privacySentinels[0] }]
+    }
+  });
+}
+
+function assistantWithoutUsageLine(timestamp: string): string {
+  return JSON.stringify({
+    timestamp,
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: privacySentinels[0] }]
+    }
+  });
+}
+
+function toolResultLine(id: string, timestamp: string): string {
+  return JSON.stringify({
+    timestamp,
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: id,
+          is_error: false,
+          content: privacySentinels[1]
+        }
+      ]
+    }
+  });
+}
+
+function userTextLine(timestamp: string): string {
+  return JSON.stringify({
+    timestamp,
+    type: "user",
+    message: {
+      role: "user",
+      content: privacySentinels[0]
+    }
   });
 }

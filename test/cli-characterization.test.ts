@@ -1157,6 +1157,65 @@ describe("CLI behavior characterization", () => {
     }
   });
 
+  it("renders tool-result token jumps through statusline, why, why --json, and store without raw data", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const env = cliEnv(workspace);
+      const rawSessionId = `session-${privacySentinels[6]}`;
+      const transcriptPath = join(workspace.root, "transcripts", "tool-result-explosion.jsonl");
+      await writeTranscript(transcriptPath, toolResultExplosionTranscript());
+
+      const wide = await runCli(["statusline"], {
+        env,
+        input: statusInput({
+          session_id: rawSessionId,
+          transcript_path: transcriptPath,
+          terminal_width: 180
+        })
+      });
+      const narrow = await runCli(["statusline"], {
+        env,
+        input: statusInput({
+          session_id: rawSessionId,
+          transcript_path: transcriptPath,
+          terminal_width: 52
+        })
+      });
+
+      expect(wide.exitCode).toBe(0);
+      expect(wide.stderr).toBe("");
+      expect(wide.stdout).toContain("bb: Careful");
+      expect(wide.stdout).toContain("single tool result added ~12,400 tokens");
+      expect(wide.stdout).toContain("compact or narrow the next step");
+      expect(wide.stdout).not.toContain("bb: Stop");
+      expect(narrow.exitCode).toBe(0);
+      expect(visibleLength(narrow.stdout.trim())).toBeLessThanOrEqual(52);
+      expect(narrow.stdout).toContain("bb: Careful");
+      expect(narrow.stdout).toContain("~12,400");
+
+      const why = await runCli(["why", "--session", rawSessionId], { env });
+      const whyJson = await runCli(["why", "--session", rawSessionId, "--json"], { env });
+      expect(why.exitCode).toBe(0);
+      expect(why.stdout).toContain("Reason: single tool result added ~12,400 tokens.");
+      expect(why.stdout).toContain("Next action: compact or narrow the next step.");
+      expect(whyJson.exitCode).toBe(0);
+      expect(JSON.parse(whyJson.stdout)).toMatchObject({
+        state: "Careful",
+        reasonCode: "tool_result_explosion",
+        primaryEvidence: "single tool result added ~12,400 tokens"
+      });
+
+      const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
+      expect(storeText).toContain("tool_result_explosion");
+      expectNoPrivacySentinels(wide.stdout, narrow.stdout, why.stdout, whyJson.stdout, storeText);
+      for (const rawPath of [workspace.root, workspace.projectDir, workspace.homeDir, workspace.appHome, transcriptPath]) {
+        expect([wide.stdout, narrow.stdout, why.stdout, whyJson.stdout, storeText].join("\n")).not.toContain(rawPath);
+      }
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
   it("keeps end-to-end CLI QA surfaces free of forbidden raw data sentinels", async () => {
     const workspace = await createTempWorkspace();
     try {
@@ -1806,6 +1865,52 @@ function compactionTranscript(): string[] {
         cache_read_input_tokens: 50
       },
       content: privacySentinels[3]
+    })
+  ];
+}
+
+function toolResultExplosionTranscript(): string[] {
+  return [
+    JSON.stringify({
+      timestamp: "2026-05-19T00:11:00.000Z",
+      type: "assistant",
+      session_id: privacySentinels[6],
+      cwd: privacySentinels[4],
+      message: {
+        role: "assistant",
+        usage: {
+          input_tokens: 1_000
+        },
+        content: [{ type: "text", text: privacySentinels[0] }]
+      }
+    }),
+    JSON.stringify({
+      timestamp: "2026-05-19T00:11:01.000Z",
+      type: "user",
+      cwd: privacySentinels[4],
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "private-result",
+            is_error: false,
+            content: `${privacySentinels[1]} ${privacySentinels[3]} ${privacySentinels[4]}`
+          }
+        ]
+      }
+    }),
+    JSON.stringify({
+      timestamp: "2026-05-19T00:11:02.000Z",
+      type: "assistant",
+      session_id: privacySentinels[6],
+      message: {
+        role: "assistant",
+        usage: {
+          input_tokens: 13_400
+        },
+        content: [{ type: "text", text: "derived assistant text not retained" }]
+      }
     })
   ];
 }

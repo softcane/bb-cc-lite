@@ -45,6 +45,16 @@ export interface RedundantReadSummary {
   safeFileLabel?: string;
 }
 
+export interface InputTokenJumpSummary {
+  previousInputTokens: number;
+  currentInputTokens: number;
+  inputTokenDelta: number;
+  toolResultCount: number;
+  thresholdTokens: number;
+  crossedThreshold: boolean;
+  timestamp?: string;
+}
+
 export type FailureRecoveryCategory =
   | "tests"
   | "lint"
@@ -108,6 +118,8 @@ export interface TranscriptSummary {
   latestTimestamp?: string;
   latestCompactionTimestamp?: string;
   redundantRead?: RedundantReadSummary;
+  latestInputTokenJump?: InputTokenJumpSummary;
+  largestInputTokenJump?: InputTokenJumpSummary;
 }
 
 export type HookEventKind =

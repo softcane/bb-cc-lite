@@ -4,7 +4,9 @@ import { hashValue } from "./paths.js";
 import { classifyResultPurpose, classifyToolIdentity } from "./tool-metadata.js";
 import { readTranscriptTail, type ReadTranscriptTailOptions } from "./transcript-reader.js";
 import type { ProjectConfig } from "./project-config.js";
-import type { RedundantReadSummary, ToolFailureSummary, TokenUsage, TranscriptSummary } from "./types.js";
+import type { InputTokenJumpSummary, RedundantReadSummary, ToolFailureSummary, TokenUsage, TranscriptSummary } from "./types.js";
+
+export const TOOL_RESULT_EXPLOSION_THRESHOLD_TOKENS = 8_000;
 
 export type ParseTranscriptOptions = ReadTranscriptTailOptions & {
   projectConfig?: ProjectConfig;
@@ -73,6 +75,11 @@ export function parseTranscriptLines(
   let latestUsageTimestamp: string | undefined;
   let latestTimestamp: string | undefined;
   let latestCompactionTimestamp: string | undefined;
+  let previousAssistantInputTokens: number | undefined;
+  let toolResultsSincePreviousAssistantUsage = 0;
+  let resetBoundarySincePreviousAssistantUsage = false;
+  let latestInputTokenJump: InputTokenJumpSummary | undefined;
+  let largestInputTokenJump: InputTokenJumpSummary | undefined;
   const fullFileReadCounts = new Map<string, FileReadState>();
   let redundantRead: RedundantReadSummary | undefined;
 
@@ -106,8 +113,29 @@ export function parseTranscriptLines(
       compactionEvents += 1;
       postCompactionActivity = 0;
       latestCompactionTimestamp = entryTimestamp || latestCompactionTimestamp;
+      resetBoundarySincePreviousAssistantUsage = true;
     } else if (compactionEvents > 0 && isPostCompactionActivity(entry, toolUses, toolResults)) {
       postCompactionActivity += 1;
+    }
+
+    const assistantInputTokens = assistantMessageInputTokens(entry);
+    if (assistantInputTokens !== undefined) {
+      const jump = inputTokenJumpSummary({
+        previousInputTokens: previousAssistantInputTokens,
+        currentInputTokens: assistantInputTokens,
+        toolResultCount: toolResultsSincePreviousAssistantUsage,
+        resetBoundary: resetBoundarySincePreviousAssistantUsage,
+        timestamp: entryTimestamp
+      });
+      if (jump) {
+        latestInputTokenJump = jump;
+        if (!largestInputTokenJump || jump.inputTokenDelta >= largestInputTokenJump.inputTokenDelta) {
+          largestInputTokenJump = jump;
+        }
+      }
+      previousAssistantInputTokens = assistantInputTokens;
+      toolResultsSincePreviousAssistantUsage = 0;
+      resetBoundarySincePreviousAssistantUsage = false;
     }
 
     for (const toolUse of toolUses) {
@@ -143,6 +171,7 @@ export function parseTranscriptLines(
     }
 
     for (const toolResult of toolResults) {
+      toolResultsSincePreviousAssistantUsage += 1;
       toolResultStep += 1;
       const meta =
         (toolResult.toolUseId ? toolById.get(toolResult.toolUseId) : undefined) ||
@@ -223,7 +252,9 @@ export function parseTranscriptLines(
     latestUsageTimestamp,
     latestTimestamp,
     latestCompactionTimestamp,
-    redundantRead
+    redundantRead,
+    latestInputTokenJump,
+    largestInputTokenJump
   };
 }
 
@@ -358,6 +389,40 @@ function hasUsage(usage: TokenUsage): boolean {
     usage.cacheReadInputTokens !== undefined ||
     usage.totalTokens !== undefined
   );
+}
+
+function assistantMessageInputTokens(entry: Record<string, unknown>): number | undefined {
+  const message = asRecord(entry.message);
+  const role = stringField(message?.role) || stringField(entry.role) || stringField(entry.type);
+  if (role !== "assistant") {
+    return undefined;
+  }
+  return extractUsage(message).inputTokens;
+}
+
+function inputTokenJumpSummary(args: {
+  previousInputTokens: number | undefined;
+  currentInputTokens: number;
+  toolResultCount: number;
+  resetBoundary: boolean;
+  timestamp?: string;
+}): InputTokenJumpSummary | undefined {
+  if (args.previousInputTokens === undefined || args.resetBoundary) {
+    return undefined;
+  }
+  const inputTokenDelta = args.currentInputTokens - args.previousInputTokens;
+  if (inputTokenDelta <= 0) {
+    return undefined;
+  }
+  return {
+    previousInputTokens: args.previousInputTokens,
+    currentInputTokens: args.currentInputTokens,
+    inputTokenDelta,
+    toolResultCount: args.toolResultCount,
+    thresholdTokens: TOOL_RESULT_EXPLOSION_THRESHOLD_TOKENS,
+    crossedThreshold: inputTokenDelta >= TOOL_RESULT_EXPLOSION_THRESHOLD_TOKENS,
+    timestamp: args.timestamp
+  };
 }
 
 function extractToolUses(entry: Record<string, unknown>): Array<{ id?: string; name: string; input?: unknown }> {

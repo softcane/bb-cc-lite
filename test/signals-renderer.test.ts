@@ -34,6 +34,18 @@ function transcript(overrides: Partial<TranscriptSummary> = {}): TranscriptSumma
   };
 }
 
+function tokenJump(inputTokenDelta: number, toolResultCount: number, crossedThreshold = true): NonNullable<TranscriptSummary["latestInputTokenJump"]> {
+  return {
+    previousInputTokens: 1_000,
+    currentInputTokens: 1_000 + inputTokenDelta,
+    inputTokenDelta,
+    toolResultCount,
+    thresholdTokens: 8_000,
+    crossedThreshold,
+    timestamp: "2026-02-03T00:00:03.000Z"
+  };
+}
+
 function visibleLength(value: string): number {
   // Test helper mirrors renderer ANSI stripping.
   // eslint-disable-next-line no-control-regex
@@ -449,6 +461,105 @@ describe("signals and renderer", () => {
       action: "ask Claude to run the smallest relevant check"
     });
     expect(renderStatusLine(decision, 120)).toContain("edits have not been checked yet");
+  });
+
+  it("warns carefully on a single-tool-result input-token jump without escalating to Stop", () => {
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        latestInputTokenJump: tokenJump(12_400, 1),
+        largestInputTokenJump: tokenJump(12_400, 1)
+      })
+    );
+    const rendered = stripAnsi(renderStatusLine(decision, 140));
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "tool_result_explosion",
+      diagnosisCode: "tool_result_explosion",
+      diagnosis: "single tool result added ~12,400 tokens",
+      primaryEvidence: "single tool result added ~12,400 tokens",
+      impact: "One tool result was the only local tool output before the jump",
+      action: "compact or narrow the next step"
+    });
+    expect(decision.state).not.toBe("Stop");
+    expect(rendered).toContain("bb: Careful | single tool result added ~12,400 tokens");
+    expect(rendered).toContain("compact or narrow the next step");
+    expect(formatWhy(decision)).toContain("Reason: single tool result added ~12,400 tokens.");
+  });
+
+  it("uses tool-output-batch wording for multiple tool results and stays width-aware", () => {
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        latestInputTokenJump: tokenJump(12_400, 2),
+        largestInputTokenJump: tokenJump(12_400, 2)
+      })
+    );
+    const rendered = stripAnsi(renderStatusLine(decision, 80));
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "tool_result_explosion",
+      primaryEvidence: "context jumped by ~12,400 tokens after tool output batch",
+      impact: "Token-jump heuristic from usage counters; recent tool output may be too broad"
+    });
+    expect(visibleLength(rendered)).toBeLessThanOrEqual(80);
+    expect(rendered).toContain("context jumped by ~12,400 tokens after tool output batch");
+    expect(rendered).not.toContain("single tool result");
+  });
+
+  it("does not blame a tool when a large input-token jump has no local tool result", () => {
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        latestInputTokenJump: tokenJump(12_400, 0),
+        largestInputTokenJump: tokenJump(12_400, 0)
+      })
+    );
+    const rendered = stripAnsi(renderStatusLine(decision, 70));
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "tool_result_explosion",
+      primaryEvidence: "context jumped by ~12,400 tokens",
+      impact: "Token-jump heuristic from usage counters; no local tool result was in that interval"
+    });
+    expect(visibleLength(rendered)).toBeLessThanOrEqual(70);
+    expect(rendered).toContain("context jumped by ~12,400 tokens");
+    expect(rendered).not.toContain("tool result");
+    expect(rendered).not.toContain("tool output");
+  });
+
+  it("uses the largest crossed input-token jump when the latest jump is below threshold", () => {
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        latestInputTokenJump: tokenJump(900, 0, false),
+        largestInputTokenJump: tokenJump(12_400, 3)
+      })
+    );
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "tool_result_explosion",
+      primaryEvidence: "context jumped by ~12,400 tokens after tool output batch"
+    });
+  });
+
+  it("keeps hard Stop rules ahead of the token-jump Careful signal", () => {
+    const decision = decide(
+      input({ contextPercent: 93 }),
+      transcript({
+        latestInputTokenJump: tokenJump(12_400, 1),
+        largestInputTokenJump: tokenJump(12_400, 1)
+      })
+    );
+
+    expect(decision).toMatchObject({
+      state: "Stop",
+      reasonCode: "context_critical"
+    });
   });
 
   it("uses plain edit-check wording when an unvalidated edit is unusual", () => {

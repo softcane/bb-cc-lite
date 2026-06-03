@@ -341,6 +341,28 @@ export function decide(
     });
   }
 
+  const tokenJump = strongestCrossedInputTokenJump(transcript);
+  if (tokenJump) {
+    const primaryEvidence = inputTokenJumpEvidence(tokenJump);
+    return baseDecision({
+      state: "Careful",
+      reasonCode: "tool_result_explosion",
+      diagnosisCode: "tool_result_explosion",
+      diagnosis: primaryEvidence,
+      confidence: "medium",
+      primaryEvidence,
+      impact: inputTokenJumpImpact(tokenJump),
+      action: "compact or narrow the next step",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
   if (contextPercent !== undefined && contextPercent >= 80) {
     return baseDecision({
       state: "Careful",
@@ -796,12 +818,44 @@ function redundantReadEvidence(redundantRead: TranscriptSummary["redundantRead"]
   return `same file reread ${formatFailureCount(redundantRead.unchangedFullFileReadCount)}${label}`;
 }
 
+function strongestCrossedInputTokenJump(transcript: TranscriptSummary): TranscriptSummary["latestInputTokenJump"] {
+  if (transcript.latestInputTokenJump?.crossedThreshold) {
+    return transcript.latestInputTokenJump;
+  }
+  return transcript.largestInputTokenJump?.crossedThreshold ? transcript.largestInputTokenJump : undefined;
+}
+
+function inputTokenJumpEvidence(jump: NonNullable<TranscriptSummary["latestInputTokenJump"]>): string {
+  const delta = `~${formatWholeNumber(jump.inputTokenDelta)}`;
+  if (jump.toolResultCount === 1) {
+    return `single tool result added ${delta} tokens`;
+  }
+  if (jump.toolResultCount > 1) {
+    return `context jumped by ${delta} tokens after tool output batch`;
+  }
+  return `context jumped by ${delta} tokens`;
+}
+
+function inputTokenJumpImpact(jump: NonNullable<TranscriptSummary["latestInputTokenJump"]>): string {
+  if (jump.toolResultCount === 1) {
+    return "One tool result was the only local tool output before the jump";
+  }
+  if (jump.toolResultCount > 1) {
+    return "Token-jump heuristic from usage counters; recent tool output may be too broad";
+  }
+  return "Token-jump heuristic from usage counters; no local tool result was in that interval";
+}
+
 function validationPurposeLabel(purpose: ValidationPurpose): string {
   return purpose === "tests" ? "tests" : purpose;
 }
 
 function formatFailureCount(count: number): string {
   return count === 2 ? "twice" : `${count}x`;
+}
+
+function formatWholeNumber(value: number): string {
+  return Math.round(value).toString().replace(/\B(?=(\d{3})+(?!\d))/gu, ",");
 }
 
 function normalizeBudgetThresholds(thresholds: BudgetThresholds | undefined): NormalizedBudgetThresholds {
