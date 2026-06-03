@@ -43,7 +43,11 @@ Humans usually notice too late: after the same check has failed three times, aft
 - Repeated test, lint, typecheck, or build failures.
 - Long edit streaks without a test, lint, typecheck, or build check.
 - Busy sessions with many tool calls but no observed check or recovery.
+- Repeated full-file reads of the same unchanged file.
+- Large tool results that suddenly add thousands of input tokens.
+- Cache reuse dropping after it was working well.
 - Context pressure before the session gets too full to reason clearly.
+- Compaction boundaries where Claude should restate the goal before continuing.
 - Cost and time budget warnings that make a stuck session easier to spot.
 - Local baseline patterns, when there is enough aggregate local history.
 
@@ -63,7 +67,7 @@ Humans usually notice too late: after the same check has failed three times, aft
 
 `coach` is the default. It keeps the status line and can send short, safe Claude-facing notes when a risky pattern is visible, such as repeated validation failure, unchecked edits, high budget with no progress signal, or unresolved validation risk at finish.
 
-`guard` includes coach feedback. It may deny a high-confidence repeated Bash validation retry, such as rerunning the same test/lint/typecheck/build category after repeated failures without an edit or passing check. It may also deny an unchanged repeated full-file `Read` before the file content is injected. It does not broadly block normal reads, partial reads, edits, or arbitrary commands.
+`guard` includes coach feedback. It may deny a high-confidence repeated Bash validation retry, such as rerunning the same test/lint/typecheck/build category after repeated failures without an edit or passing check. It does not broadly block normal reads, edits, or arbitrary commands.
 
 `bb-cc-lite` also records safe feedback outcomes. For example, if bb asks Claude to validate after an edit and Claude runs a passing test, `bb-cc-lite why` can show that the feedback was resolved.
 
@@ -187,6 +191,14 @@ It recognizes common Bash validation commands and groups them into safe categori
 
 Those categories are used for retry-loop detection, recovery baselines, coach feedback, and guard-mode retry denial.
 
+## Session Signals
+
+Some warnings are not about tests. They are about the session shape.
+
+`bb-cc-lite` can notice when Claude rereads the same unchanged file, when one tool result makes the next turn much larger, when prompt-cache reuse drops, or when a compaction boundary needs a quick goal check.
+
+These signals are intentionally simple. They do not inspect raw prompts, tool output, or file contents. They use derived metadata from the status input and transcript tail.
+
 ## Project-Specific Checks
 
 If your project uses custom validation commands, you can add an optional `.bb-cc-lite.json`:
@@ -207,6 +219,9 @@ This file is not generated automatically. It is only needed when you want to tea
 
 - Claude keeps retrying the same failing test.
 - Claude edits many files without running checks.
+- Claude rereads the same file as if it forgot the current context.
+- One tool response suddenly bloats the next turn.
+- Cache reuse drops and the session starts getting more expensive per turn.
 - Context is getting high and reasoning quality may drop.
 - Cost or time is climbing but validation is not improving.
 - A session has many tool calls but no clear recovery signal.
@@ -217,9 +232,11 @@ This file is not generated automatically. It is only needed when you want to tea
 
 `bb-cc-lite` is local-first. There is no cloud backend, SaaS dashboard, transcript upload, proxy, gateway, or message router.
 
-The health event store and baselines use derived metadata only: state, reason code, counts, rates, percentiles, confidence labels, feedback outcomes such as `resolved` or `ignored`, safe categories such as `tests`, token/cost/context fields, timestamps, weak pattern labels, hashed session keys, and hashed project keys.
+The health event store and baselines use derived metadata only: state, reason code, counts, rates, percentiles, confidence labels, feedback outcomes such as `resolved` or `ignored`, safe categories such as `tests`, token/cost/context fields, timestamps, weak pattern labels, hashed file identities, hashed session keys, and hashed project keys.
 
 The health data is designed not to store prompts, assistant text, tool output, shell output, command arguments, file contents, transcript paths, workspace paths, API keys, raw Claude session ids, or raw MCP names.
+
+For repeated-read warnings, bb may show a short basename-style hint such as `auth.ts`. It does not store or print the full local path.
 
 Local files live under `~/.claude/bb-cc-lite` by default, unless `BB_CC_LITE_HOME` or other override environment variables are set. This includes:
 
@@ -242,7 +259,11 @@ bb: Careful | estimated cost $2.25 | ask Claude to summarize progress before con
 bb: Careful | session ran 1h plus 9 non-read tool calls, no check or recovery seen | pause and ask what changed before continuing
 bb: Careful | ctx 83% | ask Claude for a 6-bullet handoff before more work
 bb: Careful | compaction event seen | ask Claude to restate current goal and next 3 steps
+bb: Careful | same file reread twice (auth.ts) | ask Claude to use existing context before rereading
+bb: Careful | single tool result added ~12,400 tokens | compact or narrow the next step
+bb: Careful | cache reuse dropped from 68% to 29% | keep the next prompt narrow
 bb: Careful | tests failed twice; usually passes after one targeted fix | inspect first failure
+bb: Stop | why: same file reread 3x (auth.ts) | do: stop and ask why the same file is needed again
 bb: Stop | why: same test retried after feedback | do: inspect first failure
 bb: Stop | why: test loop rarely recovered after 3 failures | do: stop retrying and inspect first failure
 ```
