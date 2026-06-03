@@ -38,6 +38,13 @@ export interface ToolFailureSummary {
   identityHash?: string;
 }
 
+export interface RedundantReadSummary {
+  fileIdentityHash: string;
+  unchangedFullFileReadCount: number;
+  latestState: Extract<DecisionState, "Careful" | "Stop">;
+  safeFileLabel?: string;
+}
+
 export type FailureRecoveryCategory =
   | "tests"
   | "lint"
@@ -100,6 +107,7 @@ export interface TranscriptSummary {
   latestUsageTimestamp?: string;
   latestTimestamp?: string;
   latestCompactionTimestamp?: string;
+  redundantRead?: RedundantReadSummary;
 }
 
 export type HookEventKind =

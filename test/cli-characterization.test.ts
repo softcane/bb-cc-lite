@@ -1250,6 +1250,19 @@ describe("CLI behavior characterization", () => {
         ]
       },
       {
+        name: "three redundant full-file reads",
+        input: {
+          session_id: "fixture-redundant-reads",
+          terminal_width: 180
+        },
+        transcript: redundantReadTranscript(3),
+        expected: [
+          "bb: Stop",
+          "why: same file reread 3x",
+          "do: stop and ask why the same file is needed again"
+        ]
+      },
+      {
         name: "high context",
         input: {
           session_id: "fixture-high-context",
@@ -1419,6 +1432,43 @@ function repeatedFailedTestTranscript(count: number): string[] {
   ]);
 }
 
+function redundantReadTranscript(count: number): string[] {
+  return Array.from({ length: count }, (_value, index) => index + 1).flatMap((index) => [
+    JSON.stringify({
+      timestamp: `2026-05-19T00:02:0${index}.000Z`,
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id: `read-${index}`,
+            name: "Read",
+            input: {
+              file_path: privacySentinels[4]
+            }
+          }
+        ]
+      }
+    }),
+    JSON.stringify({
+      timestamp: `2026-05-19T00:02:1${index}.000Z`,
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: `read-${index}`,
+            is_error: false,
+            content: privacySentinels[3]
+          }
+        ]
+      }
+    })
+  ]);
+}
+
 function claudeProjectDirectoryName(projectDir: string): string {
   return resolve(projectDir).replaceAll(/[\\/]/gu, "-");
 }
@@ -1516,7 +1566,7 @@ function unvalidatedEditTranscript(extraToolResultsAfterEdit = 0): string[] {
               id: `post-edit-read-${index}`,
               name: "Read",
               input: {
-                file_path: privacySentinels[4]
+                file_path: `${privacySentinels[4]}.${index}`
               }
             }
           ]
@@ -1743,7 +1793,7 @@ function readHeavyTranscript(): string[] {
             id: `read-${index}`,
             name: index % 2 === 0 ? "Read" : "Grep",
             input: {
-              file_path: privacySentinels[4],
+              file_path: `${privacySentinels[4]}.${index}`,
               pattern: privacySentinels[0]
             }
           }

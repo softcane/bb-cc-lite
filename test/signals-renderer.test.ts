@@ -85,6 +85,67 @@ describe("signals and renderer", () => {
     });
   });
 
+  it("warns on the second unchanged full-file Read with concise private-path-safe output", () => {
+    const rawPath = "/tmp/bb-cc-lite/private/worktree/src/secret.ts";
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        toolCalls: 2,
+        readToolCalls: 2,
+        redundantRead: {
+          fileIdentityHash: "safe-file-hash",
+          unchangedFullFileReadCount: 2,
+          latestState: "Careful",
+          safeFileLabel: "secret.ts"
+        }
+      })
+    );
+    const rendered = stripAnsi(renderStatusLine(decision, 90));
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "redundant_read",
+      diagnosisCode: "redundant_read_loop",
+      diagnosis: "same file reread twice",
+      primaryEvidence: "same file reread twice (secret.ts)",
+      action: "ask Claude to use existing context before rereading"
+    });
+    expect(rendered).toContain("bb: Careful | same file reread twice");
+    expect(visibleLength(rendered)).toBeLessThanOrEqual(90);
+    expect(rendered).not.toContain(rawPath);
+  });
+
+  it("stops on the third unchanged full-file Read with short why wording", () => {
+    const rawPath = "/tmp/bb-cc-lite/private/worktree/src/secret.ts";
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        toolCalls: 3,
+        readToolCalls: 3,
+        redundantRead: {
+          fileIdentityHash: "safe-file-hash",
+          unchangedFullFileReadCount: 3,
+          latestState: "Stop",
+          safeFileLabel: "secret.ts"
+        }
+      })
+    );
+    const rendered = stripAnsi(renderStatusLine(decision, 120));
+
+    expect(decision).toMatchObject({
+      state: "Stop",
+      reasonCode: "redundant_read_loop",
+      diagnosisCode: "redundant_read_loop",
+      diagnosis: "same file reread 3x",
+      primaryEvidence: "same file reread 3x (secret.ts)",
+      impact: "Claude is rereading an unchanged file",
+      action: "stop and ask why the same file is needed again"
+    });
+    expect(rendered).toContain("bb: Stop | why: same file reread 3x");
+    expect(visibleLength(rendered)).toBeLessThanOrEqual(120);
+    expect(rendered).not.toContain(rawPath);
+  });
+
   it("prefers blind retry wording over generic repeated failure at Careful and Stop", () => {
     const careful = decide(
       input({ contextPercent: 42 }),

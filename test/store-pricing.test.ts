@@ -116,6 +116,36 @@ describe("store and pricing", () => {
     }
   });
 
+  it("persists redundant-read decisions without raw full file paths", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-store-redundant-read-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      const rawPath = "/tmp/bb-cc-lite/private/worktree/src/secret.ts";
+      const decision = decide(
+        input({ sessionId: "session-alpha" }),
+        transcript({
+          toolCalls: 3,
+          readToolCalls: 3,
+          redundantRead: {
+            fileIdentityHash: hashValue(rawPath) || "safe-file-hash",
+            unchangedFullFileReadCount: 3,
+            latestState: "Stop",
+            safeFileLabel: "secret.ts"
+          }
+        })
+      );
+
+      await recordDecision(decision, storePath);
+
+      const storeText = await readFile(storePath, "utf8");
+      expect(storeText).toContain("redundant_read_loop");
+      expect(storeText).toContain("secret.ts");
+      expect(storeText).not.toContain(rawPath);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("drops malformed legacy decisions with raw-data fields before why can print them", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-store-legacy-"));
     try {

@@ -82,6 +82,25 @@ describe("why feedback ledger", () => {
     expect(serialized).not.toContain("\u001b[");
   });
 
+  it("formats redundant-read decisions without printing raw full paths", () => {
+    const rawPath = "/tmp/bb-cc-lite/private/worktree/src/secret.ts";
+    const rendered = formatWhy(
+      decision({
+        state: "Stop",
+        reasonCode: "redundant_read_loop",
+        primaryEvidence: "same file reread 3x (secret.ts)",
+        evidence: [{ label: "same file reread 3x (secret.ts)" }],
+        impact: "Claude is rereading an unchanged file",
+        action: "stop and ask why the same file is needed again"
+      }),
+      { color: false }
+    );
+
+    expect(rendered).toContain("Reason: same file reread 3x (secret.ts).");
+    expect(rendered).toContain("Next action: stop and ask why the same file is needed again.");
+    expect(rendered).not.toContain(rawPath);
+  });
+
   it("remains helpful when no feedback outcomes exist", () => {
     const rendered = formatWhy(decision({ state: "Careful", reasonCode: "context_high" }), {
       feedbackOutcomes: [],

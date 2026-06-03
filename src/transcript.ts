@@ -1,9 +1,10 @@
 import { asRecord, extractUsage, mergeUsage, stringField } from "./status-input.js";
 import { extractFailureEpisodesFromTranscriptLines, summarizeBlindRetry } from "./failure-episodes.js";
+import { hashValue } from "./paths.js";
 import { classifyResultPurpose, classifyToolIdentity } from "./tool-metadata.js";
 import { readTranscriptTail, type ReadTranscriptTailOptions } from "./transcript-reader.js";
 import type { ProjectConfig } from "./project-config.js";
-import type { ToolFailureSummary, TokenUsage, TranscriptSummary } from "./types.js";
+import type { RedundantReadSummary, ToolFailureSummary, TokenUsage, TranscriptSummary } from "./types.js";
 
 export type ParseTranscriptOptions = ReadTranscriptTailOptions & {
   projectConfig?: ProjectConfig;
@@ -14,8 +15,20 @@ interface ToolMeta {
   purpose?: string;
   category?: "MCP";
   identityHash?: string;
+  fileIdentityHash?: string;
   isEdit: boolean;
   isReadSearch: boolean;
+}
+
+interface FileReadState {
+  count: number;
+  lastSeenToolCall: number;
+  safeFileLabel?: string;
+}
+
+interface FileIdentity {
+  fileIdentityHash: string;
+  safeFileLabel?: string;
 }
 
 export async function parseTranscriptTail(
@@ -60,6 +73,8 @@ export function parseTranscriptLines(
   let latestUsageTimestamp: string | undefined;
   let latestTimestamp: string | undefined;
   let latestCompactionTimestamp: string | undefined;
+  const fullFileReadCounts = new Map<string, FileReadState>();
+  let redundantRead: RedundantReadSummary | undefined;
 
   for (const line of lines) {
     let parsed: unknown;
@@ -101,12 +116,23 @@ export function parseTranscriptLines(
       if (identity.isReadSearch) {
         readToolCalls += 1;
       }
+      const fileIdentity = fileIdentityFromToolInput(identity.displayName, toolUse.input);
+      if (identity.displayName === "Read" && fileIdentity && isFullFileRead(toolUse.input)) {
+        const existing = fullFileReadCounts.get(fileIdentity.fileIdentityHash);
+        fullFileReadCounts.set(fileIdentity.fileIdentityHash, {
+          count: (existing?.count || 0) + 1,
+          lastSeenToolCall: toolCalls,
+          safeFileLabel: fileIdentity.safeFileLabel || existing?.safeFileLabel
+        });
+        redundantRead = strongestActiveRedundantRead(fullFileReadCounts);
+      }
       if (toolUse.id) {
         toolById.set(toolUse.id, {
           name: identity.displayName,
           purpose: identity.purpose,
           category: identity.category,
           identityHash: identity.identityHash,
+          fileIdentityHash: fileIdentity?.fileIdentityHash,
           isEdit: identity.isEdit,
           isReadSearch: identity.isReadSearch
         });
@@ -139,6 +165,10 @@ export function parseTranscriptLines(
           successfulEditResults += 1;
           hasUnvalidatedEdits = true;
           unvalidatedEditStep = toolResultStep;
+          if (meta.fileIdentityHash) {
+            fullFileReadCounts.delete(meta.fileIdentityHash);
+            redundantRead = strongestActiveRedundantRead(fullFileReadCounts);
+          }
         } else if (isValidation) {
           validationSuccesses += 1;
           if (validationFailedSinceSuccess) {
@@ -192,7 +222,8 @@ export function parseTranscriptLines(
     latestUsage,
     latestUsageTimestamp,
     latestTimestamp,
-    latestCompactionTimestamp
+    latestCompactionTimestamp,
+    redundantRead
   };
 }
 
@@ -231,6 +262,7 @@ function metaFromToolName(toolName: string, projectConfig: ProjectConfig | undef
     purpose: identity.purpose,
     category: identity.category,
     identityHash: identity.identityHash,
+    fileIdentityHash: undefined,
     isEdit: identity.isEdit,
     isReadSearch: identity.isReadSearch
   };
@@ -255,6 +287,67 @@ function failureSummary(meta: ToolMeta, purpose: string | undefined, count: numb
     summary.identityHash = meta.identityHash;
   }
   return summary;
+}
+
+function fileIdentityFromToolInput(toolName: string, input: unknown): FileIdentity | undefined {
+  const root = asRecord(input);
+  if (!root) {
+    return undefined;
+  }
+  const rawPath = stringField(root.file_path) || (toolName === "NotebookEdit" ? stringField(root.notebook_path) : undefined);
+  const fileIdentityHash = hashValue(rawPath);
+  return fileIdentityHash
+    ? {
+        fileIdentityHash,
+        safeFileLabel: safeFileLabel(rawPath)
+      }
+    : undefined;
+}
+
+function isFullFileRead(input: unknown): boolean {
+  const root = asRecord(input);
+  return Boolean(root && root.offset === undefined && root.limit === undefined);
+}
+
+function strongestActiveRedundantRead(readCounts: Map<string, FileReadState>): RedundantReadSummary | undefined {
+  let strongest: RedundantReadSummary | undefined;
+  let strongestLastSeen = -1;
+  for (const [fileIdentityHash, state] of readCounts) {
+    if (state.count < 2) {
+      continue;
+    }
+    if (
+      !strongest ||
+      state.count > strongest.unchangedFullFileReadCount ||
+      (state.count === strongest.unchangedFullFileReadCount && state.lastSeenToolCall >= strongestLastSeen)
+    ) {
+      strongest = {
+        fileIdentityHash,
+        unchangedFullFileReadCount: state.count,
+        latestState: state.count >= 3 ? "Stop" : "Careful",
+        safeFileLabel: state.safeFileLabel
+      };
+      strongestLastSeen = state.lastSeenToolCall;
+    }
+  }
+  return strongest;
+}
+
+function safeFileLabel(filePath: string | undefined): string | undefined {
+  if (!filePath) {
+    return undefined;
+  }
+  const segment = filePath.split(/[\\/]+/u).filter(Boolean).at(-1);
+  if (!segment || segment === "." || segment === "..") {
+    return undefined;
+  }
+  // Keep only a basename-style hint; never retain the full local path.
+  // eslint-disable-next-line no-control-regex
+  const label = segment.replace(/[\u0000-\u001f\u007f]+/gu, " ").replace(/\s+/gu, " ").trim();
+  if (!label) {
+    return undefined;
+  }
+  return label.length > 80 ? `${label.slice(0, 77)}...` : label;
 }
 
 function hasUsage(usage: TokenUsage): boolean {

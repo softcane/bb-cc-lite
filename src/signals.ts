@@ -204,6 +204,27 @@ export function decide(
     });
   }
 
+  if ((transcript.redundantRead?.unchangedFullFileReadCount || 0) >= 3) {
+    const readCount = transcript.redundantRead?.unchangedFullFileReadCount || 3;
+    return baseDecision({
+      state: "Stop",
+      reasonCode: "redundant_read_loop",
+      diagnosisCode: "redundant_read_loop",
+      diagnosis: `same file reread ${formatFailureCount(readCount)}`,
+      confidence: "high",
+      primaryEvidence: redundantReadEvidence(transcript.redundantRead),
+      impact: "Claude is rereading an unchanged file",
+      action: "stop and ask why the same file is needed again",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
   if (transcript.blindRetry && transcript.blindRetry.blindRetryFailureCount >= 2) {
     const blindRetry = transcript.blindRetry;
     return baseDecision({
@@ -267,6 +288,26 @@ export function decide(
         : validationLabel
         ? `pause and inspect the failing ${validationLabel} before another retry`
         : `inspect the failing ${earlyRepeatedFailure.toolName} step before another retry`,
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
+  if ((transcript.redundantRead?.unchangedFullFileReadCount || 0) >= 2) {
+    return baseDecision({
+      state: "Careful",
+      reasonCode: "redundant_read",
+      diagnosisCode: "redundant_read_loop",
+      diagnosis: "same file reread twice",
+      confidence: "medium",
+      primaryEvidence: redundantReadEvidence(transcript.redundantRead),
+      impact: "Claude reread an unchanged file",
+      action: "ask Claude to use existing context before rereading",
       input,
       usage,
       transcript,
@@ -705,6 +746,14 @@ function repeatedFailureEvidence(failure: { toolName: string; purpose?: string; 
   return `${isMcpFailure(failure) ? "MCP tool" : failure.toolName} failed ${failure.count}x${
     failure.toolName === "Bash" && failure.purpose === "tests" ? " running tests" : ""
   }`;
+}
+
+function redundantReadEvidence(redundantRead: TranscriptSummary["redundantRead"]): string {
+  if (!redundantRead) {
+    return "same file reread";
+  }
+  const label = redundantRead.safeFileLabel ? ` (${redundantRead.safeFileLabel})` : "";
+  return `same file reread ${formatFailureCount(redundantRead.unchangedFullFileReadCount)}${label}`;
 }
 
 function validationPurposeLabel(purpose: ValidationPurpose): string {

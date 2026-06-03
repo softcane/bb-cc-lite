@@ -9,7 +9,9 @@ import type { StatusLineInput } from "../src/types.js";
 const privacySentinels = [
   "BB_CC_LITE_RAW_PROMPT_SENTINEL",
   "BB_CC_LITE_TOOL_OUTPUT_SENTINEL",
-  "BB_CC_LITE_API_KEY_SENTINEL"
+  "BB_CC_LITE_API_KEY_SENTINEL",
+  "BB_CC_LITE_RAW_PATH_SENTINEL",
+  "BB_CC_LITE_FILE_CONTENT_SENTINEL"
 ];
 
 function fixturePath(name: string): string {
@@ -46,7 +48,7 @@ describe("parseTranscriptLines", () => {
   it("summarizes transcript events without retaining raw prompts or tool output", async () => {
     const raw = await readFile(fixturePath("mixed-events.jsonl"), "utf8");
 
-    for (const sentinel of privacySentinels) {
+    for (const sentinel of privacySentinels.slice(0, 3)) {
       expect(raw).toContain(sentinel);
     }
 
@@ -74,6 +76,100 @@ describe("parseTranscriptLines", () => {
       },
       latestTimestamp: "2026-02-03T00:00:09.000Z"
     });
+    expectNoPrivacySentinels(summary);
+  });
+
+  it("detects a second unchanged full-file Read without retaining the raw path or file contents", () => {
+    const rawPath = `/Users/private/${privacySentinels[3]}/src/secret.ts`;
+    const summary = parseTranscriptLines([
+      ...readToolPair("read-1", rawPath),
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: privacySentinels[0]
+        }
+      }),
+      ...readToolPair("read-2", rawPath)
+    ]);
+
+    expect(summary.readToolCalls).toBe(2);
+    expect(summary.redundantRead).toMatchObject({
+      fileIdentityHash: expect.stringMatching(/^[a-f0-9]{16}$/u),
+      unchangedFullFileReadCount: 2,
+      latestState: "Careful",
+      safeFileLabel: "secret.ts"
+    });
+    expect(JSON.stringify(summary)).not.toContain(rawPath);
+    expectNoPrivacySentinels(summary);
+  });
+
+  it("detects a third unchanged full-file Read as a Stop-level transcript finding", () => {
+    const rawPath = `/Users/private/${privacySentinels[3]}/src/secret.ts`;
+    const summary = parseTranscriptLines([
+      ...readToolPair("read-1", rawPath),
+      ...readToolPair("read-2", rawPath),
+      ...readToolPair("read-3", rawPath)
+    ]);
+
+    expect(summary.redundantRead).toMatchObject({
+      unchangedFullFileReadCount: 3,
+      latestState: "Stop",
+      safeFileLabel: "secret.ts"
+    });
+    expect(JSON.stringify(summary)).not.toContain(rawPath);
+    expectNoPrivacySentinels(summary);
+  });
+
+  it.each(["Edit", "Write", "MultiEdit"] as const)(
+    "resets unchanged full-file Read tracking after a successful same-file %s",
+    (toolName) => {
+      const rawPath = `/Users/private/${privacySentinels[3]}/src/secret.ts`;
+      const summary = parseTranscriptLines([
+        ...readToolPair("read-before", rawPath),
+        ...mutationToolPair("mutation-1", toolName, rawPath),
+        ...readToolPair("read-after", rawPath)
+      ]);
+
+      expect(summary.redundantRead).toBeUndefined();
+      expect(summary.readToolCalls).toBe(2);
+      expect(JSON.stringify(summary)).not.toContain(rawPath);
+      expectNoPrivacySentinels(summary);
+    }
+  );
+
+  it("does not let partial Reads trigger the redundant-read decision path", () => {
+    const rawPath = `/Users/private/${privacySentinels[3]}/src/secret.ts`;
+    const summary = parseTranscriptLines([
+      ...readToolPair("partial-1", rawPath, { offset: 1 }),
+      ...readToolPair("partial-2", rawPath, { limit: 50 }),
+      ...readToolPair("partial-3", rawPath, { offset: 10, limit: 20 })
+    ]);
+    const decision = decide(input({ contextPercent: 42 }), summary);
+
+    expect(summary.redundantRead).toBeUndefined();
+    expect(decision).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy"
+    });
+    expectNoPrivacySentinels(summary);
+  });
+
+  it("ignores malformed JSONL while tracking redundant Reads safely", () => {
+    const rawPath = `/Users/private/${privacySentinels[3]}/src/secret.ts`;
+    const summary = parseTranscriptLines([
+      ...readToolPair("read-1", rawPath),
+      `{"type":"assistant","message":${privacySentinels[0]}`,
+      ...readToolPair("read-2", rawPath),
+      ...readToolPair("read-3", rawPath)
+    ]);
+
+    expect(summary.malformedLines).toBe(1);
+    expect(summary.redundantRead).toMatchObject({
+      unchangedFullFileReadCount: 3,
+      latestState: "Stop"
+    });
+    expect(JSON.stringify(summary)).not.toContain(rawPath);
     expectNoPrivacySentinels(summary);
   });
 
@@ -604,6 +700,104 @@ describe("parseTranscriptTail", () => {
     });
   });
 });
+
+function readToolPair(id: string, filePath: string, inputOverrides: Record<string, unknown> = {}): string[] {
+  return [
+    JSON.stringify({
+      timestamp: "2026-02-03T00:00:00.000Z",
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id,
+            name: "Read",
+            input: {
+              file_path: filePath,
+              ...inputOverrides
+            }
+          }
+        ]
+      }
+    }),
+    JSON.stringify({
+      timestamp: "2026-02-03T00:00:01.000Z",
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: id,
+            is_error: false,
+            content: privacySentinels[4]
+          }
+        ]
+      }
+    })
+  ];
+}
+
+function mutationToolPair(id: string, name: "Edit" | "Write" | "MultiEdit", filePath: string): string[] {
+  return [
+    JSON.stringify({
+      timestamp: "2026-02-03T00:00:02.000Z",
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            id,
+            name,
+            input: mutationInputFor(name, filePath)
+          }
+        ]
+      }
+    }),
+    JSON.stringify({
+      timestamp: "2026-02-03T00:00:03.000Z",
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: id,
+            is_error: false,
+            content: privacySentinels[4]
+          }
+        ]
+      }
+    })
+  ];
+}
+
+function mutationInputFor(name: "Edit" | "Write" | "MultiEdit", filePath: string): Record<string, unknown> {
+  if (name === "Write") {
+    return {
+      file_path: filePath,
+      content: privacySentinels[4]
+    };
+  }
+  if (name === "MultiEdit") {
+    return {
+      file_path: filePath,
+      edits: [
+        {
+          old_string: privacySentinels[4],
+          new_string: "safe replacement"
+        }
+      ]
+    };
+  }
+  return {
+    file_path: filePath,
+    old_string: privacySentinels[4],
+    new_string: "safe replacement"
+  };
+}
 
 function failedBashTestPair(index: number): string[] {
   return failedBashCommandPair(index, "npm test");
