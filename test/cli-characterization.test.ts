@@ -199,13 +199,26 @@ describe("CLI behavior characterization", () => {
 
       const baselineText = await readFile(join(workspace.appHome, "baseline.json"), "utf8");
       const baseline = JSON.parse(baselineText) as {
-        source: { transcriptFilesScanned?: number; sessionsSeen?: number; maxFiles?: number; maxBytesPerTranscript?: number };
+        source: {
+          transcriptFilesScanned?: number;
+          sessionsSeen?: number;
+          maxBytesPerTranscript?: number;
+          scanBudgetMs?: number;
+          scanDeadlineHit?: boolean;
+          transcriptFilesDiscovered?: number;
+          bytesPerTranscriptCap?: number;
+          parallelism?: number;
+        };
       };
       expect(baseline.source).toMatchObject({
         transcriptFilesScanned: 0,
         sessionsSeen: 0,
-        maxFiles: 1500,
-        maxBytesPerTranscript: 1048576
+        maxBytesPerTranscript: 1048576,
+        scanBudgetMs: 30000,
+        scanDeadlineHit: false,
+        transcriptFilesDiscovered: 0,
+        bytesPerTranscriptCap: 1048576,
+        parallelism: 8
       });
       expectNoPrivacySentinels(result.stdout, baselineText);
     } finally {
@@ -385,9 +398,9 @@ describe("CLI behavior characterization", () => {
       expect(result.stderr).toBe("");
 
       const baselineText = await readFile(join(workspace.appHome, "baseline.json"), "utf8");
-      const baseline = JSON.parse(baselineText) as { source: { maxFiles?: number; maxBytesPerTranscript?: number } };
-      expect(baseline.source.maxFiles).toBe(1500);
+      const baseline = JSON.parse(baselineText) as { source: { maxBytesPerTranscript?: number; scanBudgetMs?: number } };
       expect(baseline.source.maxBytesPerTranscript).toBe(1048576);
+      expect(baseline.source.scanBudgetMs).toBe(30000);
       expectNoPrivacySentinels(baselineText);
     } finally {
       await removeTempWorkspace(workspace);
@@ -407,13 +420,26 @@ describe("CLI behavior characterization", () => {
       expect(result.stderr).toBe("");
       await expect(pathExists(baselinePath)).resolves.toBe(true);
       const baseline = JSON.parse(await readFile(baselinePath, "utf8")) as {
-        source: { transcriptFilesScanned?: number; sessionsSeen?: number; maxFiles?: number; maxBytesPerTranscript?: number };
+        source: {
+          transcriptFilesScanned?: number;
+          sessionsSeen?: number;
+          maxBytesPerTranscript?: number;
+          scanBudgetMs?: number;
+          scanDeadlineHit?: boolean;
+          transcriptFilesDiscovered?: number;
+          bytesPerTranscriptCap?: number;
+          parallelism?: number;
+        };
       };
       expect(baseline.source).toMatchObject({
         transcriptFilesScanned: 0,
         sessionsSeen: 0,
-        maxFiles: 1500,
-        maxBytesPerTranscript: 1048576
+        maxBytesPerTranscript: 1048576,
+        scanBudgetMs: 30000,
+        scanDeadlineHit: false,
+        transcriptFilesDiscovered: 0,
+        bytesPerTranscriptCap: 1048576,
+        parallelism: 8
       });
       expectNoPrivacySentinels(JSON.stringify(baseline));
     } finally {
@@ -519,12 +545,12 @@ describe("CLI behavior characterization", () => {
           },
           source: {
             ...readHeavyBaseline().source,
-            sessionsSeen: 6,
-            transcriptFilesScanned: 6
+            sessionsSeen: 10,
+            transcriptFilesScanned: 10
           },
           budget: {
-            costSamples: 6,
-            durationSamples: 6,
+            costSamples: 10,
+            durationSamples: 10,
             p75CostUsd: 2.5,
             p90CostUsd: 4,
             p75DurationMs: 60 * 60_000,
@@ -669,8 +695,12 @@ describe("CLI behavior characterization", () => {
       expect(refreshed.source).toMatchObject({
         transcriptFilesScanned: 1,
         sessionsSeen: 1,
-        maxFiles: 1500,
-        maxBytesPerTranscript: 1048576
+        maxBytesPerTranscript: 1048576,
+        scanBudgetMs: 30000,
+        scanDeadlineHit: false,
+        transcriptFilesDiscovered: 1,
+        bytesPerTranscriptCap: 1048576,
+        parallelism: 8
       });
       expect(new Date(refreshed.updatedAt).getTime()).toBeGreaterThan(new Date(staleBaseline.updatedAt).getTime());
       expectNoPrivacySentinels(JSON.stringify(refreshed), statusline.stdout);
@@ -1966,7 +1996,20 @@ function visibleLength(value: string): number {
 async function waitForBaselineUpdated(
   path: string,
   previousUpdatedAt?: string
-): Promise<{ updatedAt: string; source: { transcriptFilesScanned: number; sessionsSeen: number; maxFiles?: number; maxBytesPerTranscript?: number } }> {
+): Promise<{
+  updatedAt: string;
+  source: {
+    transcriptFilesScanned: number;
+    sessionsSeen: number;
+    maxFiles?: number;
+    maxBytesPerTranscript?: number;
+    scanBudgetMs?: number;
+    scanDeadlineHit?: boolean;
+    transcriptFilesDiscovered?: number;
+    bytesPerTranscriptCap?: number;
+    parallelism?: number;
+  };
+}> {
   const deadline = Date.now() + 5000;
   let lastError: unknown;
   while (Date.now() < deadline) {
@@ -1978,6 +2021,11 @@ async function waitForBaselineUpdated(
           sessionsSeen?: unknown;
           maxFiles?: unknown;
           maxBytesPerTranscript?: unknown;
+          scanBudgetMs?: unknown;
+          scanDeadlineHit?: unknown;
+          transcriptFilesDiscovered?: unknown;
+          bytesPerTranscriptCap?: unknown;
+          parallelism?: unknown;
         };
       };
       if (
@@ -1994,7 +2042,14 @@ async function waitForBaselineUpdated(
             sessionsSeen: parsed.source.sessionsSeen,
             maxFiles: typeof parsed.source.maxFiles === "number" ? parsed.source.maxFiles : undefined,
             maxBytesPerTranscript:
-              typeof parsed.source.maxBytesPerTranscript === "number" ? parsed.source.maxBytesPerTranscript : undefined
+              typeof parsed.source.maxBytesPerTranscript === "number" ? parsed.source.maxBytesPerTranscript : undefined,
+            scanBudgetMs: typeof parsed.source.scanBudgetMs === "number" ? parsed.source.scanBudgetMs : undefined,
+            scanDeadlineHit: typeof parsed.source.scanDeadlineHit === "boolean" ? parsed.source.scanDeadlineHit : undefined,
+            transcriptFilesDiscovered:
+              typeof parsed.source.transcriptFilesDiscovered === "number" ? parsed.source.transcriptFilesDiscovered : undefined,
+            bytesPerTranscriptCap:
+              typeof parsed.source.bytesPerTranscriptCap === "number" ? parsed.source.bytesPerTranscriptCap : undefined,
+            parallelism: typeof parsed.source.parallelism === "number" ? parsed.source.parallelism : undefined
           }
         };
       }

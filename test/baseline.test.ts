@@ -88,7 +88,11 @@ describe("personal baseline storage", () => {
           ...sampleBaseline().source,
           maxFiles: 1500,
           scanStrategy: "mtime_desc_bounded_parallel",
-          parallelism: 8
+          parallelism: 8,
+          scanBudgetMs: 30000,
+          scanDeadlineHit: false,
+          transcriptFilesDiscovered: 4,
+          bytesPerTranscriptCap: 1048576
         },
         recent: {
           windowKind: "newest_files",
@@ -121,6 +125,16 @@ describe("personal baseline storage", () => {
         blindRetry: {
           tests: blindRetryAggregate(),
           mcp: blindRetryAggregate()
+        },
+        retryHazards: {
+          tests: {
+            "1": retryHazardAggregate(),
+            "2": retryHazardAggregate(),
+            "3": retryHazardAggregate()
+          },
+          read: {
+            "3": retryHazardAggregate()
+          }
         }
       };
       await writeFile(targetPath, `${JSON.stringify(baseline)}\n`, "utf8");
@@ -194,6 +208,68 @@ describe("personal baseline storage", () => {
             tests: {
               ...blindRetryAggregate(),
               rawCommand: "npm test -- BB_CC_LITE_RAW_COMMAND_SENTINEL"
+            }
+          }
+        })}\n`,
+        "utf8"
+      );
+      await expect(readBaseline(targetPath)).resolves.toBeUndefined();
+
+      await writeFile(
+        targetPath,
+        `${JSON.stringify({
+          ...sampleBaseline(),
+          failureRecovery: {
+            tests: {
+              ...failureRecoveryAggregate(),
+              effectiveSamples: -1
+            }
+          }
+        })}\n`,
+        "utf8"
+      );
+      await expect(readBaseline(targetPath)).resolves.toBeUndefined();
+
+      await writeFile(
+        targetPath,
+        `${JSON.stringify({
+          ...sampleBaseline(),
+          source: {
+            ...sampleBaseline().source,
+            scanBudgetMs: 30000,
+            scanDeadlineHit: "no",
+            transcriptFilesDiscovered: 4,
+            bytesPerTranscriptCap: 1048576
+          }
+        })}\n`,
+        "utf8"
+      );
+      await expect(readBaseline(targetPath)).resolves.toBeUndefined();
+
+      await writeFile(
+        targetPath,
+        `${JSON.stringify({
+          ...sampleBaseline(),
+          retryHazards: {
+            tests: {
+              "3": {
+                ...retryHazardAggregate(),
+                smoothedRecoveryRate: 1.2
+              }
+            }
+          }
+        })}\n`,
+        "utf8"
+      );
+      await expect(readBaseline(targetPath)).resolves.toBeUndefined();
+
+      await writeFile(
+        targetPath,
+        `${JSON.stringify({
+          ...sampleBaseline(),
+          retryHazards: {
+            tests: {
+              command: retryHazardAggregate()
             }
           }
         })}\n`,
@@ -313,8 +389,8 @@ describe("project baseline storage", () => {
           transcriptFilesScanned: 12
         }
       };
-      const sparseProjectBaseline = projectBaseline(projectKey, 2);
-      const strongProjectBaseline = projectBaseline(projectKey, 4);
+      const sparseProjectBaseline = projectBaseline(projectKey, 9);
+      const strongProjectBaseline = projectBaseline(projectKey, 10);
 
       await writeBaseline(personalBaseline, personalPath);
       await writeBaseline(sparseProjectBaseline, projectPath);
@@ -377,8 +453,12 @@ describe("personal baseline builder", () => {
             transcriptFilesScanned: 0,
             sessionsSeen: 0,
             malformedLines: 0,
-            maxFiles: 1500,
-            maxBytesPerTranscript: 1048576
+            maxBytesPerTranscript: 1048576,
+            scanBudgetMs: 30000,
+            scanDeadlineHit: false,
+            transcriptFilesDiscovered: 0,
+            bytesPerTranscriptCap: 1048576,
+            parallelism: 8
           }
         }
       });
@@ -386,8 +466,12 @@ describe("personal baseline builder", () => {
         source: {
           transcriptFilesScanned: 0,
           sessionsSeen: 0,
-          maxFiles: 1500,
-          maxBytesPerTranscript: 1048576
+          maxBytesPerTranscript: 1048576,
+          scanBudgetMs: 30000,
+          scanDeadlineHit: false,
+          transcriptFilesDiscovered: 0,
+          bytesPerTranscriptCap: 1048576,
+          parallelism: 8
         }
       });
 
@@ -681,6 +765,8 @@ describe("personal baseline builder", () => {
         recovered: 1,
         unrecovered: 0,
         recoveryRate: 1,
+        smoothedRecoveryRate: 0.75,
+        effectiveSamples: 2,
         medianAttemptsBeforeRecovery: 2,
         blindRetryEpisodes: 1,
         blindRetryRecovered: 1,
@@ -697,8 +783,24 @@ describe("personal baseline builder", () => {
         recovered: 1,
         unrecovered: 0,
         recoveryRate: 1,
+        smoothedRecoveryRate: 0.75,
         carefulLikeEpisodes: 1,
         stopLikeEpisodes: 0
+      });
+      expect(result.baseline.retryHazards?.tests?.["2"]).toMatchObject({
+        episodes: 1,
+        recovered: 1,
+        unrecovered: 0,
+        recoveryRate: 1,
+        smoothedRecoveryRate: 0.75,
+        effectiveSamples: 2
+      });
+      expect(result.baseline.retryHazards?.build?.["1"]).toMatchObject({
+        episodes: 1,
+        recovered: 0,
+        unrecovered: 1,
+        recoveryRate: 0,
+        smoothedRecoveryRate: 0.25
       });
       expect(result.baseline.toolCategories?.["Bash:build"]).toMatchObject({
         calls: 1,
@@ -714,6 +816,37 @@ describe("personal baseline builder", () => {
       });
       expect(result.baseline.toolCategories).not.toHaveProperty("Bash:git");
       expect(JSON.stringify(result.baseline)).not.toContain("git status");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("records scan-budget metadata and stops before broad reads when the budget is exhausted", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-budget-"));
+    try {
+      const claudeProjectsDir = join(tempDir, ".claude", "projects");
+      const projectDir = join(claudeProjectsDir, "project");
+      await mkdir(projectDir, { recursive: true });
+      await writeJsonl(join(projectDir, "newest.jsonl"), readHeavySession("newest"));
+
+      const result = await buildBaseline({
+        claudeProjectsDir,
+        appHomePath: join(tempDir, "app-home"),
+        scanBudgetMs: 0,
+        clock: { now: () => 1000 },
+        now: new Date("2026-05-19T10:00:00.000Z")
+      });
+
+      expect(result.baseline.source).toMatchObject({
+        transcriptFilesDiscovered: 0,
+        transcriptFilesScanned: 0,
+        sessionsSeen: 0,
+        scanBudgetMs: 0,
+        scanDeadlineHit: true,
+        bytesPerTranscriptCap: 1048576,
+        parallelism: 8
+      });
+      expect(result.baseline.outcomes.healthyLike.readHeavyNoFailure).toBe(0);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -1210,6 +1343,8 @@ function failureRecoveryAggregate(): Record<string, number | string> {
     unrecovered: 1,
     activeEnded: 1,
     recoveryRate: 0.8333,
+    smoothedRecoveryRate: 0.7857,
+    effectiveSamples: 7,
     medianAttemptsBeforeRecovery: 2,
     p75AttemptsBeforeRecovery: 2,
     blindRetryEpisodes: 2,
@@ -1225,9 +1360,23 @@ function blindRetryAggregate(): Record<string, number | string> {
     recovered: 1,
     unrecovered: 1,
     recoveryRate: 0.5,
+    smoothedRecoveryRate: 0.5,
+    effectiveSamples: 3,
     carefulLikeEpisodes: 2,
     stopLikeEpisodes: 1,
     confidence: "low"
+  };
+}
+
+function retryHazardAggregate(): Record<string, number | string> {
+  return {
+    episodes: 6,
+    recovered: 4,
+    unrecovered: 2,
+    recoveryRate: 0.6667,
+    smoothedRecoveryRate: 0.6429,
+    effectiveSamples: 7,
+    confidence: "medium"
   };
 }
 

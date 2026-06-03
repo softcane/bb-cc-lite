@@ -274,6 +274,14 @@ function extendedBaselineSummary(value: unknown): string {
     return "";
   }
   const baseline = value as {
+    source?: {
+      scanBudgetMs?: unknown;
+      scanDeadlineHit?: unknown;
+      transcriptFilesDiscovered?: unknown;
+      maxBytesPerTranscript?: unknown;
+      bytesPerTranscriptCap?: unknown;
+      parallelism?: unknown;
+    };
     recent?: { windowKind?: unknown; windowSize?: unknown; sessionsSeen?: unknown };
     validation?: Record<string, unknown>;
     toolCategories?: Record<string, unknown>;
@@ -281,6 +289,20 @@ function extendedBaselineSummary(value: unknown): string {
     blindRetry?: Record<string, unknown>;
   };
   const parts: string[] = [];
+  const source = baseline.source;
+  if (
+    source &&
+    typeof source.scanBudgetMs === "number" &&
+    typeof source.scanDeadlineHit === "boolean" &&
+    typeof source.transcriptFilesDiscovered === "number"
+  ) {
+    const bytesCap = typeof source.bytesPerTranscriptCap === "number" ? source.bytesPerTranscriptCap : source.maxBytesPerTranscript;
+    const bytesPart = typeof bytesCap === "number" ? `, bytes cap ${bytesCap}` : "";
+    const parallelismPart = typeof source.parallelism === "number" ? `, parallelism ${source.parallelism}` : "";
+    parts.push(
+      `scan budget ${source.scanBudgetMs}ms, deadline ${source.scanDeadlineHit ? "hit" : "not hit"}, discovered ${source.transcriptFilesDiscovered}${bytesPart}${parallelismPart}`
+    );
+  }
   const recent = baseline.recent;
   if (
     recent &&

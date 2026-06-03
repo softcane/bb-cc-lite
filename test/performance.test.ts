@@ -5,7 +5,7 @@ import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
 import { createStatusLine } from "../src/statusline.js";
 import { parseTranscriptTail } from "../src/transcript.js";
-import { setIsolatedEnv } from "./helpers/temp.js";
+import { pathExists, setIsolatedEnv } from "./helpers/temp.js";
 
 describe("large transcript performance", () => {
   it("parses only the bounded transcript tail under the hard budget", async () => {
@@ -71,6 +71,48 @@ describe("large transcript performance", () => {
       expect(rendered).toContain("bb: Healthy");
       expect(spawned).toBe(1);
       expect(elapsedMs).toBeLessThan(300);
+    } finally {
+      restoreEnv();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not scan local Claude history synchronously while rendering statusline", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-statusline-no-scan-"));
+    const appHome = join(tempDir, "app-home");
+    const homeDir = join(tempDir, "home");
+    const projectDir = join(tempDir, "project");
+    const storePath = join(appHome, "events.json");
+    const restoreEnv = setIsolatedEnv({
+      HOME: homeDir,
+      BB_CC_LITE_HOME: appHome,
+      BB_CC_LITE_STORE: storePath,
+      BB_CC_LITE_COLOR: "0",
+      BB_CC_LITE_AUTO_LEARN: "0"
+    });
+    try {
+      await mkdir(join(homeDir, ".claude", "projects", "private-project"), { recursive: true });
+      await mkdir(projectDir, { recursive: true });
+      await writeFile(
+        join(homeDir, ".claude", "projects", "private-project", "raw-history.jsonl"),
+        `${privacyFailureTail().join("\n")}\n`,
+        "utf8"
+      );
+
+      const startedAt = performance.now();
+      const rendered = await createStatusLine(
+        statusInput({
+          cwd: projectDir,
+          terminal_width: 180
+        }),
+        180
+      );
+      const elapsedMs = performance.now() - startedAt;
+
+      expect(rendered).toContain("bb: Healthy");
+      expect(elapsedMs).toBeLessThan(300);
+      await expect(pathExists(join(appHome, "baseline.json"))).resolves.toBe(false);
+      expectNoPrivacySentinels(rendered, await readFile(storePath, "utf8"));
     } finally {
       restoreEnv();
       await rm(tempDir, { recursive: true, force: true });

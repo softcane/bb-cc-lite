@@ -343,6 +343,98 @@ describe("signals and renderer", () => {
     expect(rendered).not.toContain("Bash step");
   });
 
+  it("uses read/search recovery history to soften hard Stop wording without changing state", () => {
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        failedToolResults: 3,
+        repeatedFailures: [{ toolName: "Read", count: 3 }]
+      }),
+      {
+        baseline: {
+          failureRecovery: {
+            read: {
+              episodes: 10,
+              recovered: 9,
+              unrecovered: 1,
+              activeEnded: 1,
+              recoveryRate: 0.9,
+              smoothedRecoveryRate: 0.8636,
+              effectiveSamples: 11,
+              medianAttemptsBeforeRecovery: 2,
+              p75AttemptsBeforeRecovery: 3,
+              blindRetryEpisodes: 4,
+              blindRetryRecovered: 4,
+              blindRetryUnrecovered: 0,
+              confidence: "high"
+            }
+          },
+          retryHazards: {
+            read: {
+              "3": {
+                episodes: 8,
+                recovered: 7,
+                unrecovered: 1,
+                recoveryRate: 0.875,
+                smoothedRecoveryRate: 0.8333,
+                effectiveSamples: 9,
+                confidence: "medium"
+              }
+            }
+          }
+        }
+      }
+    );
+
+    expect(decision).toMatchObject({
+      state: "Stop",
+      reasonCode: "repeated_tool_failure",
+      confidence: "medium",
+      primaryEvidence: "Read failed 3x",
+      baselineNote: "read failures usually recovered after one targeted fix; fixed retry limit still says stop"
+    });
+    expect(formatWhy(decision)).toContain("fixed retry limit still says stop");
+  });
+
+  it("uses generic tool history for stronger repeated-tool Stop wording", () => {
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        failedToolResults: 3,
+        repeatedFailures: [{ toolName: "WebFetch", count: 3 }]
+      }),
+      {
+        baseline: {
+          failureRecovery: {
+            tool: {
+              episodes: 12,
+              recovered: 2,
+              unrecovered: 10,
+              activeEnded: 10,
+              recoveryRate: 0.1667,
+              smoothedRecoveryRate: 0.1923,
+              effectiveSamples: 13,
+              medianAttemptsBeforeRecovery: 2,
+              p75AttemptsBeforeRecovery: 3,
+              blindRetryEpisodes: 8,
+              blindRetryRecovered: 1,
+              blindRetryUnrecovered: 7,
+              confidence: "high"
+            }
+          }
+        }
+      }
+    );
+
+    expect(decision).toMatchObject({
+      state: "Stop",
+      reasonCode: "repeated_tool_failure",
+      diagnosis: "tool loop rarely recovered after 3 failures",
+      baselineNote: "tool loops rarely recovered after 3 failures",
+      action: "stop retrying and inspect first failure"
+    });
+  });
+
   it("warns when edits have not been validated yet", () => {
     const decision = decide(
       input({ contextPercent: 42 }),

@@ -246,6 +246,8 @@ export interface DecisionPersonalBaseline {
         unrecovered?: number;
         activeEnded?: number;
         recoveryRate?: number;
+        smoothedRecoveryRate?: number;
+        effectiveSamples?: number;
         medianAttemptsBeforeRecovery?: number;
         p75AttemptsBeforeRecovery?: number;
         blindRetryEpisodes?: number;
@@ -263,10 +265,31 @@ export interface DecisionPersonalBaseline {
         recovered?: number;
         unrecovered?: number;
         recoveryRate?: number;
+        smoothedRecoveryRate?: number;
+        effectiveSamples?: number;
         carefulLikeEpisodes?: number;
         stopLikeEpisodes?: number;
         confidence?: DecisionConfidence;
       }
+    >
+  >;
+  retryHazards?: Partial<
+    Record<
+      FailureRecoveryCategory,
+      Partial<
+        Record<
+          "1" | "2" | "3" | "4" | "5plus",
+          {
+            episodes?: number;
+            recovered?: number;
+            unrecovered?: number;
+            recoveryRate?: number;
+            smoothedRecoveryRate?: number;
+            effectiveSamples?: number;
+            confidence?: DecisionConfidence;
+          }
+        >
+      >
     >
   >;
   activity?: {

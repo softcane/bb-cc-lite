@@ -1,12 +1,17 @@
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { appHome, baselinePath, PROJECT_BASELINE_DIR_NAME, projectBaselinePath, projectKeyFromPath } from "./paths.js";
-import type { BlindRetryAggregate, FailureRecoveryAggregate, FailureRecoveryCategory } from "./recovery-stats.js";
+import type {
+  BlindRetryAggregate,
+  FailureRecoveryAggregate,
+  FailureRecoveryCategory,
+  RetryHazardTable
+} from "./recovery-stats.js";
 
 export const BASELINE_SCHEMA = "bb-cc-lite.baseline.v1";
 export const BASELINE_VERSION = 1;
 export const BASELINE_READ_MAX_BYTES = 64 * 1024;
-export const PROJECT_BASELINE_MIN_SESSIONS = 3;
+export const PROJECT_BASELINE_MIN_SESSIONS = 10;
 
 export type BaselineConfidence = "low" | "medium" | "high";
 export type ValidationCategory = "tests" | "lint" | "typecheck" | "build";
@@ -62,6 +67,10 @@ export interface PersonalBaseline {
     maxFiles?: number;
     scanStrategy?: "mtime_desc_bounded_parallel";
     parallelism?: number;
+    scanBudgetMs?: number;
+    scanDeadlineHit?: boolean;
+    transcriptFilesDiscovered?: number;
+    bytesPerTranscriptCap?: number;
   };
   privacy: {
     rawPromptsStored: false;
@@ -134,6 +143,7 @@ export interface PersonalBaseline {
   toolCategories?: Partial<Record<SafeToolCategory, ToolCategoryAggregate>>;
   failureRecovery?: Partial<Record<FailureRecoveryCategory, FailureRecoveryAggregate>>;
   blindRetry?: Partial<Record<FailureRecoveryCategory, BlindRetryAggregate>>;
+  retryHazards?: RetryHazardTable;
   activity?: {
     highActivitySessions: number;
     busyNoProgressSessions: number;
@@ -278,6 +288,7 @@ function isPersonalBaseline(value: unknown): value is PersonalBaseline {
   const toolCategories = root.toolCategories === undefined ? undefined : asRecord(root.toolCategories);
   const failureRecovery = root.failureRecovery === undefined ? undefined : asRecord(root.failureRecovery);
   const blindRetry = root.blindRetry === undefined ? undefined : asRecord(root.blindRetry);
+  const retryHazards = root.retryHazards === undefined ? undefined : asRecord(root.retryHazards);
   const activity = root.activity === undefined ? undefined : asRecord(root.activity);
   const budget = root.budget === undefined ? undefined : asRecord(root.budget);
 
@@ -297,6 +308,7 @@ function isPersonalBaseline(value: unknown): value is PersonalBaseline {
     (root.toolCategories === undefined || isToolCategories(toolCategories)) &&
     (root.failureRecovery === undefined || isFailureRecoveryAggregates(failureRecovery)) &&
     (root.blindRetry === undefined || isBlindRetryAggregates(blindRetry)) &&
+    (root.retryHazards === undefined || isRetryHazards(retryHazards)) &&
     (root.activity === undefined || isActivity(activity)) &&
     (root.budget === undefined || isBudget(budget))
   );
@@ -323,7 +335,11 @@ function isSource(value: Record<string, unknown> | undefined): boolean {
     isNonNegativeInteger(value.maxBytesPerTranscript) &&
     (value.maxFiles === undefined || isNonNegativeInteger(value.maxFiles)) &&
     (value.scanStrategy === undefined || value.scanStrategy === "mtime_desc_bounded_parallel") &&
-    (value.parallelism === undefined || isNonNegativeInteger(value.parallelism))
+    (value.parallelism === undefined || isNonNegativeInteger(value.parallelism)) &&
+    (value.scanBudgetMs === undefined || isNonNegativeInteger(value.scanBudgetMs)) &&
+    (value.scanDeadlineHit === undefined || typeof value.scanDeadlineHit === "boolean") &&
+    (value.transcriptFilesDiscovered === undefined || isNonNegativeInteger(value.transcriptFilesDiscovered)) &&
+    (value.bytesPerTranscriptCap === undefined || isNonNegativeInteger(value.bytesPerTranscriptCap))
   );
 }
 
@@ -532,6 +548,8 @@ function isFailureRecoveryAggregate(value: Record<string, unknown> | undefined):
     isNonNegativeInteger(value.unrecovered) &&
     isNonNegativeInteger(value.activeEnded) &&
     isRate(value.recoveryRate) &&
+    (value.smoothedRecoveryRate === undefined || isRate(value.smoothedRecoveryRate)) &&
+    (value.effectiveSamples === undefined || isNonNegativeNumber(value.effectiveSamples)) &&
     isNonNegativeInteger(value.medianAttemptsBeforeRecovery) &&
     isNonNegativeInteger(value.p75AttemptsBeforeRecovery) &&
     isNonNegativeInteger(value.blindRetryEpisodes) &&
@@ -557,8 +575,40 @@ function isBlindRetryAggregate(value: Record<string, unknown> | undefined): bool
     isNonNegativeInteger(value.recovered) &&
     isNonNegativeInteger(value.unrecovered) &&
     isRate(value.recoveryRate) &&
+    (value.smoothedRecoveryRate === undefined || isRate(value.smoothedRecoveryRate)) &&
+    (value.effectiveSamples === undefined || isNonNegativeNumber(value.effectiveSamples)) &&
     isNonNegativeInteger(value.carefulLikeEpisodes) &&
     isNonNegativeInteger(value.stopLikeEpisodes) &&
+    isConfidence(value.confidence)
+  );
+}
+
+function isRetryHazards(value: Record<string, unknown> | undefined): boolean {
+  return (
+    value !== undefined &&
+    Object.keys(value).every((key) => FAILURE_RECOVERY_CATEGORY_KEYS.has(key)) &&
+    Object.values(value).every((table) => isRetryHazardTable(asRecord(table)))
+  );
+}
+
+function isRetryHazardTable(value: Record<string, unknown> | undefined): boolean {
+  return (
+    value !== undefined &&
+    Object.keys(value).every((key) => RETRY_ATTEMPT_BUCKET_KEYS.has(key)) &&
+    Object.values(value).every((aggregate) => isRetryHazardAggregate(asRecord(aggregate)))
+  );
+}
+
+function isRetryHazardAggregate(value: Record<string, unknown> | undefined): boolean {
+  return (
+    value !== undefined &&
+    hasOnlyKeys(value, RETRY_HAZARD_AGGREGATE_KEYS) &&
+    isNonNegativeInteger(value.episodes) &&
+    isNonNegativeInteger(value.recovered) &&
+    isNonNegativeInteger(value.unrecovered) &&
+    isRate(value.recoveryRate) &&
+    isRate(value.smoothedRecoveryRate) &&
+    isNonNegativeNumber(value.effectiveSamples) &&
     isConfidence(value.confidence)
   );
 }
@@ -645,6 +695,7 @@ const ROOT_KEYS = new Set([
   "toolCategories",
   "failureRecovery",
   "blindRetry",
+  "retryHazards",
   "activity",
   "budget"
 ]);
@@ -657,7 +708,11 @@ const SOURCE_KEYS = new Set([
   "maxBytesPerTranscript",
   "maxFiles",
   "scanStrategy",
-  "parallelism"
+  "parallelism",
+  "scanBudgetMs",
+  "scanDeadlineHit",
+  "transcriptFilesDiscovered",
+  "bytesPerTranscriptCap"
 ]);
 const PRIVACY_KEYS = new Set([
   "rawPromptsStored",
@@ -749,6 +804,8 @@ const FAILURE_RECOVERY_AGGREGATE_KEYS = new Set([
   "unrecovered",
   "activeEnded",
   "recoveryRate",
+  "smoothedRecoveryRate",
+  "effectiveSamples",
   "medianAttemptsBeforeRecovery",
   "p75AttemptsBeforeRecovery",
   "blindRetryEpisodes",
@@ -761,8 +818,20 @@ const BLIND_RETRY_AGGREGATE_KEYS = new Set([
   "recovered",
   "unrecovered",
   "recoveryRate",
+  "smoothedRecoveryRate",
+  "effectiveSamples",
   "carefulLikeEpisodes",
   "stopLikeEpisodes",
+  "confidence"
+]);
+const RETRY_ATTEMPT_BUCKET_KEYS = new Set(["1", "2", "3", "4", "5plus"]);
+const RETRY_HAZARD_AGGREGATE_KEYS = new Set([
+  "episodes",
+  "recovered",
+  "unrecovered",
+  "recoveryRate",
+  "smoothedRecoveryRate",
+  "effectiveSamples",
   "confidence"
 ]);
 const ACTIVITY_KEYS = new Set([

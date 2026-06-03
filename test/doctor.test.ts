@@ -131,7 +131,12 @@ describe("doctor", () => {
         transcriptFilesScanned: 4,
         sessionsSeen: 3,
         malformedLines: 1,
-        maxBytesPerTranscript: 1048576
+        maxBytesPerTranscript: 1048576,
+        scanBudgetMs: 30000,
+        scanDeadlineHit: false,
+        transcriptFilesDiscovered: 4,
+        bytesPerTranscriptCap: 1048576,
+        parallelism: 8
       },
       privacy: {
         rawPromptsStored: false,
@@ -231,6 +236,7 @@ describe("doctor", () => {
     expect(baseline.message).toContain("3 sessions");
     expect(baseline.message).toContain("4 transcript files");
     expect(baseline.message).toContain("derived aggregate data only");
+    expect(baseline.message).toContain("scan budget 30000ms, deadline not hit, discovered 4");
     expect(baseline.message).toContain("recent newest_files window 3/100");
     expect(baseline.message).toContain("validation categories: tests");
     expect(baseline.message).toContain("tool categories: Bash:tests");
@@ -245,7 +251,7 @@ describe("doctor", () => {
         appHomePath: dirs.appHome,
         projectKey
       }),
-      projectBaseline(projectKey, 5)
+      projectBaseline(projectKey, 10)
     );
 
     const checks = await runDoctor({
@@ -257,7 +263,7 @@ describe("doctor", () => {
 
     const project = findCheck(checks, "project-baseline");
     expect(project).toMatchObject({ level: "OK" });
-    expect(project.message).toContain("project baseline: 5 sessions");
+    expect(project.message).toContain("project baseline: 10 sessions");
     expect(project.message).toContain("derived aggregate data only");
     expect(project.message).toContain("activity samples: high 5, no-progress 2, progress 3, read-heavy 4");
     expect(project.message).toContain("budget samples: cost 5, duration 5");

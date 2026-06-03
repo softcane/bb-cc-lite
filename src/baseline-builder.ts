@@ -21,12 +21,12 @@ import {
   emptyRecoveryBuildCounters,
   mergeRecoveryBuildCounters,
   recoveryAggregatesFromCounters,
+  retryHazardsFromCounters,
   type FailureRecoveryCategory,
   type RecoveryBuildCounters
 } from "./recovery-stats.js";
 import type { TokenUsage } from "./types.js";
 
-const DEFAULT_MAX_FILES = 1500;
 const DEFAULT_MAX_BYTES_PER_TRANSCRIPT = 1024 * 1024;
 const SCAN_BUDGET_MS = 30_000;
 const TRANSCRIPT_READ_CONCURRENCY = 8;
@@ -55,7 +55,13 @@ export interface BuildBaselineOptions {
   transcriptPath?: string;
   maxFiles?: number;
   maxBytesPerTranscript?: number;
+  scanBudgetMs?: number;
+  clock?: BaselineScanClock;
   now?: Date;
+}
+
+export interface BaselineScanClock {
+  now: () => number;
 }
 
 interface BuildCounters {
@@ -95,6 +101,27 @@ interface BuildCounters {
 interface TranscriptCandidate {
   path: string;
   mtimeMs: number;
+}
+
+interface TranscriptFileList {
+  files: string[];
+  discovered: number;
+  deadlineHit: boolean;
+}
+
+interface TranscriptSummaries {
+  sessions: SessionCounters[];
+  deadlineHit: boolean;
+}
+
+interface BaselineScanMetadata {
+  maxFiles?: number;
+  maxBytesPerTranscript: number;
+  scanBudgetMs: number;
+  scanDeadlineHit: boolean;
+  transcriptFilesDiscovered: number;
+  bytesPerTranscriptCap: number;
+  parallelism: number;
 }
 
 interface ToolMeta {
@@ -169,13 +196,15 @@ export async function buildBaseline(options: BuildBaselineOptions = {}): Promise
 }> {
   const homeDir = options.homeDir ?? homedir();
   const claudeProjectsDir = options.claudeProjectsDir ?? join(homeDir, ".claude", "projects");
-  const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
+  const maxFiles = options.maxFiles;
   const maxBytesPerTranscript = options.maxBytesPerTranscript ?? DEFAULT_MAX_BYTES_PER_TRANSCRIPT;
-  const startedAt = Date.now();
-  const deadlineMs = startedAt + SCAN_BUDGET_MS;
-  const files = await listTranscriptFiles(claudeProjectsDir, maxFiles, deadlineMs);
+  const scanBudgetMs = options.scanBudgetMs ?? SCAN_BUDGET_MS;
+  const clock = options.clock ?? { now: () => Date.now() };
+  const startedAt = clock.now();
+  const deadlineMs = startedAt + scanBudgetMs;
+  const listedFiles = await listTranscriptFiles(claudeProjectsDir, maxFiles, deadlineMs, clock);
   const now = options.now ?? new Date();
-  const baseline = await baselineFromFiles(files, { maxFiles, maxBytesPerTranscript, deadlineMs, now });
+  const baseline = await baselineFromFiles(listedFiles, { maxFiles, maxBytesPerTranscript, scanBudgetMs, deadlineMs, now, clock });
   await writeBaseline(baseline, options.appHomePath ? join(options.appHomePath, "baseline.json") : baselinePath(homeDir));
   const projectKey = options.projectDir ? projectKeyFromPath(options.projectDir) : undefined;
   const projectFiles = projectKey
@@ -185,12 +214,13 @@ export async function buildBaseline(options: BuildBaselineOptions = {}): Promise
         projectTranscriptDir: options.projectTranscriptDir,
         transcriptPath: options.transcriptPath,
         maxFiles,
-        deadlineMs
+        deadlineMs,
+        clock
       })
-    : [];
+    : emptyTranscriptFileList();
   const projectBaseline = projectKey
     ? baselineForProject(
-        await baselineFromFiles(projectFiles, { maxFiles, maxBytesPerTranscript, deadlineMs, now }),
+        await baselineFromFiles(projectFiles, { maxFiles, maxBytesPerTranscript, scanBudgetMs, deadlineMs, now, clock }),
         projectKey
       )
     : undefined;
@@ -209,17 +239,36 @@ export async function buildBaseline(options: BuildBaselineOptions = {}): Promise
 }
 
 async function baselineFromFiles(
-  files: string[],
-  options: { maxFiles: number; maxBytesPerTranscript: number; deadlineMs: number; now: Date }
+  listedFiles: TranscriptFileList,
+  options: {
+    maxFiles?: number;
+    maxBytesPerTranscript: number;
+    scanBudgetMs: number;
+    deadlineMs: number;
+    now: Date;
+    clock: BaselineScanClock;
+  }
 ): Promise<PersonalBaseline> {
   const counters = emptyCounters();
-  const sessions = await summarizeTranscriptFiles(files, options.maxBytesPerTranscript, options.deadlineMs);
+  const summaries = await summarizeTranscriptFiles(listedFiles.files, options.maxBytesPerTranscript, options.deadlineMs, options.clock);
 
-  for (const [index, session] of sessions.entries()) {
+  for (const [index, session] of summaries.sessions.entries()) {
     addSessionCounters(counters, session, index < RECENT_WINDOW_SIZE);
   }
 
-  return baselineFromCounters(counters, options, options.now);
+  return baselineFromCounters(
+    counters,
+    {
+      maxFiles: options.maxFiles,
+      maxBytesPerTranscript: options.maxBytesPerTranscript,
+      scanBudgetMs: options.scanBudgetMs,
+      scanDeadlineHit: listedFiles.deadlineHit || summaries.deadlineHit,
+      transcriptFilesDiscovered: listedFiles.discovered,
+      bytesPerTranscriptCap: options.maxBytesPerTranscript,
+      parallelism: TRANSCRIPT_READ_CONCURRENCY
+    },
+    options.now
+  );
 }
 
 function baselineForProject(baseline: PersonalBaseline, projectKey: string): PersonalBaseline {
@@ -237,35 +286,47 @@ async function listProjectTranscriptFiles(options: {
   projectDir?: string;
   projectTranscriptDir?: string;
   transcriptPath?: string;
-  maxFiles: number;
+  maxFiles?: number;
   deadlineMs: number;
-}): Promise<string[]> {
+  clock: BaselineScanClock;
+}): Promise<TranscriptFileList> {
   const directRoot = options.projectTranscriptDir || (options.transcriptPath ? dirname(options.transcriptPath) : undefined);
   if (directRoot) {
-    return listTranscriptFiles(directRoot, options.maxFiles, options.deadlineMs);
+    return listTranscriptFiles(directRoot, options.maxFiles, options.deadlineMs, options.clock);
   }
 
   if (options.projectDir) {
     const inferredRoot = join(options.claudeProjectsDir, claudeProjectDirectoryName(options.projectDir));
-    return listTranscriptFiles(inferredRoot, options.maxFiles, options.deadlineMs);
+    return listTranscriptFiles(inferredRoot, options.maxFiles, options.deadlineMs, options.clock);
   }
 
-  return [];
+  return emptyTranscriptFileList();
 }
 
 function claudeProjectDirectoryName(projectDir: string): string {
   return resolve(projectDir).replaceAll(/[\\/]/gu, "-");
 }
 
-async function listTranscriptFiles(root: string, maxFiles: number, deadlineMs: number): Promise<string[]> {
-  if (maxFiles <= 0 || Date.now() > deadlineMs) {
-    return [];
+async function listTranscriptFiles(
+  root: string,
+  maxFiles: number | undefined,
+  deadlineMs: number,
+  clock: BaselineScanClock
+): Promise<TranscriptFileList> {
+  const deadlineAlreadyHit = !hasScanTime(clock, deadlineMs);
+  if ((maxFiles !== undefined && maxFiles <= 0) || deadlineAlreadyHit) {
+    return { ...emptyTranscriptFileList(), deadlineHit: maxFiles !== undefined && maxFiles <= 0 ? false : deadlineAlreadyHit };
   }
 
   const candidates: TranscriptCandidate[] = [];
   const pending = [root];
+  let deadlineHit = false;
 
-  while (pending.length > 0 && Date.now() <= deadlineMs) {
+  while (pending.length > 0) {
+    if (!hasScanTime(clock, deadlineMs)) {
+      deadlineHit = true;
+      break;
+    }
     const current = pending.pop()!;
     let entries;
     try {
@@ -275,7 +336,8 @@ async function listTranscriptFiles(root: string, maxFiles: number, deadlineMs: n
     }
 
     for (const entry of entries) {
-      if (Date.now() > deadlineMs) {
+      if (!hasScanTime(clock, deadlineMs)) {
+        deadlineHit = true;
         break;
       }
       const child = join(current, entry.name);
@@ -290,10 +352,21 @@ async function listTranscriptFiles(root: string, maxFiles: number, deadlineMs: n
     }
   }
 
-  return candidates
-    .sort((left, right) => right.mtimeMs - left.mtimeMs || left.path.localeCompare(right.path))
-    .slice(0, maxFiles)
-    .map((candidate) => candidate.path);
+  const sorted = candidates.sort((left, right) => right.mtimeMs - left.mtimeMs || left.path.localeCompare(right.path));
+  const capped = maxFiles === undefined ? sorted : sorted.slice(0, maxFiles);
+  return {
+    files: capped.map((candidate) => candidate.path),
+    discovered: candidates.length,
+    deadlineHit
+  };
+}
+
+function emptyTranscriptFileList(): TranscriptFileList {
+  return { files: [], discovered: 0, deadlineHit: false };
+}
+
+function hasScanTime(clock: BaselineScanClock, deadlineMs: number): boolean {
+  return clock.now() < deadlineMs;
 }
 
 async function readableFileMtimeMs(path: string): Promise<number | undefined> {
@@ -308,15 +381,22 @@ async function readableFileMtimeMs(path: string): Promise<number | undefined> {
 async function summarizeTranscriptFiles(
   files: string[],
   maxBytesPerTranscript: number,
-  deadlineMs: number
-): Promise<SessionCounters[]> {
+  deadlineMs: number,
+  clock: BaselineScanClock
+): Promise<TranscriptSummaries> {
   const sessions: SessionCounters[] = [];
+  let deadlineHit = false;
 
-  for (let index = 0; index < files.length && Date.now() <= deadlineMs; index += TRANSCRIPT_READ_CONCURRENCY) {
+  for (let index = 0; index < files.length; index += TRANSCRIPT_READ_CONCURRENCY) {
+    if (!hasScanTime(clock, deadlineMs)) {
+      deadlineHit = true;
+      break;
+    }
     const batch = files.slice(index, index + TRANSCRIPT_READ_CONCURRENCY);
     const summaries = await Promise.all(
       batch.map(async (file) => {
-        if (Date.now() > deadlineMs) {
+        if (!hasScanTime(clock, deadlineMs)) {
+          deadlineHit = true;
           return undefined;
         }
         const tail = await readTranscriptTail(file, { maxBytes: maxBytesPerTranscript });
@@ -326,7 +406,7 @@ async function summarizeTranscriptFiles(
     sessions.push(...summaries.filter((session): session is SessionCounters => session !== undefined));
   }
 
-  return sessions;
+  return { sessions, deadlineHit };
 }
 
 function addSessionCounters(counters: BuildCounters, session: SessionCounters, isRecent: boolean): void {
@@ -788,7 +868,7 @@ function ensureToolCategoryCounters(
 
 function baselineFromCounters(
   counters: BuildCounters,
-  sourceOptions: { maxFiles: number; maxBytesPerTranscript: number },
+  sourceOptions: BaselineScanMetadata,
   now: Date
 ): PersonalBaseline {
   const timestamp = now.toISOString();
@@ -805,7 +885,11 @@ function baselineFromCounters(
       maxBytesPerTranscript: sourceOptions.maxBytesPerTranscript,
       maxFiles: sourceOptions.maxFiles,
       scanStrategy: "mtime_desc_bounded_parallel",
-      parallelism: TRANSCRIPT_READ_CONCURRENCY
+      parallelism: sourceOptions.parallelism,
+      scanBudgetMs: sourceOptions.scanBudgetMs,
+      scanDeadlineHit: sourceOptions.scanDeadlineHit,
+      transcriptFilesDiscovered: sourceOptions.transcriptFilesDiscovered,
+      bytesPerTranscriptCap: sourceOptions.bytesPerTranscriptCap
     },
     privacy: {
       rawPromptsStored: false,
@@ -856,6 +940,7 @@ function baselineFromCounters(
     toolCategories: toolCategoryAggregatesFromCounters(counters.toolCategories),
     failureRecovery: recoveryAggregatesFromCounters(counters.failureRecovery),
     blindRetry: blindRetryAggregatesFromCounters(counters.failureRecovery),
+    retryHazards: retryHazardsFromCounters(counters.failureRecovery),
     activity: {
       highActivitySessions: counters.highActivitySessions,
       busyNoProgressSessions: counters.busyNoProgressSessions,

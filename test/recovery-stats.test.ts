@@ -1,14 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
   recoveryAggregatesFromCounters,
+  retryHazardsFromCounters,
   recoveryInsight,
   recoveryInsightFromAggregate,
   emptyRecoveryBuildCounters,
-  addFailureEpisodeToRecoveryCounters
+  addFailureEpisodeToRecoveryCounters,
+  smoothedRecoveryRate
 } from "../src/recovery-stats.js";
 import type { FailureEpisodeSummary } from "../src/types.js";
 
 describe("failure recovery statistics", () => {
+  it("uses Bayesian-smoothed recovery rates so tiny samples stay modest", () => {
+    expect(smoothedRecoveryRate(0, 0)).toBe(0.5);
+    expect(smoothedRecoveryRate(1, 0)).toBe(0.75);
+    expect(smoothedRecoveryRate(9, 1)).toBe(0.8636);
+  });
+
   it("suppresses personalization below five relevant episodes", () => {
     expect(
       recoveryInsightFromAggregate(
@@ -123,6 +131,8 @@ describe("failure recovery statistics", () => {
       unrecovered: 1,
       activeEnded: 1,
       recoveryRate: 0.5,
+      smoothedRecoveryRate: 0.5,
+      effectiveSamples: 3,
       medianAttemptsBeforeRecovery: 2,
       blindRetryEpisodes: 2,
       blindRetryRecovered: 1,
@@ -134,6 +144,43 @@ describe("failure recovery statistics", () => {
       recovered: 0,
       unrecovered: 1
     });
+  });
+
+  it("generates retry hazard tables by safe category and attempt bucket", () => {
+    const counters = emptyRecoveryBuildCounters();
+    for (const item of [
+      makeEpisode({ category: "tests", recovered: true, attemptCount: 2, blindRetryFailureCount: 2 }),
+      makeEpisode({ category: "tests", recovered: false, activeEnded: true, attemptCount: 3, blindRetryFailureCount: 3 }),
+      makeEpisode({ category: "read", recovered: true, attemptCount: 3, blindRetryFailureCount: 3 })
+    ]) {
+      addFailureEpisodeToRecoveryCounters(counters, item);
+    }
+
+    const hazards = retryHazardsFromCounters(counters);
+
+    expect(hazards.tests?.["1"]).toMatchObject({
+      episodes: 2,
+      recovered: 1,
+      unrecovered: 1,
+      recoveryRate: 0.5,
+      smoothedRecoveryRate: 0.5,
+      effectiveSamples: 3
+    });
+    expect(hazards.tests?.["3"]).toMatchObject({
+      episodes: 1,
+      recovered: 0,
+      unrecovered: 1,
+      recoveryRate: 0,
+      smoothedRecoveryRate: 0.25
+    });
+    expect(hazards.read?.["3"]).toMatchObject({
+      episodes: 1,
+      recovered: 1,
+      unrecovered: 0,
+      recoveryRate: 1,
+      smoothedRecoveryRate: 0.75
+    });
+    expect(hazards.grep).toBeUndefined();
   });
 
   it("falls back to legacy validation aggregates safely", () => {

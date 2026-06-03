@@ -1,7 +1,14 @@
 import { sessionKeyFromId } from "./session.js";
 import { mergeUsage } from "./status-input.js";
 import { recoveryInsight } from "./recovery-stats.js";
-import type { Decision, DecisionPersonalBaseline, StatusLineInput, TokenUsage, TranscriptSummary } from "./types.js";
+import type {
+  Decision,
+  DecisionPersonalBaseline,
+  FailureRecoveryCategory,
+  StatusLineInput,
+  TokenUsage,
+  TranscriptSummary
+} from "./types.js";
 
 export interface DecideOptions {
   previous?: {
@@ -94,12 +101,9 @@ export function decide(
     const mcpFailure = isMcpFailure(repeatedFailure);
     const validationPurpose = validationPurposeForFailure(repeatedFailure);
     const validationLabel = validationPurpose ? validationPurposeLabel(validationPurpose) : undefined;
-    const baselineInsight = validationPurpose
-      ? recoveryInsight(options.baseline, validationPurpose, repeatedFailure.count)
-      : mcpFailure
-        ? recoveryInsight(options.baseline, "mcp", repeatedFailure.count)
-        : undefined;
+    const baselineInsight = recoveryInsightForFailure(options.baseline, repeatedFailure);
     const baselineUnrecoveredLoop = baselineInsight?.kind === "usually_unrecovered";
+    const baselineUsuallyRecovers = baselineInsight?.kind === "usually_recovers";
     const baselineStopLike = runningTests && supportsValidationLoopStop(options.baseline);
     return baseDecision({
       state: "Stop",
@@ -115,14 +119,18 @@ export function decide(
           : baselineStopLike
           ? "test loop: past runs ended badly"
           : `test loop: failed ${repeatedFailure.count}x`
-        : validationLabel
+          : validationLabel
           ? baselineUnrecoveredLoop && baselineInsight
             ? baselineInsight.diagnosis
             : `${validationLabel} failed ${formatFailureCount(repeatedFailure.count)}`
-          : undefined,
-      confidence: baselineInsight?.confidence || "high",
+          : baselineUnrecoveredLoop && baselineInsight
+            ? baselineInsight.diagnosis
+            : undefined,
+      confidence: baselineUsuallyRecovers ? "medium" : baselineInsight?.confidence || "high",
       baselineNote: baselineUnrecoveredLoop && baselineInsight
         ? baselineInsight.baselineNote
+        : baselineUsuallyRecovers && baselineInsight
+          ? `${baselineInsight.baselineNote}; fixed retry limit still says stop`
         : baselineStopLike
           ? "similar past loops usually needed intervention"
           : undefined,
@@ -146,6 +154,8 @@ export function decide(
           ? baselineUnrecoveredLoop
             ? "stop retrying and inspect first failure"
             : `inspect the first ${validationLabel} failure, then rerun that check`
+        : baselineUnrecoveredLoop
+          ? "stop retrying and inspect first failure"
         : repeatedFailure.toolName === "Bash"
           ? "fix the failing command manually, then ask Claude to rerun only that command"
           : `inspect the failing ${repeatedFailure.toolName} step manually before more retries`,
@@ -254,11 +264,7 @@ export function decide(
     const mcpFailure = isMcpFailure(earlyRepeatedFailure);
     const validationPurpose = validationPurposeForFailure(earlyRepeatedFailure);
     const validationLabel = validationPurpose ? validationPurposeLabel(validationPurpose) : undefined;
-    const baselineInsight = validationPurpose
-      ? recoveryInsight(options.baseline, validationPurpose, earlyRepeatedFailure.count)
-      : mcpFailure
-        ? recoveryInsight(options.baseline, "mcp", earlyRepeatedFailure.count)
-        : undefined;
+    const baselineInsight = recoveryInsightForFailure(options.baseline, earlyRepeatedFailure);
     const quickRecovery = baselineInsight?.kind === "usually_recovers";
     return baseDecision({
       state: "Careful",
@@ -732,6 +738,40 @@ function validationPurposeForFailure(failure: { toolName: string; purpose?: stri
   return failure.purpose === "tests" || failure.purpose === "lint" || failure.purpose === "typecheck" || failure.purpose === "build"
     ? failure.purpose
     : undefined;
+}
+
+function recoveryInsightForFailure(
+  baseline: DecisionPersonalBaseline | undefined,
+  failure: { toolName: string; purpose?: string; category?: string; count: number }
+) {
+  const category = recoveryCategoryForFailure(failure);
+  return category ? recoveryInsight(baseline, category, failure.count) : undefined;
+}
+
+function recoveryCategoryForFailure(failure: { toolName: string; purpose?: string; category?: string }): FailureRecoveryCategory | undefined {
+  const validationPurpose = validationPurposeForFailure(failure);
+  if (validationPurpose) {
+    return validationPurpose;
+  }
+  if (isMcpFailure(failure)) {
+    return "mcp";
+  }
+  if (failure.toolName === "Read" || (failure.toolName === "Bash" && failure.purpose === "read")) {
+    return "read";
+  }
+  if (failure.toolName === "Grep") {
+    return "grep";
+  }
+  if (failure.toolName === "Glob") {
+    return "glob";
+  }
+  if (failure.toolName === "LS") {
+    return "ls";
+  }
+  if (failure.toolName === "Edit" || failure.toolName === "MultiEdit" || failure.toolName === "Write") {
+    return "edit";
+  }
+  return "tool";
 }
 
 function isMcpFailure(failure: { toolName: string; category?: string }): boolean {

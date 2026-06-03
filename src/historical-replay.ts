@@ -14,6 +14,7 @@ import {
   FAILURE_RECOVERY_CATEGORIES,
   recoveryAggregatesFromCounters,
   recoveryInsight,
+  retryHazardsFromCounters,
   type FailureRecoveryCategory
 } from "./recovery-stats.js";
 import { readTranscriptTail } from "./transcript-reader.js";
@@ -45,8 +46,22 @@ export interface HistoricalReplayMetrics {
   averageToolResultsBeforeWarning: number;
   averageCostBeforeWarning: number | undefined;
   averageDurationBeforeWarning: number | undefined;
+  warningLeadTimeAttempts: number;
+  decisionFlipRate: number;
   projectBaselineSuppressions: number | undefined;
   lowSampleSuppressions: number;
+  categoryCoverage: Partial<Record<FailureRecoveryCategory, number>>;
+  policies: Record<HistoricalReplayPolicyName, HistoricalReplayPolicyMetrics>;
+}
+
+export type HistoricalReplayPolicyName = "current_fixed" | "smoothed_recovery_wording" | "hazard_threshold_candidate";
+
+export interface HistoricalReplayPolicyMetrics {
+  warnings: number;
+  falseStopCount: number;
+  missedUnrecoveredLoopCount: number;
+  warningLeadTimeAttempts: number;
+  decisionFlipRate: number;
   categoryCoverage: Partial<Record<FailureRecoveryCategory, number>>;
 }
 
@@ -87,6 +102,11 @@ interface ReplayOutcome {
   blindRetryWarningIssued: boolean;
 }
 
+interface PolicyEvaluation {
+  outcomes: ReplayOutcome[];
+  lowSampleSuppressions: number;
+}
+
 export async function evaluateHistoricalReplay(options: HistoricalReplayOptions = {}): Promise<HistoricalReplayMetrics> {
   const homeDir = options.homeDir ?? homedir();
   const claudeProjectsDir = options.claudeProjectsDir ?? join(homeDir, ".claude", "projects");
@@ -117,9 +137,12 @@ export function formatHistoricalReplayMetrics(metrics: HistoricalReplayMetrics):
     `average tool results before warning ${metrics.averageToolResultsBeforeWarning.toFixed(2)}`,
     `average cost before warning ${formatOptionalCurrencyAverage(metrics.averageCostBeforeWarning)}`,
     `average duration before warning ${formatOptionalDurationAverage(metrics.averageDurationBeforeWarning)}`,
+    `warning lead time ${metrics.warningLeadTimeAttempts.toFixed(2)} attempts`,
+    `decision flip rate ${metrics.decisionFlipRate.toFixed(2)}`,
     `project-baseline suppressions ${metrics.projectBaselineSuppressions === undefined ? "n/a (not replayed)" : metrics.projectBaselineSuppressions}`,
     `low-sample suppressions ${metrics.lowSampleSuppressions}`,
-    `category coverage ${formatCategoryCoverage(metrics.categoryCoverage)}`
+    `category coverage ${formatCategoryCoverage(metrics.categoryCoverage)}`,
+    `policy comparison ${formatPolicyComparison(metrics.policies)}`
   ].join("; ");
 }
 
@@ -127,6 +150,48 @@ function evaluateHoldout(
   holdoutEventsBySession: ReplayToolResultEvent[][],
   baseline: DecisionPersonalBaseline
 ): HistoricalReplayMetrics {
+  const current = evaluatePolicy(holdoutEventsBySession, baseline, "current_fixed");
+  const smoothed = evaluatePolicy(holdoutEventsBySession, baseline, "smoothed_recovery_wording");
+  const hazard = evaluatePolicy(holdoutEventsBySession, baseline, "hazard_threshold_candidate");
+  const policies: Record<HistoricalReplayPolicyName, HistoricalReplayPolicyMetrics> = {
+    current_fixed: policyMetricsFromOutcomes(current.outcomes, 0),
+    smoothed_recovery_wording: policyMetricsFromOutcomes(
+      smoothed.outcomes,
+      decisionFlipRate(current.outcomes, smoothed.outcomes)
+    ),
+    hazard_threshold_candidate: policyMetricsFromOutcomes(hazard.outcomes, decisionFlipRate(current.outcomes, hazard.outcomes))
+  };
+  const currentMetrics = metricsFromOutcomes(holdoutEventsBySession.length, current.outcomes, current.lowSampleSuppressions);
+
+  return {
+    ...currentMetrics,
+    decisionFlipRate: policies.hazard_threshold_candidate.decisionFlipRate,
+    policies
+  };
+}
+
+function evaluatePolicy(
+  holdoutEventsBySession: ReplayToolResultEvent[][],
+  baseline: DecisionPersonalBaseline,
+  policy: HistoricalReplayPolicyName
+): PolicyEvaluation {
+  const outcomes: ReplayOutcome[] = [];
+  let lowSampleSuppressions = 0;
+
+  for (const events of holdoutEventsBySession) {
+    const replay = replaySession(events, baseline, policy);
+    lowSampleSuppressions += replay.lowSampleSuppressions;
+    outcomes.push(...replay.outcomes);
+  }
+
+  return { outcomes, lowSampleSuppressions };
+}
+
+function metricsFromOutcomes(
+  holdoutSessions: number,
+  outcomes: ReplayOutcome[],
+  lowSampleSuppressions: number
+): Omit<HistoricalReplayMetrics, "decisionFlipRate" | "policies"> {
   let evaluatedFailureEpisodes = 0;
   let stopTruePositive = 0;
   let stopTotal = 0;
@@ -134,60 +199,57 @@ function evaluateHoldout(
   let missedUnrecoveredLoopCount = 0;
   let blindRetryTruePositive = 0;
   let blindRetryTotal = 0;
-  let lowSampleSuppressions = 0;
   let warnings = 0;
   const attemptsBeforeWarning: number[] = [];
   const toolResultsBeforeWarning: number[] = [];
   const costBeforeWarning: number[] = [];
   const durationBeforeWarning: number[] = [];
+  const warningLeadAttempts: number[] = [];
   const categoryCoverage: Partial<Record<FailureRecoveryCategory, number>> = {};
 
-  for (const events of holdoutEventsBySession) {
-    const replay = replaySession(events, baseline);
-    lowSampleSuppressions += replay.lowSampleSuppressions;
-    for (const outcome of replay.outcomes) {
-      evaluatedFailureEpisodes += 1;
-      categoryCoverage[outcome.category] = (categoryCoverage[outcome.category] || 0) + 1;
-      if (outcome.warningAttempt !== undefined) {
-        warnings += 1;
-        attemptsBeforeWarning.push(outcome.warningAttempt);
-        if (outcome.warningToolResultCount !== undefined) {
-          toolResultsBeforeWarning.push(outcome.warningToolResultCount);
-        }
-        if (outcome.warningCostUsd !== undefined) {
-          costBeforeWarning.push(outcome.warningCostUsd);
-        }
-        if (outcome.warningDurationMs !== undefined) {
-          durationBeforeWarning.push(outcome.warningDurationMs);
-        }
+  for (const outcome of outcomes) {
+    evaluatedFailureEpisodes += 1;
+    categoryCoverage[outcome.category] = (categoryCoverage[outcome.category] || 0) + 1;
+    if (outcome.warningAttempt !== undefined) {
+      warnings += 1;
+      attemptsBeforeWarning.push(outcome.warningAttempt);
+      warningLeadAttempts.push(Math.max(0, outcome.attemptCount - outcome.warningAttempt));
+      if (outcome.warningToolResultCount !== undefined) {
+        toolResultsBeforeWarning.push(outcome.warningToolResultCount);
       }
-
-      if (outcome.stopIssued) {
-        stopTotal += 1;
-        if (outcome.recovered) {
-          falseStopCountOnRecoveredEpisodes += 1;
-        } else {
-          stopTruePositive += 1;
-        }
+      if (outcome.warningCostUsd !== undefined) {
+        costBeforeWarning.push(outcome.warningCostUsd);
       }
-
-      const unrecoveredLoop = !outcome.recovered && outcome.attemptCount >= 3;
-      if (unrecoveredLoop && !outcome.stopIssued) {
-        missedUnrecoveredLoopCount += 1;
+      if (outcome.warningDurationMs !== undefined) {
+        durationBeforeWarning.push(outcome.warningDurationMs);
       }
+    }
 
-      if (outcome.blindRetryWarningIssued) {
-        blindRetryTotal += 1;
-        if (!outcome.recovered) {
-          blindRetryTruePositive += 1;
-        }
+    if (outcome.stopIssued) {
+      stopTotal += 1;
+      if (outcome.recovered) {
+        falseStopCountOnRecoveredEpisodes += 1;
+      } else {
+        stopTruePositive += 1;
+      }
+    }
+
+    const unrecoveredLoop = !outcome.recovered && outcome.attemptCount >= 3;
+    if (unrecoveredLoop && !outcome.stopIssued) {
+      missedUnrecoveredLoopCount += 1;
+    }
+
+    if (outcome.blindRetryWarningIssued) {
+      blindRetryTotal += 1;
+      if (!outcome.recovered) {
+        blindRetryTruePositive += 1;
       }
     }
   }
 
   return {
-    sessionsEvaluated: holdoutEventsBySession.length,
-    holdoutSessions: holdoutEventsBySession.length,
+    sessionsEvaluated: holdoutSessions,
+    holdoutSessions,
     evaluatedFailureEpisodes,
     warnings,
     stopPrecisionOnUnrecoveredEpisodes: stopTotal > 0 ? roundRate(stopTruePositive / stopTotal) : undefined,
@@ -205,6 +267,7 @@ function evaluateHoldout(
         : 0,
     averageCostBeforeWarning: averageOrUndefined(costBeforeWarning),
     averageDurationBeforeWarning: averageOrUndefined(durationBeforeWarning),
+    warningLeadTimeAttempts: averageOrZero(warningLeadAttempts),
     projectBaselineSuppressions: undefined,
     lowSampleSuppressions,
     categoryCoverage
@@ -213,7 +276,8 @@ function evaluateHoldout(
 
 function replaySession(
   events: ReplayToolResultEvent[],
-  baseline: DecisionPersonalBaseline
+  baseline: DecisionPersonalBaseline,
+  policy: HistoricalReplayPolicyName
 ): { outcomes: ReplayOutcome[]; lowSampleSuppressions: number } {
   const active = new Map<string, ReplayEpisode>();
   const outcomes: ReplayOutcome[] = [];
@@ -254,7 +318,7 @@ function replaySession(
     episode.maxBlindRunCount = Math.max(episode.maxBlindRunCount, episode.blindRunCount);
     episode.meaningfulInterventionSinceFailure = false;
 
-    const currentState = replayDecisionState(episode);
+    const currentState = replayDecisionState(episode, baseline, policy);
     if (currentState !== "Healthy" && episode.warningAttempt === undefined) {
       episode.warningAttempt = episode.attemptCount;
       episode.warningToolResultCount = toolResultCount;
@@ -280,7 +344,27 @@ function replaySession(
   return { outcomes, lowSampleSuppressions };
 }
 
-function replayDecisionState(episode: ReplayEpisode): "Healthy" | "Careful" | "Stop" {
+function replayDecisionState(
+  episode: ReplayEpisode,
+  baseline: DecisionPersonalBaseline,
+  policy: HistoricalReplayPolicyName
+): "Healthy" | "Careful" | "Stop" {
+  const fixedState = fixedReplayDecisionState(episode);
+  if (policy !== "hazard_threshold_candidate") {
+    return fixedState;
+  }
+
+  const insight = recoveryInsight(baseline, episode.category, episode.attemptCount);
+  if (fixedState === "Stop" && insight?.kind === "usually_recovers") {
+    return "Careful";
+  }
+  if (fixedState === "Careful" && insight?.kind === "usually_unrecovered") {
+    return "Stop";
+  }
+  return fixedState;
+}
+
+function fixedReplayDecisionState(episode: ReplayEpisode): "Healthy" | "Careful" | "Stop" {
   if (episode.maxBlindRunCount >= 3 || episode.attemptCount >= 3) {
     return "Stop";
   }
@@ -311,7 +395,8 @@ function baselineFromEpisodes(episodes: FailureEpisodeSummary[]): DecisionPerson
   }
   return {
     failureRecovery: recoveryAggregatesFromCounters(counters),
-    blindRetry: blindRetryAggregatesFromCounters(counters)
+    blindRetry: blindRetryAggregatesFromCounters(counters),
+    retryHazards: retryHazardsFromCounters(counters)
   };
 }
 
@@ -524,12 +609,75 @@ function averageOrUndefined(values: number[]): number | undefined {
   return values.length > 0 ? Number((values.reduce((total, value) => total + value, 0) / values.length).toFixed(2)) : undefined;
 }
 
+function averageOrZero(values: number[]): number {
+  return values.length > 0 ? Number((values.reduce((total, value) => total + value, 0) / values.length).toFixed(2)) : 0;
+}
+
 function formatCategoryCoverage(coverage: Partial<Record<FailureRecoveryCategory, number>>): string {
   const parts = FAILURE_RECOVERY_CATEGORIES.flatMap((category) => {
     const count = coverage[category] || 0;
     return count > 0 ? [`${category}:${count}`] : [];
   });
   return parts.length > 0 ? parts.join(", ") : "none";
+}
+
+function policyMetricsFromOutcomes(outcomes: ReplayOutcome[], decisionFlipRateValue: number): HistoricalReplayPolicyMetrics {
+  let warnings = 0;
+  let falseStopCount = 0;
+  let missedUnrecoveredLoopCount = 0;
+  const warningLeadAttempts: number[] = [];
+  const categoryCoverage: Partial<Record<FailureRecoveryCategory, number>> = {};
+
+  for (const outcome of outcomes) {
+    categoryCoverage[outcome.category] = (categoryCoverage[outcome.category] || 0) + 1;
+    if (outcome.warningAttempt !== undefined) {
+      warnings += 1;
+      warningLeadAttempts.push(Math.max(0, outcome.attemptCount - outcome.warningAttempt));
+    }
+    if (outcome.stopIssued && outcome.recovered) {
+      falseStopCount += 1;
+    }
+    if (!outcome.recovered && outcome.attemptCount >= 3 && !outcome.stopIssued) {
+      missedUnrecoveredLoopCount += 1;
+    }
+  }
+
+  return {
+    warnings,
+    falseStopCount,
+    missedUnrecoveredLoopCount,
+    warningLeadTimeAttempts: averageOrZero(warningLeadAttempts),
+    decisionFlipRate: decisionFlipRateValue,
+    categoryCoverage
+  };
+}
+
+function decisionFlipRate(reference: ReplayOutcome[], candidate: ReplayOutcome[]): number {
+  const total = Math.min(reference.length, candidate.length);
+  if (total === 0) {
+    return 0;
+  }
+  let flips = 0;
+  for (let index = 0; index < total; index += 1) {
+    const left = reference[index];
+    const right = candidate[index];
+    if (!left || !right) {
+      continue;
+    }
+    if (left.stopIssued !== right.stopIssued || left.warningAttempt !== right.warningAttempt) {
+      flips += 1;
+    }
+  }
+  return roundRate(flips / total);
+}
+
+function formatPolicyComparison(policies: Record<HistoricalReplayPolicyName, HistoricalReplayPolicyMetrics>): string {
+  return (Object.entries(policies) as Array<[HistoricalReplayPolicyName, HistoricalReplayPolicyMetrics]>)
+    .map(
+      ([name, metrics]) =>
+        `${name} false Stops ${metrics.falseStopCount}, missed unrecovered loops ${metrics.missedUnrecoveredLoopCount}, warning lead time ${metrics.warningLeadTimeAttempts.toFixed(2)}, decision flip rate ${metrics.decisionFlipRate.toFixed(2)}, category coverage ${formatCategoryCoverage(metrics.categoryCoverage)}`
+    )
+    .join(" | ");
 }
 
 function roundRate(value: number): number {

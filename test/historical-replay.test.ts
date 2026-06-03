@@ -40,6 +40,18 @@ describe("historical replay evaluation", () => {
           tests: 2
         }
       });
+      expect(metrics.warningLeadTimeAttempts).toBeGreaterThanOrEqual(0);
+      expect(metrics.policies.current_fixed).toMatchObject({
+        falseStopCount: 0,
+        missedUnrecoveredLoopCount: 0,
+        decisionFlipRate: 0,
+        categoryCoverage: {
+          tests: 2
+        }
+      });
+      expect(metrics.policies.smoothed_recovery_wording.decisionFlipRate).toBe(0);
+      expect(metrics.policies.hazard_threshold_candidate.missedUnrecoveredLoopCount).toBe(1);
+      expect(metrics.policies.hazard_threshold_candidate.decisionFlipRate).toBeGreaterThan(0);
       expect(formatted).toContain("holdout sessions 2");
       expect(formatted).toContain("sessions evaluated 2");
       expect(formatted).toContain("warnings ");
@@ -47,6 +59,10 @@ describe("historical replay evaluation", () => {
       expect(formatted).toContain("average tool results before warning");
       expect(formatted).toContain("average cost before warning n/a");
       expect(formatted).toContain("average duration before warning n/a");
+      expect(formatted).toContain("warning lead time");
+      expect(formatted).toContain("decision flip rate");
+      expect(formatted).toContain("policy comparison current_fixed false Stops");
+      expect(formatted).toContain("hazard_threshold_candidate");
       expect(formatted).toContain("evaluated failure episodes 2");
       expect(formatted).toContain("Stop precision on unrecovered episodes");
       expect(formatted).toContain("blind retry precision 1.00");

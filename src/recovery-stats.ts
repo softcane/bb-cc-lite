@@ -19,6 +19,8 @@ export interface FailureRecoveryAggregate {
   unrecovered: number;
   activeEnded: number;
   recoveryRate: number;
+  smoothedRecoveryRate?: number;
+  effectiveSamples?: number;
   medianAttemptsBeforeRecovery: number;
   p75AttemptsBeforeRecovery: number;
   blindRetryEpisodes: number;
@@ -32,10 +34,26 @@ export interface BlindRetryAggregate {
   recovered: number;
   unrecovered: number;
   recoveryRate: number;
+  smoothedRecoveryRate?: number;
+  effectiveSamples?: number;
   carefulLikeEpisodes: number;
   stopLikeEpisodes: number;
   confidence: DecisionConfidence;
 }
+
+export type RetryAttemptBucket = "1" | "2" | "3" | "4" | "5plus";
+
+export interface RetryHazardAggregate {
+  episodes: number;
+  recovered: number;
+  unrecovered: number;
+  recoveryRate: number;
+  smoothedRecoveryRate: number;
+  effectiveSamples: number;
+  confidence: DecisionConfidence;
+}
+
+export type RetryHazardTable = Partial<Record<FailureRecoveryCategory, Partial<Record<RetryAttemptBucket, RetryHazardAggregate>>>>;
 
 export interface FailureRecoveryInsight {
   kind: "usually_recovers" | "usually_unrecovered";
@@ -56,9 +74,19 @@ export interface RecoveryBuildCounters {
   blindRetryUnrecovered: number;
   blindRetryCarefulLikeEpisodes: number;
   blindRetryStopLikeEpisodes: number;
+  retryHazards: Record<RetryAttemptBucket, RetryHazardBuildCounters>;
 }
 
 type BaselineFailureRecoveryAggregate = NonNullable<NonNullable<DecisionPersonalBaseline["failureRecovery"]>[FailureRecoveryCategory]>;
+type BaselineRetryHazardAggregate = NonNullable<
+  NonNullable<NonNullable<DecisionPersonalBaseline["retryHazards"]>[FailureRecoveryCategory]>[RetryAttemptBucket]
+>;
+
+interface RetryHazardBuildCounters {
+  episodes: number;
+  recovered: number;
+  unrecovered: number;
+}
 
 export const FAILURE_RECOVERY_CATEGORIES: FailureRecoveryCategory[] = [
   "tests",
@@ -73,6 +101,10 @@ export const FAILURE_RECOVERY_CATEGORIES: FailureRecoveryCategory[] = [
   "mcp",
   "tool"
 ];
+export const RETRY_ATTEMPT_BUCKETS: RetryAttemptBucket[] = ["1", "2", "3", "4", "5plus"];
+
+const RECOVERY_SMOOTHING_ALPHA = 0.5;
+const RECOVERY_SMOOTHING_BETA = 0.5;
 
 export function emptyRecoveryBuildCounters(): Record<FailureRecoveryCategory, RecoveryBuildCounters> {
   const result = {} as Record<FailureRecoveryCategory, RecoveryBuildCounters>;
@@ -87,7 +119,8 @@ export function emptyRecoveryBuildCounters(): Record<FailureRecoveryCategory, Re
       blindRetryRecovered: 0,
       blindRetryUnrecovered: 0,
       blindRetryCarefulLikeEpisodes: 0,
-      blindRetryStopLikeEpisodes: 0
+      blindRetryStopLikeEpisodes: 0,
+      retryHazards: emptyRetryHazardCounters()
     };
   }
   return result;
@@ -108,6 +141,7 @@ export function mergeRecoveryBuildCounters(
     target[category].blindRetryUnrecovered += source[category].blindRetryUnrecovered;
     target[category].blindRetryCarefulLikeEpisodes += source[category].blindRetryCarefulLikeEpisodes;
     target[category].blindRetryStopLikeEpisodes += source[category].blindRetryStopLikeEpisodes;
+    mergeRetryHazardCounters(target[category].retryHazards, source[category].retryHazards);
   }
 }
 
@@ -130,6 +164,7 @@ export function addFailureEpisodeToRecoveryCounters(
     counters.blindRetryCarefulLikeEpisodes += 1;
     counters.blindRetryStopLikeEpisodes += episode.blindRetryFailureCount >= 3 ? 1 : 0;
   }
+  addEpisodeToRetryHazards(counters.retryHazards, episode);
 }
 
 export function recoveryAggregatesFromCounters(
@@ -147,6 +182,8 @@ export function recoveryAggregatesFromCounters(
       unrecovered: source.unrecovered,
       activeEnded: source.activeEnded,
       recoveryRate: rate(source.recovered, source.recovered + source.unrecovered),
+      smoothedRecoveryRate: smoothedRecoveryRate(source.recovered, source.unrecovered),
+      effectiveSamples: effectiveSamples(source.recovered, source.unrecovered),
       medianAttemptsBeforeRecovery: percentile(source.attemptsBeforeRecovery, 0.5),
       p75AttemptsBeforeRecovery: percentile(source.attemptsBeforeRecovery, 0.75),
       blindRetryEpisodes: source.blindRetryEpisodes,
@@ -172,10 +209,38 @@ export function blindRetryAggregatesFromCounters(
       recovered: source.blindRetryRecovered,
       unrecovered: source.blindRetryUnrecovered,
       recoveryRate: rate(source.blindRetryRecovered, source.blindRetryRecovered + source.blindRetryUnrecovered),
+      smoothedRecoveryRate: smoothedRecoveryRate(source.blindRetryRecovered, source.blindRetryUnrecovered),
+      effectiveSamples: effectiveSamples(source.blindRetryRecovered, source.blindRetryUnrecovered),
       carefulLikeEpisodes: source.blindRetryCarefulLikeEpisodes,
       stopLikeEpisodes: source.blindRetryStopLikeEpisodes,
       confidence: confidenceForSeen(source.blindRetryEpisodes)
     };
+  }
+  return result;
+}
+
+export function retryHazardsFromCounters(counters: Record<FailureRecoveryCategory, RecoveryBuildCounters>): RetryHazardTable {
+  const result: RetryHazardTable = {};
+  for (const category of FAILURE_RECOVERY_CATEGORIES) {
+    const hazardTable: Partial<Record<RetryAttemptBucket, RetryHazardAggregate>> = {};
+    for (const bucket of RETRY_ATTEMPT_BUCKETS) {
+      const source = counters[category].retryHazards[bucket];
+      if (source.episodes === 0) {
+        continue;
+      }
+      hazardTable[bucket] = {
+        episodes: source.episodes,
+        recovered: source.recovered,
+        unrecovered: source.unrecovered,
+        recoveryRate: rate(source.recovered, source.recovered + source.unrecovered),
+        smoothedRecoveryRate: smoothedRecoveryRate(source.recovered, source.unrecovered),
+        effectiveSamples: effectiveSamples(source.recovered, source.unrecovered),
+        confidence: confidenceForSeen(source.recovered + source.unrecovered)
+      };
+    }
+    if (Object.keys(hazardTable).length > 0) {
+      result[category] = hazardTable;
+    }
   }
   return result;
 }
@@ -189,13 +254,14 @@ export function recoveryInsight(
   if (!aggregate) {
     return undefined;
   }
-  return recoveryInsightFromAggregate(category, aggregate, attempts);
+  return recoveryInsightFromAggregate(category, aggregate, attempts, normalizeRetryHazard(baseline?.retryHazards?.[category]?.[retryAttemptBucket(attempts)]));
 }
 
 export function recoveryInsightFromAggregate(
   category: FailureRecoveryCategory,
   aggregate: FailureRecoveryAggregate,
-  attempts: number
+  attempts: number,
+  hazard?: RetryHazardAggregate
 ): FailureRecoveryInsight | undefined {
   const relevantEpisodes = aggregate.recovered + aggregate.unrecovered;
   if (relevantEpisodes < 5) {
@@ -207,7 +273,10 @@ export function recoveryInsightFromAggregate(
     return undefined;
   }
 
-  if (aggregate.recoveryRate >= 0.75 && aggregate.medianAttemptsBeforeRecovery > 0 && aggregate.medianAttemptsBeforeRecovery <= 2) {
+  const recoveryRate = hazard && hazard.episodes >= 5 ? hazard.smoothedRecoveryRate : aggregate.smoothedRecoveryRate ?? aggregate.recoveryRate;
+  const unrecovered = hazard && hazard.episodes >= 5 ? hazard.unrecovered : aggregate.unrecovered;
+
+  if (recoveryRate >= 0.75 && aggregate.medianAttemptsBeforeRecovery > 0 && aggregate.medianAttemptsBeforeRecovery <= 2) {
     return {
       kind: "usually_recovers",
       confidence,
@@ -217,7 +286,7 @@ export function recoveryInsightFromAggregate(
     };
   }
 
-  if (aggregate.unrecovered >= 5 && aggregate.recoveryRate <= 0.4) {
+  if (unrecovered >= 5 && recoveryRate <= 0.4) {
     return {
       kind: "usually_unrecovered",
       confidence,
@@ -270,6 +339,14 @@ export function rate(count: number, total: number): number {
   return total > 0 ? Number((count / total).toFixed(4)) : 0;
 }
 
+export function smoothedRecoveryRate(recovered: number, unrecovered: number): number {
+  return Number(((recovered + RECOVERY_SMOOTHING_ALPHA) / effectiveSamples(recovered, unrecovered)).toFixed(4));
+}
+
+export function effectiveSamples(recovered: number, unrecovered: number): number {
+  return recovered + unrecovered + RECOVERY_SMOOTHING_ALPHA + RECOVERY_SMOOTHING_BETA;
+}
+
 export function average(values: number[]): number {
   return values.length > 0 ? Number((values.reduce((total, value) => total + value, 0) / values.length).toFixed(4)) : 0;
 }
@@ -291,6 +368,75 @@ function confidenceForAggregateLike(aggregate: Pick<FailureRecoveryAggregate, "r
   return confidenceForSeen(aggregate.recovered + aggregate.unrecovered);
 }
 
+function emptyRetryHazardCounters(): Record<RetryAttemptBucket, RetryHazardBuildCounters> {
+  return {
+    "1": emptyRetryHazardBucket(),
+    "2": emptyRetryHazardBucket(),
+    "3": emptyRetryHazardBucket(),
+    "4": emptyRetryHazardBucket(),
+    "5plus": emptyRetryHazardBucket()
+  };
+}
+
+function emptyRetryHazardBucket(): RetryHazardBuildCounters {
+  return { episodes: 0, recovered: 0, unrecovered: 0 };
+}
+
+function mergeRetryHazardCounters(
+  target: Record<RetryAttemptBucket, RetryHazardBuildCounters>,
+  source: Record<RetryAttemptBucket, RetryHazardBuildCounters>
+): void {
+  for (const bucket of RETRY_ATTEMPT_BUCKETS) {
+    target[bucket].episodes += source[bucket].episodes;
+    target[bucket].recovered += source[bucket].recovered;
+    target[bucket].unrecovered += source[bucket].unrecovered;
+  }
+}
+
+function addEpisodeToRetryHazards(target: Record<RetryAttemptBucket, RetryHazardBuildCounters>, episode: FailureEpisodeSummary): void {
+  for (const bucket of retryAttemptBucketsReached(episode.attemptCount)) {
+    target[bucket].episodes += 1;
+    target[bucket].recovered += episode.recovered ? 1 : 0;
+    target[bucket].unrecovered += episode.recovered ? 0 : 1;
+  }
+}
+
+function retryAttemptBucketsReached(attemptCount: number): RetryAttemptBucket[] {
+  const result: RetryAttemptBucket[] = [];
+  if (attemptCount >= 1) {
+    result.push("1");
+  }
+  if (attemptCount >= 2) {
+    result.push("2");
+  }
+  if (attemptCount >= 3) {
+    result.push("3");
+  }
+  if (attemptCount >= 4) {
+    result.push("4");
+  }
+  if (attemptCount >= 5) {
+    result.push("5plus");
+  }
+  return result;
+}
+
+function retryAttemptBucket(attemptCount: number): RetryAttemptBucket {
+  if (attemptCount >= 5) {
+    return "5plus";
+  }
+  if (attemptCount >= 4) {
+    return "4";
+  }
+  if (attemptCount >= 3) {
+    return "3";
+  }
+  if (attemptCount >= 2) {
+    return "2";
+  }
+  return "1";
+}
+
 function legacyValidationAggregate(
   baseline: DecisionPersonalBaseline | undefined,
   category: FailureRecoveryCategory
@@ -308,6 +454,8 @@ function legacyValidationAggregate(
     unrecovered: aggregate.unrecovered || 0,
     activeEnded: aggregate.unrecovered || 0,
     recoveryRate: aggregate.recoveryRate || 0,
+    smoothedRecoveryRate: smoothedRecoveryRate(aggregate.recovered || 0, aggregate.unrecovered || 0),
+    effectiveSamples: effectiveSamples(aggregate.recovered || 0, aggregate.unrecovered || 0),
     medianAttemptsBeforeRecovery: aggregate.medianFailuresBeforeRecovery || 0,
     p75AttemptsBeforeRecovery: aggregate.p75FailuresBeforeRecovery || 0,
     blindRetryEpisodes: 0,
@@ -327,11 +475,30 @@ function normalizeAggregate(value: BaselineFailureRecoveryAggregate | undefined)
     unrecovered: value.unrecovered || 0,
     activeEnded: value.activeEnded || 0,
     recoveryRate: value.recoveryRate || 0,
+    smoothedRecoveryRate: value.smoothedRecoveryRate ?? smoothedRecoveryRate(value.recovered || 0, value.unrecovered || 0),
+    effectiveSamples: value.effectiveSamples ?? effectiveSamples(value.recovered || 0, value.unrecovered || 0),
     medianAttemptsBeforeRecovery: value.medianAttemptsBeforeRecovery || 0,
     p75AttemptsBeforeRecovery: value.p75AttemptsBeforeRecovery || 0,
     blindRetryEpisodes: value.blindRetryEpisodes || 0,
     blindRetryRecovered: value.blindRetryRecovered || 0,
     blindRetryUnrecovered: value.blindRetryUnrecovered || 0,
     confidence: value.confidence || confidenceForSeen((value.recovered || 0) + (value.unrecovered || 0))
+  };
+}
+
+function normalizeRetryHazard(value: BaselineRetryHazardAggregate | undefined): RetryHazardAggregate | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const recovered = value.recovered || 0;
+  const unrecovered = value.unrecovered || 0;
+  return {
+    episodes: value.episodes || 0,
+    recovered,
+    unrecovered,
+    recoveryRate: value.recoveryRate || 0,
+    smoothedRecoveryRate: value.smoothedRecoveryRate ?? smoothedRecoveryRate(recovered, unrecovered),
+    effectiveSamples: value.effectiveSamples ?? effectiveSamples(recovered, unrecovered),
+    confidence: value.confidence || confidenceForSeen(recovered + unrecovered)
   };
 }
