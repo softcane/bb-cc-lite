@@ -87,6 +87,27 @@ describe("parseStatusLineInput", () => {
     expect(input.usage.cacheReadInputTokens).toBeUndefined();
   });
 
+  it("preserves explicit zero token counters for cache efficiency math", () => {
+    const input = parseStatusLineInput(
+      JSON.stringify({
+        session_id: "session-zero-usage",
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0
+        }
+      })
+    );
+
+    expect(input.usage).toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0
+    });
+  });
+
   it("keeps Claude cost source for alternate cost fields and zero values", () => {
     const camelCost = parseStatusLineInput(
       JSON.stringify({

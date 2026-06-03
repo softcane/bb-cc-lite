@@ -1,10 +1,18 @@
 import { asRecord, extractUsage, mergeUsage, stringField } from "./status-input.js";
+import { cacheReadSharePoint, updateCacheReadShareSummary } from "./cache-efficiency.js";
 import { extractFailureEpisodesFromTranscriptLines, summarizeBlindRetry } from "./failure-episodes.js";
 import { hashValue } from "./paths.js";
 import { classifyResultPurpose, classifyToolIdentity } from "./tool-metadata.js";
 import { readTranscriptTail, type ReadTranscriptTailOptions } from "./transcript-reader.js";
 import type { ProjectConfig } from "./project-config.js";
-import type { InputTokenJumpSummary, RedundantReadSummary, ToolFailureSummary, TokenUsage, TranscriptSummary } from "./types.js";
+import type {
+  CacheReadShareSummary,
+  InputTokenJumpSummary,
+  RedundantReadSummary,
+  ToolFailureSummary,
+  TokenUsage,
+  TranscriptSummary
+} from "./types.js";
 
 export const TOOL_RESULT_EXPLOSION_THRESHOLD_TOKENS = 8_000;
 
@@ -73,6 +81,7 @@ export function parseTranscriptLines(
   let usage: TokenUsage = {};
   let latestUsage: TokenUsage | undefined;
   let latestUsageTimestamp: string | undefined;
+  let cacheReadShare: CacheReadShareSummary | undefined;
   let latestTimestamp: string | undefined;
   let latestCompactionTimestamp: string | undefined;
   let previousAssistantInputTokens: number | undefined;
@@ -105,6 +114,10 @@ export function parseTranscriptLines(
     if (hasUsage(entryUsage)) {
       latestUsage = entryUsage;
       latestUsageTimestamp = entryTimestamp || latestUsageTimestamp;
+    }
+    const cacheReadPoint = cacheReadSharePoint(entryUsage, entryTimestamp);
+    if (cacheReadPoint) {
+      cacheReadShare = updateCacheReadShareSummary(cacheReadShare, cacheReadPoint);
     }
     const toolUses = extractToolUses(entry);
     const toolResults = extractToolResults(entry);
@@ -250,6 +263,7 @@ export function parseTranscriptLines(
     usage,
     latestUsage,
     latestUsageTimestamp,
+    cacheReadShare,
     latestTimestamp,
     latestCompactionTimestamp,
     redundantRead,

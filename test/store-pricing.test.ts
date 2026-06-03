@@ -38,6 +38,28 @@ function transcript(overrides: Partial<TranscriptSummary> = {}): TranscriptSumma
   };
 }
 
+function cacheShare(peakRatio: number, currentRatio: number): NonNullable<TranscriptSummary["cacheReadShare"]> {
+  const peak = cacheSharePoint(peakRatio);
+  const current = cacheSharePoint(currentRatio);
+  return {
+    peak,
+    current,
+    dropPercentagePoints: Math.max(0, (peak.ratio - current.ratio) * 100)
+  };
+}
+
+function cacheSharePoint(ratio: number): NonNullable<TranscriptSummary["cacheReadShare"]>["current"] {
+  const totalInputTokens = 1_000;
+  const cacheReadInputTokens = Math.round(ratio * totalInputTokens);
+  return {
+    ratio,
+    totalInputTokens,
+    inputTokens: totalInputTokens - cacheReadInputTokens,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens
+  };
+}
+
 describe("store and pricing", () => {
   it("estimates local cost from cached LiteLLM pricing data without credentials", () => {
     const pricing: PricingTable = {
@@ -110,6 +132,54 @@ describe("store and pricing", () => {
         expect(scannedText).not.toContain(rawPromptSentinel);
         expect(scannedText).not.toContain(rawToolOutputSentinel);
         expect(scannedText).not.toContain(rawSessionId);
+      }
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("persists cache efficiency regression decisions without raw prompt, output, file content, paths, or session ids", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-store-cache-regression-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      const rawPromptSentinel = "RAW_PROMPT_SENTINEL_DO_NOT_STORE";
+      const rawToolOutputSentinel = "RAW_TOOL_OUTPUT_SENTINEL_DO_NOT_STORE";
+      const rawFileContentSentinel = "RAW_FILE_CONTENT_SENTINEL_DO_NOT_STORE";
+      const rawPath = `/tmp/RAW_PATH_SENTINEL/${rawFileContentSentinel}/transcript.jsonl`;
+      const rawWorkspacePath = `/workspace/RAW_WORKSPACE_SENTINEL/${rawPromptSentinel}`;
+      const rawSessionId = `session-${rawPromptSentinel}-${rawToolOutputSentinel}-${rawFileContentSentinel}`;
+      const decision = decide(
+        input({
+          sessionId: rawSessionId,
+          transcriptPath: rawPath,
+          cwd: rawWorkspacePath,
+          model: { id: `model-${rawPromptSentinel}` }
+        }),
+        transcript({
+          cacheReadShare: cacheShare(0.68, 0.29)
+        })
+      );
+
+      await recordDecision(decision, storePath);
+      const whyDecision = await latestDecision(decision.sessionKey, storePath);
+
+      expect(whyDecision).toMatchObject({
+        state: "Careful",
+        reasonCode: "cache_efficiency_regression",
+        primaryEvidence: "cache reuse dropped from 68% to 29%"
+      });
+      expect(whyDecision?.sessionKey).toBe(hashValue(rawSessionId));
+
+      const scannedText = [await readFile(storePath, "utf8"), JSON.stringify(whyDecision)].join("\n");
+      for (const rawValue of [
+        rawPromptSentinel,
+        rawToolOutputSentinel,
+        rawFileContentSentinel,
+        rawPath,
+        rawWorkspacePath,
+        rawSessionId
+      ]) {
+        expect(scannedText).not.toContain(rawValue);
       }
     } finally {
       await rm(tempDir, { recursive: true, force: true });

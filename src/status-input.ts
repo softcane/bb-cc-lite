@@ -113,29 +113,29 @@ export function extractUsage(value: unknown): TokenUsage {
 
   return {
     inputTokens:
-      numberField(usage.input_tokens) ||
-      numberField(usage.inputTokens) ||
-      numberField(usage.prompt_tokens) ||
+      numberField(usage.input_tokens) ??
+      numberField(usage.inputTokens) ??
+      numberField(usage.prompt_tokens) ??
       numberField(usage.promptTokens),
     outputTokens:
-      numberField(usage.output_tokens) ||
-      numberField(usage.outputTokens) ||
-      numberField(usage.completion_tokens) ||
+      numberField(usage.output_tokens) ??
+      numberField(usage.outputTokens) ??
+      numberField(usage.completion_tokens) ??
       numberField(usage.completionTokens),
     cacheCreationInputTokens:
-      numberField(usage.cache_creation_input_tokens) ||
-      numberField(usage.cacheCreationInputTokens) ||
-      numberField(usage.cache_write_input_tokens) ||
-      numberField(usage.cacheWriteInputTokens) ||
+      numberField(usage.cache_creation_input_tokens) ??
+      numberField(usage.cacheCreationInputTokens) ??
+      numberField(usage.cache_write_input_tokens) ??
+      numberField(usage.cacheWriteInputTokens) ??
       numberField(cacheCreationDetails?.input_tokens),
     cacheReadInputTokens:
-      numberField(usage.cache_read_input_tokens) ||
-      numberField(usage.cacheReadInputTokens) ||
+      numberField(usage.cache_read_input_tokens) ??
+      numberField(usage.cacheReadInputTokens) ??
       numberField(cacheReadDetails?.input_tokens),
     totalTokens:
-      numberField(usage.total_tokens) ||
-      numberField(usage.totalTokens) ||
-      numberField(usage.context_tokens) ||
+      numberField(usage.total_tokens) ??
+      numberField(usage.totalTokens) ??
+      numberField(usage.context_tokens) ??
       numberField(usage.contextTokens)
   };
 }

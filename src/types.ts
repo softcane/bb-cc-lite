@@ -14,6 +14,21 @@ export interface TokenUsage {
   totalTokens?: number;
 }
 
+export interface CacheReadSharePoint {
+  ratio: number;
+  totalInputTokens: number;
+  inputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  timestamp?: string;
+}
+
+export interface CacheReadShareSummary {
+  peak: CacheReadSharePoint;
+  current: CacheReadSharePoint;
+  dropPercentagePoints: number;
+}
+
 export interface StatusLineInput {
   rawValid: boolean;
   sessionId?: string;
@@ -115,6 +130,7 @@ export interface TranscriptSummary {
   usage: TokenUsage;
   latestUsage?: TokenUsage;
   latestUsageTimestamp?: string;
+  cacheReadShare?: CacheReadShareSummary;
   latestTimestamp?: string;
   latestCompactionTimestamp?: string;
   redundantRead?: RedundantReadSummary;

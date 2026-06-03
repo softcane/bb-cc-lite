@@ -1376,6 +1376,15 @@ describe("CLI behavior characterization", () => {
         expected: ["bb: Careful", "cache writes high", "keep the next prompt narrow and avoid broad repo scans"]
       },
       {
+        name: "cache efficiency regression",
+        input: {
+          session_id: "fixture-cache-regression",
+          terminal_width: 180
+        },
+        transcript: cacheEfficiencyRegressionTranscript(),
+        expected: ["bb: Careful", "cache reuse dropped from 68% to 29%", "keep the next prompt narrow"]
+      },
+      {
         name: "compaction event",
         input: {
           session_id: "fixture-compaction",
@@ -1865,6 +1874,41 @@ function compactionTranscript(): string[] {
         cache_read_input_tokens: 50
       },
       content: privacySentinels[3]
+    })
+  ];
+}
+
+function cacheEfficiencyRegressionTranscript(): string[] {
+  return [
+    JSON.stringify({
+      timestamp: "2026-05-19T00:00:01.000Z",
+      type: "assistant",
+      session_id: privacySentinels[6],
+      cwd: privacySentinels[4],
+      message: {
+        role: "assistant",
+        usage: {
+          input_tokens: 220,
+          cache_creation_input_tokens: 100,
+          cache_read_input_tokens: 680
+        },
+        content: [{ type: "text", text: privacySentinels[0] }]
+      }
+    }),
+    JSON.stringify({
+      timestamp: "2026-05-19T00:00:02.000Z",
+      type: "assistant",
+      session_id: privacySentinels[6],
+      cwd: privacySentinels[4],
+      message: {
+        role: "assistant",
+        usage: {
+          input_tokens: 610,
+          cache_creation_input_tokens: 100,
+          cache_read_input_tokens: 290
+        },
+        content: [{ type: "text", text: privacySentinels[0] }]
+      }
     })
   ];
 }

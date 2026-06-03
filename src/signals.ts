@@ -1,7 +1,9 @@
 import { sessionKeyFromId } from "./session.js";
 import { mergeUsage } from "./status-input.js";
+import { cacheReadSharePoint } from "./cache-efficiency.js";
 import { recoveryInsight } from "./recovery-stats.js";
 import type {
+  CacheReadSharePoint,
   Decision,
   DecisionPersonalBaseline,
   FailureRecoveryCategory,
@@ -40,6 +42,10 @@ const DEFAULT_BUDGET_THRESHOLDS: NormalizedBudgetThresholds = {
   costDeltaUsd: 0.5,
   durationMs: 45 * 60_000
 };
+const CACHE_EFFICIENCY_MIN_PEAK_RATIO = 0.3;
+const CACHE_EFFICIENCY_MIN_TOTAL_INPUT_TOKENS = 1_000;
+const CACHE_EFFICIENCY_DROP_THRESHOLD_RATIO = 0.2;
+const CACHE_EFFICIENCY_COMPACTION_SUPPRESSION_ACTIVITY = 1;
 
 export function decide(
   input: StatusLineInput,
@@ -419,6 +425,24 @@ export function decide(
     });
   }
 
+  const cacheRegression = cacheEfficiencyRegression(input.usage, transcript);
+  if (cacheRegression && !suppressCacheEfficiencyRegressionAfterCompaction(transcript)) {
+    return baseDecision({
+      state: "Careful",
+      reasonCode: "cache_efficiency_regression",
+      primaryEvidence: cacheEfficiencyEvidence(cacheRegression),
+      impact: "Prompt cache reuse fell during this session",
+      action: "keep the next prompt narrow",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
   if (cacheWritesHigh(cacheRiskUsage(input.usage, transcript))) {
     return baseDecision({
       state: "Careful",
@@ -699,6 +723,49 @@ function cacheWarm(usage: TokenUsage): boolean {
   const reads = usage.cacheReadInputTokens || 0;
   const writes = usage.cacheCreationInputTokens || 0;
   return reads > 0 && reads >= writes;
+}
+
+interface CacheEfficiencyRegression {
+  peak: CacheReadSharePoint;
+  current: CacheReadSharePoint;
+}
+
+function cacheEfficiencyRegression(inputUsage: TokenUsage, transcript: TranscriptSummary): CacheEfficiencyRegression | undefined {
+  const inputCurrent = cacheReadSharePoint(inputUsage);
+  const transcriptCurrent = transcript.cacheReadShare?.current;
+  const current = inputCurrent || transcriptCurrent;
+  if (!current) {
+    return undefined;
+  }
+
+  const transcriptPeak = transcript.cacheReadShare?.peak;
+  const peak = !transcriptPeak || current.ratio > transcriptPeak.ratio ? current : transcriptPeak;
+  const dropRatio = peak.ratio - current.ratio;
+  if (
+    peak.ratio < CACHE_EFFICIENCY_MIN_PEAK_RATIO ||
+    peak.totalInputTokens < CACHE_EFFICIENCY_MIN_TOTAL_INPUT_TOKENS ||
+    current.totalInputTokens < CACHE_EFFICIENCY_MIN_TOTAL_INPUT_TOKENS ||
+    dropRatio <= CACHE_EFFICIENCY_DROP_THRESHOLD_RATIO
+  ) {
+    return undefined;
+  }
+
+  return { peak, current };
+}
+
+function suppressCacheEfficiencyRegressionAfterCompaction(transcript: TranscriptSummary): boolean {
+  return (
+    transcript.compactionEvents > 0 &&
+    transcript.postCompactionActivity <= CACHE_EFFICIENCY_COMPACTION_SUPPRESSION_ACTIVITY
+  );
+}
+
+function cacheEfficiencyEvidence(regression: CacheEfficiencyRegression): string {
+  return `cache reuse dropped from ${formatPercent(regression.peak.ratio)} to ${formatPercent(regression.current.ratio)}`;
+}
+
+function formatPercent(ratio: number): string {
+  return `${Math.round(ratio * 100)}%`;
 }
 
 function isReadHeavyCurrentSession(transcript: TranscriptSummary): boolean {

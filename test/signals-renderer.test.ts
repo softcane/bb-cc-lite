@@ -46,6 +46,35 @@ function tokenJump(inputTokenDelta: number, toolResultCount: number, crossedThre
   };
 }
 
+function cacheShare(
+  peakRatio: number,
+  currentRatio: number,
+  peakTotalInputTokens = 1_000,
+  currentTotalInputTokens = 1_000
+): NonNullable<TranscriptSummary["cacheReadShare"]> {
+  const peak = cacheSharePoint(peakRatio, peakTotalInputTokens);
+  const current = cacheSharePoint(currentRatio, currentTotalInputTokens);
+  return {
+    peak,
+    current,
+    dropPercentagePoints: Math.max(0, (peak.ratio - current.ratio) * 100)
+  };
+}
+
+function cacheSharePoint(
+  ratio: number,
+  totalInputTokens: number
+): NonNullable<TranscriptSummary["cacheReadShare"]>["current"] {
+  const cacheReadInputTokens = Math.round(ratio * totalInputTokens);
+  return {
+    ratio,
+    totalInputTokens,
+    inputTokens: totalInputTokens - cacheReadInputTokens,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens
+  };
+}
+
 function visibleLength(value: string): number {
   // Test helper mirrors renderer ANSI stripping.
   // eslint-disable-next-line no-control-regex
@@ -933,6 +962,116 @@ describe("signals and renderer", () => {
       })
     );
     expect(staleTranscriptCacheRisk).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy"
+    });
+  });
+
+  it("warns Careful, not Stop, when cache read share drops more than 20 percentage points", () => {
+    const decision = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        cacheReadShare: cacheShare(0.68, 0.29)
+      })
+    );
+    const rendered = stripAnsi(renderStatusLine(decision, 160));
+    const why = formatWhy(decision);
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "cache_efficiency_regression",
+      primaryEvidence: "cache reuse dropped from 68% to 29%",
+      impact: "Prompt cache reuse fell during this session",
+      action: "keep the next prompt narrow"
+    });
+    expect(decision.state).not.toBe("Stop");
+    expect(rendered).toContain("bb: Careful | cache reuse dropped from 68% to 29%");
+    expect(rendered).toContain("keep the next prompt narrow");
+    expect(why).toContain("Reason: cache reuse dropped from 68% to 29%. Prompt cache reuse fell during this session.");
+    expect(why).toContain("Next action: keep the next prompt narrow.");
+  });
+
+  it("uses statusline current usage when comparing cache read share against the transcript peak", () => {
+    const decision = decide(
+      input({
+        usage: {
+          inputTokens: 610,
+          cacheCreationInputTokens: 100,
+          cacheReadInputTokens: 290
+        }
+      }),
+      transcript({
+        cacheReadShare: cacheShare(0.68, 0.68)
+      })
+    );
+
+    expect(decision).toMatchObject({
+      state: "Careful",
+      reasonCode: "cache_efficiency_regression",
+      primaryEvidence: "cache reuse dropped from 68% to 29%"
+    });
+  });
+
+  it("does not warn for stable high cache reuse or drops under the threshold", () => {
+    const stableHigh = decide(
+      input(),
+      transcript({
+        cacheReadShare: cacheShare(0.68, 0.61)
+      })
+    );
+    const smallerDrop = decide(
+      input(),
+      transcript({
+        cacheReadShare: cacheShare(0.68, 0.49)
+      })
+    );
+
+    expect(stableHigh).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy"
+    });
+    expect(smallerDrop).toMatchObject({
+      state: "Healthy",
+      reasonCode: "healthy"
+    });
+  });
+
+  it("does not warn on tiny cache samples or low early-session peaks", () => {
+    const tinyPeak = decide(
+      input(),
+      transcript({
+        cacheReadShare: cacheShare(0.8, 0.2, 999, 2_000)
+      })
+    );
+    const tinyCurrent = decide(
+      input(),
+      transcript({
+        cacheReadShare: cacheShare(0.8, 0.2, 2_000, 999)
+      })
+    );
+    const lowPeak = decide(
+      input(),
+      transcript({
+        cacheReadShare: cacheShare(0.29, 0.01, 2_000, 2_000)
+      })
+    );
+
+    expect(tinyPeak).toMatchObject({ state: "Healthy", reasonCode: "healthy" });
+    expect(tinyCurrent).toMatchObject({ state: "Healthy", reasonCode: "healthy" });
+    expect(lowPeak).toMatchObject({ state: "Healthy", reasonCode: "healthy" });
+  });
+
+  it("suppresses cache efficiency regression immediately after compaction", () => {
+    const decision = decide(
+      input(),
+      transcript({
+        compactionEvents: 1,
+        postCompactionActivity: 1,
+        cacheReadShare: cacheShare(0.68, 0.29)
+      })
+    );
+
+    expect(decision).toMatchObject({
       state: "Healthy",
       reasonCode: "healthy"
     });

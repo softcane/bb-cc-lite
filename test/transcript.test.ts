@@ -344,6 +344,126 @@ describe("parseTranscriptLines", () => {
     expect(summary.latestTimestamp).toBe("2026-02-03T00:00:02.000Z");
   });
 
+  it("tracks cache read share with input, cache creation, and cache read tokens in the denominator", () => {
+    const summary = parseTranscriptLines([
+      assistantCacheUsageLine({
+        inputTokens: 200,
+        cacheCreationInputTokens: 100,
+        cacheReadInputTokens: 700,
+        timestamp: "2026-02-03T00:00:01.000Z"
+      }),
+      assistantCacheUsageLine({
+        inputTokens: 700,
+        cacheCreationInputTokens: 100,
+        cacheReadInputTokens: 200,
+        timestamp: "2026-02-03T00:00:02.000Z"
+      })
+    ]);
+
+    expect(summary.cacheReadShare?.peak.totalInputTokens).toBe(1_000);
+    expect(summary.cacheReadShare?.peak.ratio).toBeCloseTo(0.7);
+    expect(summary.cacheReadShare?.current.totalInputTokens).toBe(1_000);
+    expect(summary.cacheReadShare?.current.ratio).toBeCloseTo(0.2);
+    expect(summary.cacheReadShare?.dropPercentagePoints).toBeCloseTo(50);
+  });
+
+  it("ignores cache read share samples when usage fields are missing or malformed", () => {
+    const missingInput = parseTranscriptLines([
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:01.000Z",
+        type: "assistant",
+        message: {
+          role: "assistant",
+          usage: {
+            cache_creation_input_tokens: 100,
+            cache_read_input_tokens: 700
+          },
+          content: [{ type: "text", text: privacySentinels[0] }]
+        }
+      })
+    ]);
+    const malformedUsage = parseTranscriptLines([
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:01.000Z",
+        type: "assistant",
+        message: {
+          role: "assistant",
+          usage: {
+            input_tokens: 1_000,
+            cache_creation_input_tokens: 100,
+            cache_read_input_tokens: -1
+          },
+          content: [{ type: "text", text: privacySentinels[0] }]
+        }
+      }),
+      `{"type":"assistant","message":${privacySentinels[0]}`
+    ]);
+
+    expect(missingInput.cacheReadShare).toBeUndefined();
+    expect(malformedUsage.malformedLines).toBe(1);
+    expect(malformedUsage.cacheReadShare).toBeUndefined();
+    expectNoPrivacySentinels(missingInput);
+    expectNoPrivacySentinels(malformedUsage);
+  });
+
+  it("keeps cache read share summaries free of raw prompts, tool output, file contents, paths, and session ids", () => {
+    const rawPath = `/tmp/${privacySentinels[3]}/private.ts`;
+    const rawSessionId = `session-${privacySentinels[0]}`;
+    const summary = parseTranscriptLines([
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:01.000Z",
+        type: "assistant",
+        session_id: rawSessionId,
+        cwd: rawPath,
+        message: {
+          role: "assistant",
+          usage: {
+            input_tokens: 200,
+            cache_creation_input_tokens: 100,
+            cache_read_input_tokens: 700
+          },
+          content: [{ type: "text", text: privacySentinels[0] }]
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:02.000Z",
+        type: "user",
+        cwd: rawPath,
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-1",
+              is_error: false,
+              content: `${privacySentinels[1]} ${privacySentinels[4]}`
+            }
+          ]
+        }
+      }),
+      assistantCacheUsageLine({
+        inputTokens: 700,
+        cacheCreationInputTokens: 100,
+        cacheReadInputTokens: 200,
+        timestamp: "2026-02-03T00:00:03.000Z"
+      })
+    ]);
+
+    expect(summary.cacheReadShare).toMatchObject({
+      peak: {
+        ratio: 0.7,
+        totalInputTokens: 1_000
+      },
+      current: {
+        ratio: 0.2,
+        totalInputTokens: 1_000
+      }
+    });
+    expect(JSON.stringify(summary)).not.toContain(rawPath);
+    expect(JSON.stringify(summary)).not.toContain(rawSessionId);
+    expectNoPrivacySentinels(summary);
+  });
+
   it("tracks small assistant input-token jumps below the tool-result threshold", () => {
     const summary = parseTranscriptLines([
       assistantUsageLine(1_000, "2026-02-03T00:00:01.000Z"),
@@ -1104,6 +1224,27 @@ function assistantUsageLine(inputTokens: number, timestamp: string): string {
       role: "assistant",
       usage: {
         input_tokens: inputTokens
+      },
+      content: [{ type: "text", text: privacySentinels[0] }]
+    }
+  });
+}
+
+function assistantCacheUsageLine(args: {
+  inputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  timestamp: string;
+}): string {
+  return JSON.stringify({
+    timestamp: args.timestamp,
+    type: "assistant",
+    message: {
+      role: "assistant",
+      usage: {
+        input_tokens: args.inputTokens,
+        cache_creation_input_tokens: args.cacheCreationInputTokens,
+        cache_read_input_tokens: args.cacheReadInputTokens
       },
       content: [{ type: "text", text: privacySentinels[0] }]
     }
