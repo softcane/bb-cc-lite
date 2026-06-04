@@ -1,7 +1,15 @@
 import { readStore } from "./event-store-persistence.js";
 import { safeToolResultEventFromHookEvent, summarizeBlindRetry, summarizeFailureEpisodes } from "./failure-episodes.js";
+import type { SafeToolResultEvent } from "./failure-episodes.js";
 import { isEditTool, isReadSearchTool } from "./tool-metadata.js";
-import type { ActiveFullFileReadSummary, BlindRetrySummary, RedundantReadSummary, StoredDecision, ToolFailureSummary } from "./types.js";
+import type {
+  ActiveFullFileReadSummary,
+  BlindRetrySummary,
+  RedundantReadSummary,
+  SessionStartSource,
+  StoredDecision,
+  ToolFailureSummary
+} from "./types.js";
 
 interface FileReadState {
   count: number;
@@ -33,13 +41,17 @@ export async function hookSummary(
   repeatedFailures: ToolFailureSummary[];
   blindRetry?: BlindRetrySummary;
   latestTimestamp?: string;
+  latestLifecycleSource?: SessionStartSource;
+  latestLifecycleTimestamp?: string;
   latestCompactionTimestamp?: string;
   redundantRead?: RedundantReadSummary;
   activeFullFileReads: ActiveFullFileReadSummary[];
 }> {
   const store = await readStore(storePath);
-  const events = store.hookEvents.filter((event) => !sessionKey || event.sessionKey === sessionKey);
-  const safeEvents = events.flatMap((event) => safeToolResultEventFromHookEvent(event) ?? []);
+  const events = store.hookEvents
+    .filter((event) => !sessionKey || event.sessionKey === sessionKey)
+    .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+  let safeEvents: SafeToolResultEvent[] = [];
   const failures = new Map<string, ToolFailureSummary>();
   let failedToolResults = 0;
   let toolCalls = 0;
@@ -54,13 +66,42 @@ export async function hookSummary(
   let compactionEvents = 0;
   let postCompactionActivity = 0;
   let latestTimestamp: string | undefined;
+  let latestLifecycleSource: SessionStartSource | undefined;
+  let latestLifecycleTimestamp: string | undefined;
   let latestCompactionTimestamp: string | undefined;
   const fullFileReadCounts = new Map<string, FileReadState>();
   let redundantRead: RedundantReadSummary | undefined;
 
   for (const event of events) {
-    latestTimestamp = !latestTimestamp || event.timestamp > latestTimestamp ? event.timestamp : latestTimestamp;
     const isCompaction = event.kind === "compaction";
+    const isLifecycle = event.kind === "session_start";
+    if (!isLifecycle) {
+      latestTimestamp = !latestTimestamp || event.timestamp > latestTimestamp ? event.timestamp : latestTimestamp;
+    }
+    if (isLifecycle && (!latestLifecycleTimestamp || event.timestamp >= latestLifecycleTimestamp)) {
+      latestLifecycleSource = event.lifecycleSource || "unknown";
+      latestLifecycleTimestamp = event.timestamp;
+    }
+    if (isLifecycle && resetsOpenRisk(event.lifecycleSource)) {
+      failedToolResults = 0;
+      toolCalls = 0;
+      readToolCalls = 0;
+      successfulEditResults = 0;
+      validationChecks = 0;
+      validationSuccesses = 0;
+      validationRecovered = false;
+      hasOpenUnvalidatedEdit = false;
+      unvalidatedEditToolSteps = undefined;
+      validationFailureOpen = false;
+      failures.clear();
+      fullFileReadCounts.clear();
+      redundantRead = undefined;
+      safeEvents = [];
+    }
+    const safeEvent = safeToolResultEventFromHookEvent(event);
+    if (safeEvent) {
+      safeEvents.push(safeEvent);
+    }
     if (event.kind === "tool_failure") {
       failedToolResults += 1;
       toolCalls += 1;
@@ -121,7 +162,7 @@ export async function hookSummary(
       });
       redundantRead = strongestActiveRedundantRead(fullFileReadCounts);
     }
-    if (!isCompaction && compactionEvents > 0) {
+    if (!isCompaction && !isLifecycle && compactionEvents > 0) {
       postCompactionActivity += 1;
     }
   }
@@ -141,10 +182,16 @@ export async function hookSummary(
     repeatedFailures: [...failures.values()].filter((failure) => failure.count >= 2),
     blindRetry: summarizeBlindRetry(summarizeFailureEpisodes(safeEvents)),
     latestTimestamp,
+    latestLifecycleSource,
+    latestLifecycleTimestamp,
     latestCompactionTimestamp,
     redundantRead,
     activeFullFileReads: activeFullFileReadSummaries(fullFileReadCounts)
   };
+}
+
+function resetsOpenRisk(source: SessionStartSource | undefined): boolean {
+  return source === "startup" || source === "clear" || source === "compact";
 }
 
 function isValidationPurpose(value: string | undefined): boolean {

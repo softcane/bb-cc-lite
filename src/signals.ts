@@ -1,6 +1,7 @@
 import { sessionKeyFromId } from "./session.js";
 import { mergeUsage } from "./status-input.js";
 import { cacheReadSharePoint } from "./cache-efficiency.js";
+import { classifyLifecycleEvidence } from "./lifecycle-evidence.js";
 import { recoveryInsight } from "./recovery-stats.js";
 import type {
   CacheReadSharePoint,
@@ -60,6 +61,7 @@ export function decide(
   const costSource = input.costSource;
   const budgetThresholds = normalizeBudgetThresholds(options.budgetThresholds ?? budgetThresholdsFromEnv());
   const costDelta = costUsd !== undefined && options.previous?.costUsd !== undefined ? costUsd - options.previous.costUsd : 0;
+  const lifecycleEvidence = classifyLifecycleEvidence(input, transcript);
 
   if (!input.rawValid) {
     return baseDecision({
@@ -68,6 +70,115 @@ export function decide(
       primaryEvidence: "statusline input unavailable",
       impact: "Claude Code did not provide readable status JSON",
       action: "run bb-cc-lite doctor and check Claude Code settings",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
+  if (lifecycleEvidence.sessionIdentity.mismatch) {
+    if (contextPercent !== undefined && contextPercent >= 92) {
+      return baseDecision({
+        state: "Stop",
+        reasonCode: "context_critical",
+        primaryEvidence: `ctx ${contextPercent}%`,
+        impact: "Context is almost full",
+        action: "ask Claude for a handoff now, then compact or restart",
+        input,
+        usage,
+        transcript,
+        now,
+        sessionKey,
+        costUsd,
+        costSource
+      });
+    }
+
+    if (contextPercent !== undefined && contextPercent >= 80) {
+      return baseDecision({
+        state: "Careful",
+        reasonCode: "context_high",
+        primaryEvidence: `ctx ${contextPercent}%`,
+        impact: "Context is getting tight",
+        action: "ask Claude for a 6-bullet handoff before more work",
+        input,
+        usage,
+        transcript,
+        now,
+        sessionKey,
+        costUsd,
+        costSource
+      });
+    }
+
+    if (input.rateLimitPercent !== undefined && input.rateLimitPercent >= 85) {
+      return baseDecision({
+        state: "Careful",
+        reasonCode: "rate_limit_high",
+        primaryEvidence: `rate limit ${input.rateLimitPercent}%`,
+        impact: "You are close to throttling",
+        action: "slow down and keep the next request small",
+        input,
+        usage,
+        transcript,
+        now,
+        sessionKey,
+        costUsd,
+        costSource
+      });
+    }
+
+    return baseDecision({
+      state: "Careful",
+      reasonCode: "transcript_session_mismatch",
+      primaryEvidence: "transcript session mismatch",
+      impact: "bb could not trust transcript evidence for the current Claude session",
+      action: "run bb-cc-lite doctor if this persists",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
+  const priorFailureRisk = staleRepeatedFailureRisk(transcript);
+  if (priorFailureRisk) {
+    return baseDecision({
+      state: "Careful",
+      reasonCode: "prior_repeated_failure",
+      diagnosisCode: "prior_repeated_failure",
+      diagnosis: `prior ${priorFailureRisk.label} failures before resume`,
+      confidence: "medium",
+      primaryEvidence: `resumed after prior ${priorFailureRisk.label} failures`,
+      impact: "Prior session evidence had repeated failures before this resume",
+      action: "inspect first failure before retrying",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
+  if (tailTruncatedWeakFailureRisk(transcript)) {
+    return baseDecision({
+      state: "Careful",
+      reasonCode: "tail_truncated_failure_evidence",
+      diagnosisCode: "tail_truncated_failure_evidence",
+      diagnosis: "tail-truncated weak failure evidence",
+      confidence: "medium",
+      primaryEvidence: "tail-truncated weak failure evidence",
+      impact: "The bounded transcript tail may be missing recovery or identity context",
+      action: "inspect recent transcript context before stopping",
       input,
       usage,
       transcript,
@@ -477,7 +588,14 @@ export function decide(
     });
   }
 
-  const budgetCarefulEvidence = budgetCarefulEvidenceFor(input, costDelta, costSource, budgetThresholds, options.baseline);
+  const budgetCarefulEvidence = budgetCarefulEvidenceFor(
+    input,
+    costDelta,
+    costSource,
+    budgetThresholds,
+    options.baseline,
+    lifecycleEvidence.hasCurrentActivity
+  );
   if (budgetCarefulEvidence && isBusyWithoutProgress(transcript)) {
     return baseDecision({
       state: "Careful",
@@ -539,6 +657,7 @@ export function decide(
   if (
     input.durationMs !== undefined &&
     input.durationMs >= budgetThresholds.durationMs &&
+    lifecycleEvidence.hasCurrentActivity &&
     !baselineSuppressesDurationBudget(input.durationMs, options.baseline)
   ) {
     return baseDecision({
@@ -608,6 +727,63 @@ export function decide(
       primaryEvidence: `${transcript.readToolCalls} read/search tool calls`,
       impact: "This matches past research-heavy sessions that ended OK",
       action: "continue",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
+  if (lifecycleEvidence.status === "missing_transcript") {
+    return baseDecision({
+      state: "Careful",
+      reasonCode: "transcript_unavailable",
+      primaryEvidence: "transcript unavailable",
+      impact: "bb could not read current transcript evidence",
+      action: "run bb-cc-lite doctor if this persists",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
+  if (lifecycleEvidence.status === "malformed_transcript") {
+    return baseDecision({
+      state: "Careful",
+      reasonCode: "transcript_unreadable",
+      primaryEvidence: "transcript unreadable",
+      impact: "bb could not parse current transcript evidence",
+      action: "run bb-cc-lite doctor",
+      input,
+      usage,
+      transcript,
+      now,
+      sessionKey,
+      costUsd,
+      costSource
+    });
+  }
+
+  if (
+    !lifecycleEvidence.hasCurrentActivity &&
+    (lifecycleEvidence.status === "empty_transcript" ||
+      lifecycleEvidence.status === "no_transcript_path" ||
+      lifecycleEvidence.status === "no_activity")
+  ) {
+    const resumedIdle = transcript.latestLifecycleSource === "resume";
+    return baseDecision({
+      state: "Healthy",
+      reasonCode: resumedIdle ? "resumed_idle_session" : "no_session_activity",
+      primaryEvidence: resumedIdle ? "resumed idle session" : "no session activity yet",
+      impact: resumedIdle ? "bb has no post-resume Claude activity to evaluate" : "bb has no current Claude activity to evaluate",
+      action: "start when ready",
       input,
       usage,
       transcript,
@@ -803,6 +979,60 @@ function hasOpenCompactionBoundary(transcript: TranscriptSummary): boolean {
   return transcript.compactionEvents > 0 && transcript.postCompactionActivity === 0;
 }
 
+function staleRepeatedFailureRisk(transcript: TranscriptSummary): { label: string } | undefined {
+  if (
+    transcript.latestLifecycleSource !== "resume" ||
+    !transcript.latestLifecycleTimestamp ||
+    (transcript.latestTimestamp && transcript.latestTimestamp > transcript.latestLifecycleTimestamp)
+  ) {
+    return undefined;
+  }
+
+  if (transcript.blindRetry && transcript.blindRetry.blindRetryFailureCount >= 2) {
+    return { label: priorRiskLabel(transcript.blindRetry.category, transcript.blindRetry.label) };
+  }
+
+  const repeatedFailure = transcript.repeatedFailures
+    .filter((item) => item.count >= 2)
+    .sort((a, b) => b.count - a.count)[0];
+  if (!repeatedFailure) {
+    return undefined;
+  }
+
+  return { label: priorRiskLabel(recoveryCategoryForFailure(repeatedFailure), repeatedFailure.toolName) };
+}
+
+function tailTruncatedWeakFailureRisk(transcript: TranscriptSummary): boolean {
+  if (!transcript.tailTruncated) {
+    return false;
+  }
+  if (transcript.blindRetry && transcript.blindRetry.blindRetryFailureCount >= 3 && weakFailureCategory(transcript.blindRetry.category)) {
+    return true;
+  }
+  return transcript.repeatedFailures.some((failure) => failure.count >= 3 && weakRepeatedFailureIdentity(failure));
+}
+
+function weakFailureCategory(category: FailureRecoveryCategory): boolean {
+  return category === "tool";
+}
+
+function weakRepeatedFailureIdentity(failure: { toolName: string; purpose?: string; category?: string; identityHash?: string }): boolean {
+  return failure.toolName === "tool" || (!failure.purpose && !failure.category && !failure.identityHash && failure.toolName !== "Bash");
+}
+
+function priorRiskLabel(category: FailureRecoveryCategory | undefined, fallback: string): string {
+  if (category === "tests") {
+    return "test";
+  }
+  if (category === "lint" || category === "typecheck" || category === "build") {
+    return category;
+  }
+  if (category === "mcp") {
+    return "MCP tool";
+  }
+  return fallback === "Bash" || fallback === "tool" ? "tool" : fallback;
+}
+
 function supportsReadHeavyHealthy(baseline: DecisionPersonalBaseline | undefined): boolean {
   const scenario = baseline?.scenarios?.read_heavy_debugging;
   const healthyCount = baseline?.outcomes?.healthyLike?.readHeavyNoFailure || 0;
@@ -984,7 +1214,8 @@ function budgetCarefulEvidenceFor(
   costDelta: number,
   costSource: Decision["costSource"],
   thresholds: NormalizedBudgetThresholds,
-  baseline: DecisionPersonalBaseline | undefined
+  baseline: DecisionPersonalBaseline | undefined,
+  hasCurrentActivity = true
 ): string | undefined {
   if (costDelta >= thresholds.costDeltaUsd) {
     return `cost +${formatCost(costDelta)}`;
@@ -999,6 +1230,7 @@ function budgetCarefulEvidenceFor(
   if (
     input.durationMs !== undefined &&
     input.durationMs >= thresholds.durationMs &&
+    hasCurrentActivity &&
     !baselineSuppressesDurationBudget(input.durationMs, baseline)
   ) {
     return `session ran ${formatDuration(input.durationMs)}`;

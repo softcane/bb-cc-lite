@@ -62,7 +62,7 @@ export async function handleHook(raw: string, options: HandleHookOptions = {}): 
   const projectConfig = await loadProjectConfig(cwdFromHook(root));
   const event = parseHookPayload(raw, hookEventName, { projectConfig });
 
-  if (event && hookEventName !== "PreToolUse" && hookEventName !== "SessionStart") {
+  if (event && hookEventName !== "PreToolUse") {
     await recordHookEvent(event, options.storePath);
   }
 

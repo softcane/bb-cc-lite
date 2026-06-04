@@ -2,6 +2,7 @@ import { asRecord, extractUsage, mergeUsage, stringField } from "./status-input.
 import { cacheReadSharePoint, updateCacheReadShareSummary } from "./cache-efficiency.js";
 import { extractFailureEpisodesFromTranscriptLines, summarizeBlindRetry } from "./failure-episodes.js";
 import { fileIdentityFromToolInput, isFullFileReadInput } from "./file-identity.js";
+import { sessionKeyFromId } from "./session.js";
 import { classifyResultPurpose, classifyToolIdentity } from "./tool-metadata.js";
 import { readTranscriptTail, type ReadTranscriptTailOptions } from "./transcript-reader.js";
 import type { ProjectConfig } from "./project-config.js";
@@ -45,13 +46,13 @@ export async function parseTranscriptTail(
   if (!tail.pathReadable) {
     return emptySummary(false);
   }
-  return parseTranscriptLines(tail.lines, tail.bytesRead, { projectConfig: options.projectConfig });
+  return parseTranscriptLines(tail.lines, tail.bytesRead, { projectConfig: options.projectConfig, tailTruncated: tail.tailTruncated });
 }
 
 export function parseTranscriptLines(
   lines: string[],
   bytesRead = Buffer.byteLength(lines.join("\n")),
-  options: { projectConfig?: ProjectConfig } = {}
+  options: { projectConfig?: ProjectConfig; tailTruncated?: boolean } = {}
 ): TranscriptSummary {
   const failureEpisodes = extractFailureEpisodesFromTranscriptLines(lines, { projectConfig: options.projectConfig });
   const blindRetry = summarizeBlindRetry(failureEpisodes);
@@ -64,6 +65,10 @@ export function parseTranscriptLines(
   let validationRecovered = false;
   let editTestLoopFailures = 0;
   let toolResultStep = 0;
+  let parseableLines = 0;
+  let userMessages = 0;
+  let assistantMessages = 0;
+  const transcriptSessionKeys = new Set<string>();
   let toolCalls = 0;
   let readToolCalls = 0;
   let successfulEditResults = 0;
@@ -103,8 +108,20 @@ export function parseTranscriptLines(
       continue;
     }
 
+    parseableLines += 1;
     const entryTimestamp = stringField(entry.timestamp);
     latestTimestamp = entryTimestamp || latestTimestamp;
+    const entrySessionKey = sessionKeyFromId(stringField(entry.sessionId) || stringField(entry.session_id));
+    if (entrySessionKey) {
+      transcriptSessionKeys.add(entrySessionKey);
+    }
+    const message = asRecord(entry.message);
+    const role = stringField(message?.role) || stringField(entry.role) || stringField(entry.type);
+    if (role === "user") {
+      userMessages += 1;
+    } else if (role === "assistant") {
+      assistantMessages += 1;
+    }
     const entryUsage = mergeUsage(extractUsage(entry), extractUsage(asRecord(entry.message)));
     usage = mergeUsage(usage, entryUsage);
     if (hasUsage(entryUsage)) {
@@ -236,8 +253,15 @@ export function parseTranscriptLines(
   return {
     pathReadable: true,
     bytesRead,
+    tailTruncated: Boolean(options.tailTruncated),
     linesRead: lines.length,
     malformedLines,
+    parseableLines,
+    userMessages,
+    assistantMessages,
+    transcriptHasSessionIds: transcriptSessionKeys.size > 0,
+    transcriptSessionKeys: [...transcriptSessionKeys],
+    transcriptSessionKeyCount: transcriptSessionKeys.size,
     toolCalls,
     readToolCalls,
     successfulEditResults,
@@ -273,8 +297,15 @@ function emptySummary(pathReadable: boolean): TranscriptSummary {
   return {
     pathReadable,
     bytesRead: 0,
+    tailTruncated: false,
     linesRead: 0,
     malformedLines: 0,
+    parseableLines: 0,
+    userMessages: 0,
+    assistantMessages: 0,
+    transcriptHasSessionIds: false,
+    transcriptSessionKeys: [],
+    transcriptSessionKeyCount: 0,
     toolCalls: 0,
     readToolCalls: 0,
     successfulEditResults: 0,

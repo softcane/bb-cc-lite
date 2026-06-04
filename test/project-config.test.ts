@@ -25,6 +25,10 @@ describe("project validation config", () => {
             lint: ["just lint"],
             typecheck: ["make typecheck"],
             build: ["make build"]
+          },
+          validationPatterns: {
+            tests: ["^mise run ci:test( |$)"],
+            typecheck: ["^task types:check( |$)"]
           }
         })}\n`,
         "utf8"
@@ -35,7 +39,9 @@ describe("project validation config", () => {
       expect(config.validationCommands.tests).toEqual(["make test"]);
       expect(config.validationCommands.lint).toEqual(["just lint"]);
       expect(classifyConfiguredValidationCommand("make test --filter focused", config)).toBe("tests");
+      expect(classifyConfiguredValidationCommand("mise run ci:test --filter focused", config)).toBe("tests");
       expect(classifyConfiguredValidationCommand("just lint", config)).toBe("lint");
+      expect(classifyConfiguredValidationCommand("task types:check --watch=false", config)).toBe("typecheck");
       expect(classifyConfiguredValidationCommand("make build", config)).toBe("build");
       expect(classifyConfiguredValidationCommand("make test-other", config)).toBeUndefined();
     } finally {
@@ -66,6 +72,7 @@ describe("project validation config", () => {
 
       const config = await loadProjectConfig(unknownDir);
       expect(config.validationCommands).toEqual({ tests: ["make test"] });
+      expect(config.validationPatterns).toEqual({});
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

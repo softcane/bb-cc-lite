@@ -75,6 +75,26 @@ describe("safe failure episodes and blind retry", () => {
     expect(summarizeBlindRetry(afterValidation)).toBeUndefined();
   });
 
+  it("treats successful mutation-possible Bash as safe intervention evidence without storing command text", () => {
+    const rawCommand = "node scripts/private-mutator.js --secret-token";
+    const episodes = extractFailureEpisodesFromTranscriptLines([
+      ...failedBashCommand("test-1", "npm test"),
+      ...successfulBashCommand("mutate-1", rawCommand),
+      ...failedBashCommand("test-2", "npm test")
+    ]);
+
+    expect(episodes).toMatchObject([
+      {
+        category: "tests",
+        attemptCount: 2,
+        blindRetryFailureCount: 1,
+        meaningfulIntervention: ["possible_mutation"]
+      }
+    ]);
+    expect(summarizeBlindRetry(episodes)).toBeUndefined();
+    expect(JSON.stringify(episodes)).not.toContain(rawCommand);
+  });
+
   it("marks a same-identity success as recovered instead of active-ended", () => {
     const episodes = extractFailureEpisodesFromTranscriptLines([
       ...failedBashCommand("test-1", "npm test"),

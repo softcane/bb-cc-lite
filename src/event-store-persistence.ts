@@ -113,6 +113,7 @@ function sanitizeStoredHookEvent(value: unknown): StoredHookEvent | undefined {
     timestamp,
     hookEventName: stringField(record.hookEventName) || "unknown",
     sessionKey: stringField(record.sessionKey),
+    lifecycleSource: lifecycleSource(record.lifecycleSource),
     compactionStage: compactionStage(record.compactionStage),
     toolName: stringField(record.toolName),
     purpose: stringField(record.purpose),
@@ -198,13 +199,20 @@ function costSource(value: unknown): StoredDecision["costSource"] {
 }
 
 function hookKind(value: unknown): HookEventKind | undefined {
-  return value === "tool_success" ||
+  return value === "session_start" ||
+    value === "tool_success" ||
     value === "tool_failure" ||
     value === "tool_batch" ||
     value === "compaction" ||
     value === "stop" ||
     value === "session_end" ||
     value === "feedback"
+    ? value
+    : undefined;
+}
+
+function lifecycleSource(value: unknown): StoredHookEvent["lifecycleSource"] {
+  return value === "startup" || value === "resume" || value === "clear" || value === "compact" || value === "unknown"
     ? value
     : undefined;
 }

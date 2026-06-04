@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { renderStatusLine } from "../src/renderer.js";
+import { sessionKeyFromId } from "../src/session.js";
 import { decide } from "../src/signals.js";
 import { TOOL_RESULT_EXPLOSION_THRESHOLD_TOKENS, parseTranscriptLines, parseTranscriptTail } from "../src/transcript.js";
 import type { StatusLineInput } from "../src/types.js";
@@ -77,6 +78,39 @@ describe("parseTranscriptLines", () => {
       latestTimestamp: "2026-02-03T00:00:09.000Z"
     });
     expectNoPrivacySentinels(summary);
+  });
+
+  it("counts parseable user and assistant activity without storing message content", () => {
+    const summary = parseTranscriptLines([
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:00.000Z",
+        type: "user",
+        message: {
+          role: "user",
+          content: privacySentinels[0]
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:01.000Z",
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "assistant content is not retained" }]
+        }
+      }),
+      "not-json"
+    ]);
+
+    expect(summary).toMatchObject({
+      linesRead: 3,
+      parseableLines: 2,
+      malformedLines: 1,
+      userMessages: 1,
+      assistantMessages: 1,
+      toolCalls: 0
+    });
+    expectNoPrivacySentinels(summary);
+    expect(JSON.stringify(summary)).not.toContain("assistant content is not retained");
   });
 
   it("detects a second unchanged full-file Read without retaining the raw path or file contents", () => {
@@ -461,6 +495,39 @@ describe("parseTranscriptLines", () => {
     });
     expect(JSON.stringify(summary)).not.toContain(rawPath);
     expect(JSON.stringify(summary)).not.toContain(rawSessionId);
+    expectNoPrivacySentinels(summary);
+  });
+
+  it("extracts transcript session identity only as safe hashed keys", () => {
+    const rawSessionId = `session-${privacySentinels[0]}`;
+    const summary = parseTranscriptLines([
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:01.000Z",
+        type: "user",
+        sessionId: rawSessionId,
+        message: {
+          role: "user",
+          content: privacySentinels[0]
+        }
+      }),
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:02.000Z",
+        type: "assistant",
+        session_id: rawSessionId,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "not retained" }]
+        }
+      })
+    ]);
+
+    expect(summary).toMatchObject({
+      transcriptHasSessionIds: true,
+      transcriptSessionKeyCount: 1,
+      transcriptSessionKeys: [sessionKeyFromId(rawSessionId)]
+    });
+    expect(JSON.stringify(summary)).not.toContain(rawSessionId);
+    expect(JSON.stringify(summary)).not.toContain("not retained");
     expectNoPrivacySentinels(summary);
   });
 
@@ -978,13 +1045,26 @@ describe("parseTranscriptTail", () => {
     expect(summary.pathReadable).toBe(true);
     expect(summary.linesRead).toBe(10);
     expect(summary.malformedLines).toBe(1);
+    expect(summary.tailTruncated).toBe(false);
     expect(summary.repeatedFailures).toEqual([{ toolName: "Bash", purpose: "tests", count: 2 }]);
+    expectNoPrivacySentinels(summary);
+  });
+
+  it("marks bounded tail reads that start after byte zero as tail truncated", async () => {
+    const summary = await parseTranscriptTail(fixturePath("mixed-events.jsonl"), {
+      maxBytes: 128
+    });
+
+    expect(summary.pathReadable).toBe(true);
+    expect(summary.bytesRead).toBeLessThanOrEqual(128);
+    expect(summary.tailTruncated).toBe(true);
     expectNoPrivacySentinels(summary);
   });
 
   it("returns an unreadable empty summary when no path is supplied", async () => {
     await expect(parseTranscriptTail(undefined)).resolves.toMatchObject({
       pathReadable: false,
+      tailTruncated: false,
       bytesRead: 0,
       linesRead: 0,
       malformedLines: 0,

@@ -129,7 +129,8 @@ describe("CLI behavior characterization", () => {
       };
 
       expect(result.exitCode).toBe(0);
-      expect(settings.hooks.SessionStart).toBeUndefined();
+      expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("observe");
+      expect(settings.hooks.SessionStart[0].hooks[0].async).toBe(true);
       expect(settings.hooks.PreToolUse).toBeUndefined();
       expect(settings.hooks.PostToolUseFailure[0].hooks[0].args).toContain("observe");
       expect(settings.hooks.PostToolUseFailure[0].hooks[0].async).toBe(true);
@@ -635,12 +636,15 @@ describe("CLI behavior characterization", () => {
         })
       });
       const costWhy = await runCli(["why", "--session", "session-budget-env-cost", "--json"], { env });
+      const durationTranscriptPath = join(workspace.root, "transcripts", "duration-active.jsonl");
+      await writeTranscript(durationTranscriptPath, readHeavyTranscript());
 
       const durationStatusline = await runCli(["statusline"], {
         env,
         input: statusInput({
           session_id: "session-budget-env-duration",
           cwd: workspace.projectDir,
+          transcript_path: durationTranscriptPath,
           duration_ms: 11000,
           terminal_width: 180
         })
@@ -1165,7 +1169,7 @@ describe("CLI behavior characterization", () => {
       const env = cliEnv(workspace);
       const rawSessionId = `session-${privacySentinels[6]}`;
       const transcriptPath = join(workspace.root, "transcripts", "tool-result-explosion.jsonl");
-      await writeTranscript(transcriptPath, toolResultExplosionTranscript());
+      await writeTranscript(transcriptPath, toolResultExplosionTranscript(rawSessionId));
 
       const wide = await runCli(["statusline"], {
         env,
@@ -1231,7 +1235,7 @@ describe("CLI behavior characterization", () => {
       };
       const rawSessionId = `session-${privacySentinels[6]}`;
       const transcriptPath = join(workspace.root, "transcripts", "privacy-surfaces.jsonl");
-      await writeTranscript(transcriptPath, privacySurfaceTranscript());
+      await writeTranscript(transcriptPath, privacySurfaceTranscript(rawSessionId));
       await writeHistoricalPrivacyTranscripts(workspace.homeDir);
 
       const statusline = await runCli(["statusline"], {
@@ -1316,7 +1320,16 @@ describe("CLI behavior characterization", () => {
           session_id: "fixture-fresh",
           terminal_width: 180
         },
-        expected: ["bb: Healthy", "no stop-level findings", "session stable", "continue normally"]
+        expected: ["bb: Healthy", "no session activity yet", "start when ready"]
+      },
+      {
+        name: "empty readable transcript",
+        input: {
+          session_id: "fixture-empty",
+          terminal_width: 180
+        },
+        transcript: [],
+        expected: ["bb: Healthy", "no session activity yet", "start when ready"]
       },
       {
         name: "two repeated failed test commands",
@@ -1339,6 +1352,18 @@ describe("CLI behavior characterization", () => {
           "why: same failure retried 3x without a fix",
           "do: stop and inspect first failure"
         ]
+      },
+      {
+        name: "mismatched transcript session",
+        input: {
+          session_id: "fixture-current-session",
+          terminal_width: 180
+        },
+        transcript: withTranscriptSessionId(
+          repeatedFailedTestTranscript(3),
+          `fixture-other-session-${privacySentinels[6]}`
+        ),
+        expected: ["bb: Careful", "transcript session mismatch", "run bb-cc-lite doctor if this persists"]
       },
       {
         name: "three redundant full-file reads",
@@ -1380,7 +1405,7 @@ describe("CLI behavior characterization", () => {
       {
         name: "cache efficiency regression",
         input: {
-          session_id: "fixture-cache-regression",
+          session_id: privacySentinels[6],
           terminal_width: 180
         },
         transcript: cacheEfficiencyRegressionTranscript(),
@@ -1402,7 +1427,7 @@ describe("CLI behavior characterization", () => {
           terminal_width: 180
         },
         transcript: ["not-json", "{\"type\":\"assistant\""],
-        expected: ["bb: Healthy", "continue normally"]
+        expected: ["bb: Careful", "transcript unreadable", "run bb-cc-lite doctor"]
       },
       {
         name: "missing transcript",
@@ -1411,7 +1436,7 @@ describe("CLI behavior characterization", () => {
           transcript_path: "/tmp/bb-cc-lite/missing/transcript.jsonl",
           terminal_width: 180
         },
-        expected: ["bb: Healthy", "continue normally"]
+        expected: ["bb: Careful", "transcript unavailable", "run bb-cc-lite doctor if this persists"]
       }
     ];
 
@@ -1530,6 +1555,14 @@ function repeatedFailedTestTranscript(count: number): string[] {
       }
     })
   ]);
+}
+
+function withTranscriptSessionId(lines: string[], sessionId: string): string[] {
+  return lines.map((line) => {
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    parsed.sessionId = sessionId;
+    return JSON.stringify(parsed);
+  });
 }
 
 function redundantReadTranscript(count: number): string[] {
@@ -1730,10 +1763,10 @@ function repeatedFailedMcpTranscript(rawMcpName: string, count: number): string[
   ]);
 }
 
-function privacySurfaceTranscript(): string[] {
+function privacySurfaceTranscript(sessionId: string): string[] {
   return [
     JSON.stringify({
-      session_id: privacySentinels[6],
+      session_id: sessionId,
       type: "user",
       message: {
         role: "user",
@@ -1915,12 +1948,12 @@ function cacheEfficiencyRegressionTranscript(): string[] {
   ];
 }
 
-function toolResultExplosionTranscript(): string[] {
+function toolResultExplosionTranscript(sessionId: string): string[] {
   return [
     JSON.stringify({
       timestamp: "2026-05-19T00:11:00.000Z",
       type: "assistant",
-      session_id: privacySentinels[6],
+      session_id: sessionId,
       cwd: privacySentinels[4],
       message: {
         role: "assistant",
@@ -1949,7 +1982,7 @@ function toolResultExplosionTranscript(): string[] {
     JSON.stringify({
       timestamp: "2026-05-19T00:11:02.000Z",
       type: "assistant",
-      session_id: privacySentinels[6],
+      session_id: sessionId,
       message: {
         role: "assistant",
         usage: {

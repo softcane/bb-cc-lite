@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { handleHook } from "../src/hook-control.js";
 import { parseHookPayload } from "../src/hook-payload.js";
-import { recentFeedbackOutcomes, recordHookEvent } from "../src/store.js";
+import { readStore, recentFeedbackOutcomes, recordHookEvent } from "../src/store.js";
 
 const privacySentinels = [
   "BB_CC_LITE_RAW_PROMPT_SENTINEL",
@@ -18,6 +18,48 @@ const privacySentinels = [
 ];
 
 describe("hook control", () => {
+  it("records safe SessionStart lifecycle telemetry in observe-only/no-learn mode", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-sessionstart-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      const rawSessionId = `session-alpha-${privacySentinels[4]}`;
+
+      const response = await handleHook(
+        JSON.stringify({
+          session_id: rawSessionId,
+          hook_event_name: "SessionStart",
+          source: "resume",
+          timestamp: "2026-06-04T10:00:00.000Z",
+          prompt: privacySentinels[0],
+          cwd: privacySentinels[6],
+          transcript_path: `${privacySentinels[6]}/transcript.jsonl`
+        }),
+        {
+          fallbackEventName: "SessionStart",
+          mode: "observe",
+          learn: false,
+          storePath
+        }
+      );
+
+      expect(response).toBeUndefined();
+      expect(await readStore(storePath)).toMatchObject({
+        hookEvents: [
+          {
+            kind: "session_start",
+            hookEventName: "SessionStart",
+            lifecycleSource: "resume"
+          }
+        ]
+      });
+      const storeText = await readFile(storePath, "utf8");
+      expect(storeText).not.toContain(rawSessionId);
+      expectNoPrivacySentinels(storeText);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns additionalContext for repeated PostToolUseFailure feedback", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-"));
     try {
@@ -522,6 +564,7 @@ function successfulReadHook(sessionId: string): string {
   return JSON.stringify({
     session_id: `${sessionId}-${privacySentinels[4]}`,
     hook_event_name: "PostToolUse",
+    timestamp: "2026-06-03T09:00:00.000Z",
     tool_name: "Read",
     tool_input: {
       file_path: privacySentinels[6]

@@ -17,19 +17,24 @@ export function mergeHookSummary(
     repeatedFailures: TranscriptSummary["repeatedFailures"];
     blindRetry?: TranscriptSummary["blindRetry"];
     latestTimestamp?: string;
+    latestLifecycleSource?: TranscriptSummary["latestLifecycleSource"];
+    latestLifecycleTimestamp?: string;
     latestCompactionTimestamp?: string;
     redundantRead?: TranscriptSummary["redundantRead"];
     activeFullFileReads?: TranscriptSummary["activeFullFileReads"];
   }
 ): TranscriptSummary {
+  const hookOpenRiskCleared = transcriptClearsOlderHookRisk(transcript, hookData);
+  const hookRepeatedFailures = hookOpenRiskCleared ? [] : hookData.repeatedFailures;
   const repeatedFailures = new Map<string, TranscriptSummary["repeatedFailures"][number]>();
-  for (const failure of [...transcript.repeatedFailures, ...hookData.repeatedFailures]) {
+  for (const failure of [...transcript.repeatedFailures, ...hookRepeatedFailures]) {
     const key = failureKey(failure);
     const existing = repeatedFailures.get(key);
     repeatedFailures.set(key, { ...failure, count: Math.max(existing?.count || 0, failure.count) });
   }
 
   const latestTimestamp = latestIsoTimestamp(transcript.latestTimestamp, hookData.latestTimestamp);
+  const latestLifecycle = latestLifecycleEvent(transcript, hookData);
   const latestCompactionTimestamp = latestIsoTimestamp(transcript.latestCompactionTimestamp, hookData.latestCompactionTimestamp);
 
   return {
@@ -41,17 +46,46 @@ export function mergeHookSummary(
     validationSuccesses: Math.max(transcript.validationSuccesses || 0, hookData.validationSuccesses || 0),
     failedToolResults: Math.max(transcript.failedToolResults, hookData.failedToolResults),
     repeatedFailures: [...repeatedFailures.values()].filter((failure) => failure.count >= 2),
-    blindRetry: strongestBlindRetry(transcript.blindRetry, hookData.blindRetry),
+    blindRetry: hookOpenRiskCleared ? transcript.blindRetry : strongestBlindRetry(transcript.blindRetry, hookData.blindRetry),
     hasUnvalidatedEdits: transcript.hasUnvalidatedEdits || Boolean(hookData.hasUnvalidatedEdits),
     unvalidatedEditToolSteps: Math.max(transcript.unvalidatedEditToolSteps || 0, hookData.unvalidatedEditToolSteps || 0) || undefined,
     validationRecovered: transcript.validationRecovered || Boolean(hookData.validationRecovered),
     compactionEvents: Math.max(transcript.compactionEvents, hookData.compactionEvents),
     postCompactionActivity: mergedPostCompactionActivity(transcript, hookData, latestTimestamp, latestCompactionTimestamp),
     latestTimestamp,
+    latestLifecycleSource: latestLifecycle.source,
+    latestLifecycleTimestamp: latestLifecycle.timestamp,
     latestCompactionTimestamp,
     redundantRead: strongestRedundantRead(transcript.redundantRead, hookData.redundantRead),
     activeFullFileReads: mergeActiveFullFileReads(transcript.activeFullFileReads, hookData.activeFullFileReads)
   };
+}
+
+function transcriptClearsOlderHookRisk(
+  transcript: Pick<TranscriptSummary, "latestTimestamp" | "validationSuccesses" | "validationRecovered">,
+  hookData: { latestTimestamp?: string; repeatedFailures: TranscriptSummary["repeatedFailures"]; blindRetry?: TranscriptSummary["blindRetry"] }
+): boolean {
+  return Boolean(
+    ((transcript.validationSuccesses || 0) > 0 || transcript.validationRecovered) &&
+      transcript.latestTimestamp &&
+      hookData.latestTimestamp &&
+      transcript.latestTimestamp > hookData.latestTimestamp &&
+      (hookData.repeatedFailures.length > 0 || hookData.blindRetry)
+  );
+}
+
+function latestLifecycleEvent(
+  transcript: Pick<TranscriptSummary, "latestLifecycleSource" | "latestLifecycleTimestamp">,
+  hookData: { latestLifecycleSource?: TranscriptSummary["latestLifecycleSource"]; latestLifecycleTimestamp?: string }
+): { source?: TranscriptSummary["latestLifecycleSource"]; timestamp?: string } {
+  if (transcript.latestLifecycleTimestamp && hookData.latestLifecycleTimestamp) {
+    return transcript.latestLifecycleTimestamp >= hookData.latestLifecycleTimestamp
+      ? { source: transcript.latestLifecycleSource, timestamp: transcript.latestLifecycleTimestamp }
+      : { source: hookData.latestLifecycleSource, timestamp: hookData.latestLifecycleTimestamp };
+  }
+  return transcript.latestLifecycleTimestamp
+    ? { source: transcript.latestLifecycleSource, timestamp: transcript.latestLifecycleTimestamp }
+    : { source: hookData.latestLifecycleSource, timestamp: hookData.latestLifecycleTimestamp };
 }
 
 function strongestBlindRetry(

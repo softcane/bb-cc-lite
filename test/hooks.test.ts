@@ -156,6 +156,96 @@ describe("optional Claude Code hooks", () => {
     expectNoPrivacySentinels(event);
   });
 
+  it("parses SessionStart source as safe lifecycle metadata", () => {
+    const rawSessionId = `session-alpha-${privacySentinels[5]}`;
+    for (const source of ["startup", "resume", "clear", "compact"] as const) {
+      const event = parseHookPayload(
+        JSON.stringify({
+          session_id: rawSessionId,
+          hook_event_name: "SessionStart",
+          source,
+          timestamp: "2026-06-04T10:00:00.000Z",
+          prompt: privacySentinels[0],
+          assistant_text: privacySentinels[1],
+          tool_response: {
+            stdout: privacySentinels[2],
+            content: privacySentinels[3],
+            api_key: privacySentinels[4]
+          },
+          cwd: privacySentinels[6],
+          transcript_path: `${privacySentinels[6]}/transcript.jsonl`
+        })
+      );
+
+      expect(event).toMatchObject({
+        kind: "session_start",
+        hookEventName: "SessionStart",
+        lifecycleSource: source,
+        timestamp: "2026-06-04T10:00:00.000Z",
+        sessionKey: hashValue(rawSessionId)
+      });
+      expect(JSON.stringify(event)).not.toContain(rawSessionId);
+      expectNoPrivacySentinels(event);
+    }
+
+    expect(
+      parseHookPayload(
+        JSON.stringify({
+          session_id: rawSessionId,
+          hook_event_name: "SessionStart",
+          source: "private-raw-source"
+        })
+      )
+    ).toMatchObject({
+      kind: "session_start",
+      lifecycleSource: "unknown"
+    });
+  });
+
+  it("stores SessionStart lifecycle metadata without raw payload fields", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-sessionstart-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      const rawSessionId = `session-alpha-${privacySentinels[5]}`;
+      const event = parseHookPayload(
+        JSON.stringify({
+          session_id: rawSessionId,
+          hook_event_name: "SessionStart",
+          source: "resume",
+          timestamp: "2026-06-04T10:00:00.000Z",
+          prompt: privacySentinels[0],
+          cwd: privacySentinels[6],
+          transcript_path: `${privacySentinels[6]}/transcript.jsonl`
+        })
+      );
+      if (!event) {
+        throw new Error("expected SessionStart event");
+      }
+
+      await recordHookEvent(event, storePath);
+
+      const store = await readStore(storePath);
+      expect(store.hookEvents).toEqual([
+        expect.objectContaining({
+          kind: "session_start",
+          hookEventName: "SessionStart",
+          lifecycleSource: "resume",
+          sessionKey: hashValue(rawSessionId)
+        })
+      ]);
+      const storeText = await readFile(storePath, "utf8");
+      expect(storeText).not.toContain(rawSessionId);
+      expectNoPrivacySentinels(storeText);
+
+      expect(await hookSummary(hashValue(rawSessionId), storePath)).toMatchObject({
+        latestLifecycleSource: "resume",
+        latestLifecycleTimestamp: "2026-06-04T10:00:00.000Z"
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("derives safe hashed file identity for successful full-file Read hooks", () => {
     const rawPath = privacySentinels[6];
     const event = parseHookPayload(
@@ -441,6 +531,99 @@ describe("optional Claude Code hooks", () => {
         repeatedFailures: []
       });
       expectNoPrivacySentinels(await hookSummary(sessionKey, storePath));
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("lets newer transcript validation success clear older hook-derived repeated failure risk", () => {
+    const merged = mergeHookSummary(
+      transcript({
+        latestTimestamp: "2026-06-04T10:02:00.000Z",
+        validationSuccesses: 1,
+        validationRecovered: true,
+        observedProgress: true
+      }),
+      {
+        failedToolResults: 3,
+        toolCalls: 3,
+        readToolCalls: 0,
+        successfulEditResults: 0,
+        validationChecks: 3,
+        validationSuccesses: 0,
+        validationRecovered: false,
+        hasUnvalidatedEdits: false,
+        compactionEvents: 0,
+        postCompactionActivity: 0,
+        repeatedFailures: [{ toolName: "Bash", purpose: "tests", count: 3 }],
+        blindRetry: {
+          category: "tests",
+          label: "test",
+          attemptCount: 3,
+          recovered: false,
+          activeEnded: true,
+          blindRetryFailureCount: 3
+        },
+        latestTimestamp: "2026-06-04T10:00:00.000Z",
+        activeFullFileReads: []
+      }
+    );
+
+    expect(merged.repeatedFailures).toEqual([]);
+    expect(merged.blindRetry).toBeUndefined();
+    expect(decide(input({ sessionId: "session-alpha" }), merged)).toMatchObject({
+      state: "Healthy",
+      reasonCode: "validation_recovered"
+    });
+  });
+
+  it("bounds open hook failure risk at SessionStart clear lifecycle boundaries", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-clear-boundary-"));
+    try {
+      const storePath = join(tempDir, "events.json");
+      const sessionId = "session-alpha";
+      const sessionKey = hashValue(sessionId);
+      for (let count = 0; count < 2; count += 1) {
+        const event = parseHookPayload(
+          JSON.stringify({
+            session_id: sessionId,
+            hook_event_name: "PostToolUseFailure",
+            timestamp: `2026-06-04T10:0${count}:00.000Z`,
+            tool_name: "Bash",
+            tool_input: {
+              command: "npm test"
+            }
+          })
+        );
+        if (!event) {
+          throw new Error("expected hook event");
+        }
+        await recordHookEvent(event, storePath);
+      }
+
+      const clear = parseHookPayload(
+        JSON.stringify({
+          session_id: sessionId,
+          hook_event_name: "SessionStart",
+          source: "clear",
+          timestamp: "2026-06-04T10:02:00.000Z"
+        })
+      );
+      if (!clear) {
+        throw new Error("expected clear event");
+      }
+      await recordHookEvent(clear, storePath);
+
+      const summary = await hookSummary(sessionKey, storePath);
+      expect(summary).toMatchObject({
+        latestLifecycleSource: "clear",
+        repeatedFailures: []
+      });
+      expect(summary.blindRetry).toBeUndefined();
+      expect(decide(input({ sessionId }), mergeHookSummary(transcript(), summary))).toMatchObject({
+        state: "Healthy",
+        reasonCode: "no_session_activity"
+      });
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

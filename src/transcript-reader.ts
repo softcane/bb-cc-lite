@@ -9,6 +9,7 @@ export interface ReadTranscriptTailOptions {
 export interface TranscriptTail {
   pathReadable: boolean;
   bytesRead: number;
+  tailTruncated: boolean;
   lines: string[];
 }
 
@@ -33,6 +34,7 @@ export async function readTranscriptTail(
       return {
         pathReadable: true,
         bytesRead,
+        tailTruncated: start > 0,
         lines: trimPartialFirstLine(text, start).split(/\r?\n/).filter(Boolean)
       };
     } finally {
@@ -47,6 +49,7 @@ function unreadableTail(): TranscriptTail {
   return {
     pathReadable: false,
     bytesRead: 0,
+    tailTruncated: false,
     lines: []
   };
 }

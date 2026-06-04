@@ -171,7 +171,8 @@ describe("settings install and uninstall", () => {
     }>(target.settingsPath);
 
     expect(Object.keys(settings.hooks).sort()).toEqual([...SAFE_HOOK_EVENTS].sort());
-    expect(settings.hooks.SessionStart).toBeUndefined();
+    expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("observe");
+    expect(settings.hooks.SessionStart[0].hooks[0].async).toBe(true);
     expect(settings.hooks.PreToolUse).toBeUndefined();
     expect(settings.hooks.PostToolUseFailure[0].hooks[0].args).toContain("observe");
     expect(settings.hooks.PostToolUseFailure[0].hooks[0].async).toBe(true);

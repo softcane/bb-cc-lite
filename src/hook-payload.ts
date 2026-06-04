@@ -11,6 +11,7 @@ export const SAFE_HOOK_EVENTS = [
   "PostToolBatch",
   "PreCompact",
   "PostCompact",
+  "SessionStart",
   "Stop",
   "SessionEnd"
 ] as const;
@@ -90,6 +91,14 @@ export function parseHookPayload(
     };
   }
 
+  if (hookEventName === "SessionStart") {
+    return {
+      ...base,
+      kind: "session_start",
+      lifecycleSource: sessionStartSource(stringField(root.source) || stringField(root.session_start_source))
+    };
+  }
+
   if (hookEventName === "Stop" || hookEventName === "StopFailure") {
     return {
       ...base,
@@ -105,6 +114,10 @@ export function parseHookPayload(
   }
 
   return undefined;
+}
+
+function sessionStartSource(value: string | undefined): DerivedHookEvent["lifecycleSource"] {
+  return value === "startup" || value === "resume" || value === "clear" || value === "compact" ? value : "unknown";
 }
 
 function countBatchTools(root: Record<string, unknown>): number {

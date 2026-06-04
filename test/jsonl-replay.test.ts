@@ -115,7 +115,7 @@ describe("real-shape sanitized JSONL replay fixtures", () => {
     const entries = parseJsonlFixture(raw);
     assertClaudeLikeShape(entries);
 
-    const input = parseStatusLineInput(statusLineInput(path, testCase));
+    const input = parseStatusLineInput(statusLineInput(path, testCase, fixtureSessionId(entries)));
     const transcript = await parseTranscriptTail(input.transcriptPath, { maxBytes: Buffer.byteLength(raw) });
     const decision = decide(input, transcript);
 
@@ -167,7 +167,8 @@ describe("real-shape sanitized JSONL replay fixtures", () => {
     try {
       for (const testCase of REPLAY_CASES) {
         const path = fixturePath(testCase.fixture);
-        const rendered = await createStatusLine(statusLineInput(path, testCase), 220);
+        const entries = parseJsonlFixture(await readFile(path, "utf8"));
+        const rendered = await createStatusLine(statusLineInput(path, testCase, fixtureSessionId(entries)), 220);
         expect(rendered.split("\n").filter(Boolean)).toHaveLength(1);
         expectNoPrivacySentinels(rendered);
         expectNoForbiddenValues([rendered], [path]);
@@ -195,9 +196,9 @@ function fixturePath(name: string): string {
   return fileURLToPath(new URL(`./fixtures/jsonl/${name}`, import.meta.url));
 }
 
-function statusLineInput(path: string, testCase: ReplayCase): string {
+function statusLineInput(path: string, testCase: ReplayCase, sessionId: string): string {
   return `${JSON.stringify({
-    session_id: `session-${testCase.fixture}-BB_CC_LITE_RAW_SESSION_SENTINEL`,
+    session_id: sessionId,
     transcript_path: path,
     cwd: "/tmp/bb-cc-lite-fixture/project/BB_CC_LITE_RAW_PATH_SENTINEL",
     model: {
@@ -231,6 +232,14 @@ function statusLineInput(path: string, testCase: ReplayCase): string {
     },
     mcp_server_name: "mcp__bbcc_private__rawPrivacyTool"
   })}\n`;
+}
+
+function fixtureSessionId(entries: Record<string, unknown>[]): string {
+  const sessionId = stringField(entries[0]?.sessionId);
+  if (!sessionId) {
+    throw new Error("fixture entry must include sessionId");
+  }
+  return sessionId;
 }
 
 function parseJsonlFixture(raw: string): Record<string, unknown>[] {

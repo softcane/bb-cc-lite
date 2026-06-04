@@ -5,6 +5,7 @@ export type ValidationCommandCategory = "tests" | "lint" | "typecheck" | "build"
 
 export interface ProjectConfig {
   validationCommands: Partial<Record<ValidationCommandCategory, string[]>>;
+  validationPatterns: Partial<Record<ValidationCommandCategory, string[]>>;
 }
 
 const CONFIG_FILE = ".bb-cc-lite.json";
@@ -13,7 +14,7 @@ const MAX_CONFIG_BYTES = 16 * 1024;
 const MAX_COMMANDS_PER_CATEGORY = 20;
 const MAX_COMMAND_LENGTH = 200;
 const VALIDATION_CATEGORIES: ValidationCommandCategory[] = ["tests", "lint", "typecheck", "build"];
-const EMPTY_CONFIG: ProjectConfig = { validationCommands: {} };
+const EMPTY_CONFIG: ProjectConfig = { validationCommands: {}, validationPatterns: {} };
 
 export async function loadProjectConfig(cwd: string | undefined): Promise<ProjectConfig> {
   const configPath = await findProjectConfig(cwd);
@@ -49,6 +50,15 @@ export function classifyConfiguredValidationCommand(
         return category;
       }
     }
+    for (const pattern of config.validationPatterns[category] || []) {
+      try {
+        if (new RegExp(pattern, "u").test(normalizedCommand)) {
+          return category;
+        }
+      } catch {
+        // Invalid user patterns are ignored by sanitizeConfig, but stay defensive.
+      }
+    }
   }
   return undefined;
 }
@@ -78,24 +88,38 @@ async function findProjectConfig(cwd: string | undefined): Promise<string | unde
 }
 
 function sanitizeConfig(value: unknown): ProjectConfig {
-  if (!isRecord(value) || !isRecord(value.validationCommands)) {
+  if (!isRecord(value)) {
     return EMPTY_CONFIG;
   }
   const validationCommands: ProjectConfig["validationCommands"] = {};
+  const validationPatterns: ProjectConfig["validationPatterns"] = {};
   for (const category of VALIDATION_CATEGORIES) {
-    const commands = value.validationCommands[category];
+    const commands = isRecord(value.validationCommands) ? value.validationCommands[category] : undefined;
     if (!Array.isArray(commands)) {
-      continue;
+      // Patterns are processed below.
+    } else {
+      const safeCommands = commands
+        .flatMap((command) => (typeof command === "string" ? [normalizeCommand(command)] : []))
+        .filter((command): command is string => typeof command === "string" && command.length > 0 && command.length <= MAX_COMMAND_LENGTH)
+        .slice(0, MAX_COMMANDS_PER_CATEGORY);
+      if (safeCommands.length > 0) {
+        validationCommands[category] = safeCommands;
+      }
     }
-    const safeCommands = commands
-      .flatMap((command) => (typeof command === "string" ? [normalizeCommand(command)] : []))
-      .filter((command): command is string => typeof command === "string" && command.length > 0 && command.length <= MAX_COMMAND_LENGTH)
-      .slice(0, MAX_COMMANDS_PER_CATEGORY);
-    if (safeCommands.length > 0) {
-      validationCommands[category] = safeCommands;
+
+    const patterns = isRecord(value.validationPatterns) ? value.validationPatterns[category] : undefined;
+    if (Array.isArray(patterns)) {
+      const safePatterns = patterns
+        .flatMap((pattern) => (typeof pattern === "string" ? [normalizeCommand(pattern)] : []))
+        .filter((pattern): pattern is string => typeof pattern === "string" && pattern.length > 0 && pattern.length <= MAX_COMMAND_LENGTH)
+        .filter((pattern) => validRegex(pattern))
+        .slice(0, MAX_COMMANDS_PER_CATEGORY);
+      if (safePatterns.length > 0) {
+        validationPatterns[category] = safePatterns;
+      }
     }
   }
-  return { validationCommands };
+  return { validationCommands, validationPatterns };
 }
 
 function normalizeCommand(value: string | undefined): string | undefined {
@@ -105,4 +129,13 @@ function normalizeCommand(value: string | undefined): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validRegex(pattern: string): boolean {
+  try {
+    new RegExp(pattern, "u");
+    return true;
+  } catch {
+    return false;
+  }
 }

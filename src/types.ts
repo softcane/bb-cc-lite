@@ -99,7 +99,7 @@ export interface FailureEpisodeSummary {
   recovered: boolean;
   activeEnded: boolean;
   blindRetryFailureCount: number;
-  meaningfulIntervention?: Array<"edit" | "validation_success" | "same_failure_success">;
+  meaningfulIntervention?: Array<"edit" | "validation_success" | "same_failure_success" | "possible_mutation">;
   identityHash?: string;
 }
 
@@ -116,8 +116,15 @@ export interface BlindRetrySummary {
 export interface TranscriptSummary {
   pathReadable: boolean;
   bytesRead: number;
+  tailTruncated?: boolean;
   linesRead: number;
   malformedLines: number;
+  parseableLines?: number;
+  userMessages?: number;
+  assistantMessages?: number;
+  transcriptHasSessionIds?: boolean;
+  transcriptSessionKeys?: string[];
+  transcriptSessionKeyCount?: number;
   toolCalls: number;
   readToolCalls: number;
   successfulEditResults?: number;
@@ -140,6 +147,8 @@ export interface TranscriptSummary {
   latestUsageTimestamp?: string;
   cacheReadShare?: CacheReadShareSummary;
   latestTimestamp?: string;
+  latestLifecycleSource?: SessionStartSource;
+  latestLifecycleTimestamp?: string;
   latestCompactionTimestamp?: string;
   redundantRead?: RedundantReadSummary;
   activeFullFileReads?: ActiveFullFileReadSummary[];
@@ -148,6 +157,7 @@ export interface TranscriptSummary {
 }
 
 export type HookEventKind =
+  | "session_start"
   | "tool_success"
   | "tool_failure"
   | "tool_batch"
@@ -157,12 +167,14 @@ export type HookEventKind =
   | "feedback";
 
 export type CompactionStage = "pre" | "post";
+export type SessionStartSource = "startup" | "resume" | "clear" | "compact" | "unknown";
 
 export interface DerivedHookEvent {
   kind: HookEventKind;
   sessionKey?: string;
   timestamp: string;
   hookEventName: string;
+  lifecycleSource?: SessionStartSource;
   compactionStage?: CompactionStage;
   toolName?: string;
   purpose?: string;

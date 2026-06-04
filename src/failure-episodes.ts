@@ -5,7 +5,7 @@ import type { ProjectConfig } from "./project-config.js";
 import type { BlindRetrySummary, FailureEpisodeSummary, StoredHookEvent } from "./types.js";
 
 type ToolResultOutcome = "success" | "failure";
-type InterventionKind = "edit" | "validation_success" | "same_failure_success";
+type InterventionKind = "edit" | "validation_success" | "same_failure_success" | "possible_mutation";
 
 export interface SafeToolResultEvent {
   outcome: ToolResultOutcome;
@@ -18,6 +18,7 @@ export interface SafeToolResultEvent {
   isEdit: boolean;
   isValidation: boolean;
   isReadSearch: boolean;
+  isPossibleMutation: boolean;
 }
 
 interface ToolMeta {
@@ -107,8 +108,11 @@ export function summarizeFailureEpisodes(events: SafeToolResultEvent[]): Failure
         completed.push(toEpisodeSummary(sameIdentityEpisode, true, false));
         active.delete(event.identity);
       }
-      if (event.isEdit || event.isValidation) {
-        markMeaningfulIntervention(active, event.isEdit ? "edit" : "validation_success");
+      if (event.isEdit || event.isValidation || event.isPossibleMutation) {
+        markMeaningfulIntervention(
+          active,
+          event.isEdit ? "edit" : event.isValidation ? "validation_success" : "possible_mutation"
+        );
       }
       continue;
     }
@@ -188,7 +192,8 @@ function safeToolResultEvent(meta: ToolMeta, outcome: ToolResultOutcome): SafeTo
     identityHash: meta.category === "MCP" ? meta.identityHash : undefined,
     isEdit: meta.isEdit,
     isValidation: isValidationCategory(category),
-    isReadSearch: meta.isReadSearch
+    isReadSearch: meta.isReadSearch,
+    isPossibleMutation: meta.name === "Bash" && category === "tool"
   };
 }
 

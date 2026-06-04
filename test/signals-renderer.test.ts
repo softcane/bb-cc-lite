@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderStatusLine } from "../src/renderer.js";
+import { sessionKeyFromId } from "../src/session.js";
 import { decide } from "../src/signals.js";
 import { formatWhy } from "../src/why.js";
 import type { StatusLineInput, TranscriptSummary } from "../src/types.js";
@@ -107,6 +108,44 @@ describe("signals and renderer", () => {
     const rendered = renderStatusLine(decision, 180);
     expect(rendered).toContain("why: test loop: failed 3x");
     expect(rendered).toContain("do: inspect first failure");
+  });
+
+  it("suppresses transcript-derived Stop when transcript session identity mismatches current input", () => {
+    const matching = decide(
+      input({ sessionId: "session-alpha" }),
+      transcript({
+        failedToolResults: 3,
+        repeatedFailures: [{ toolName: "Bash", purpose: "tests", count: 3 }],
+        transcriptHasSessionIds: true,
+        transcriptSessionKeyCount: 1,
+        transcriptSessionKeys: [sessionKeyFromId("session-alpha")]
+      })
+    );
+    const mismatched = decide(
+      input({ sessionId: "session-alpha" }),
+      transcript({
+        failedToolResults: 3,
+        repeatedFailures: [{ toolName: "Bash", purpose: "tests", count: 3 }],
+        transcriptHasSessionIds: true,
+        transcriptSessionKeyCount: 1,
+        transcriptSessionKeys: [sessionKeyFromId("session-beta")]
+      })
+    );
+
+    expect(matching).toMatchObject({
+      state: "Stop",
+      reasonCode: "repeated_tool_failure",
+      primaryEvidence: "tests failed 3x"
+    });
+    expect(mismatched).toMatchObject({
+      state: "Careful",
+      reasonCode: "transcript_session_mismatch",
+      primaryEvidence: "transcript session mismatch",
+      impact: "bb could not trust transcript evidence for the current Claude session",
+      action: "run bb-cc-lite doctor if this persists"
+    });
+    expect(renderStatusLine(mismatched, 160)).not.toContain("Claude is retrying");
+    expect(JSON.stringify(mismatched)).not.toContain("session-beta");
   });
 
   it("warns on two repeated Bash test failures before escalating to Stop", () => {
@@ -237,6 +276,106 @@ describe("signals and renderer", () => {
       action: "stop and inspect first failure"
     });
     expect(renderStatusLine(stop, 160)).toContain("why: same failure retried 3x without a fix");
+  });
+
+  it("softens pre-resume repeated failures when no post-resume activity exists", () => {
+    const stale = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        latestTimestamp: "2026-06-04T09:00:00.000Z",
+        latestLifecycleSource: "resume",
+        latestLifecycleTimestamp: "2026-06-04T10:00:00.000Z",
+        failedToolResults: 3,
+        repeatedFailures: [{ toolName: "Bash", purpose: "tests", count: 3 }],
+        blindRetry: {
+          category: "tests",
+          label: "test",
+          attemptCount: 3,
+          recovered: false,
+          activeEnded: true,
+          blindRetryFailureCount: 3
+        }
+      })
+    );
+    const fresh = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        latestTimestamp: "2026-06-04T10:01:00.000Z",
+        latestLifecycleSource: "resume",
+        latestLifecycleTimestamp: "2026-06-04T10:00:00.000Z",
+        failedToolResults: 3,
+        repeatedFailures: [{ toolName: "Bash", purpose: "tests", count: 3 }],
+        blindRetry: {
+          category: "tests",
+          label: "test",
+          attemptCount: 3,
+          recovered: false,
+          activeEnded: true,
+          blindRetryFailureCount: 3
+        }
+      })
+    );
+
+    expect(stale).toMatchObject({
+      state: "Careful",
+      reasonCode: "prior_repeated_failure",
+      primaryEvidence: "resumed after prior test failures",
+      impact: "Prior session evidence had repeated failures before this resume",
+      action: "inspect first failure before retrying"
+    });
+    expect(renderStatusLine(stale, 160)).not.toContain("Claude is repeating");
+    expect(fresh).toMatchObject({
+      state: "Stop",
+      reasonCode: "blind_retry_loop",
+      primaryEvidence: "same test failed 3x without a fix"
+    });
+  });
+
+  it("does not turn tail-truncated weak generic failure identity into high-confidence Stop", () => {
+    const weak = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        tailTruncated: true,
+        failedToolResults: 3,
+        repeatedFailures: [{ toolName: "tool", count: 3 }],
+        blindRetry: {
+          category: "tool",
+          label: "tool",
+          attemptCount: 3,
+          recovered: false,
+          activeEnded: true,
+          blindRetryFailureCount: 3
+        }
+      })
+    );
+    const stableValidation = decide(
+      input({ contextPercent: 42 }),
+      transcript({
+        tailTruncated: true,
+        failedToolResults: 3,
+        repeatedFailures: [{ toolName: "Bash", purpose: "tests", count: 3 }],
+        blindRetry: {
+          category: "tests",
+          label: "test",
+          attemptCount: 3,
+          recovered: false,
+          activeEnded: true,
+          blindRetryFailureCount: 3
+        }
+      })
+    );
+
+    expect(weak).toMatchObject({
+      state: "Careful",
+      reasonCode: "tail_truncated_failure_evidence",
+      primaryEvidence: "tail-truncated weak failure evidence",
+      action: "inspect recent transcript context before stopping"
+    });
+    expect(stableValidation).toMatchObject({
+      state: "Stop",
+      reasonCode: "blind_retry_loop",
+      primaryEvidence: "same test failed 3x without a fix"
+    });
   });
 
   it("renders the required Careful MCP wording without raw tool names", () => {
@@ -1087,8 +1226,87 @@ describe("signals and renderer", () => {
     });
   });
 
-  it("warns when session duration crosses the budget threshold", () => {
+  it("renders readable empty transcript evidence as no session activity instead of confident healthy wording", () => {
+    const decision = decide(input({ transcriptPath: "/private/session.jsonl" }), transcript());
+    const rendered = renderStatusLine(decision, 140);
+
+    expect(decision).toMatchObject({
+      state: "Healthy",
+      reasonCode: "no_session_activity",
+      primaryEvidence: "no session activity yet",
+      action: "start when ready"
+    });
+    expect(rendered).toContain("bb: Healthy");
+    expect(rendered).toContain("no session activity yet");
+    expect(rendered).not.toContain("no stop-level findings");
+    expect(JSON.stringify(decision)).not.toContain("/private/session.jsonl");
+  });
+
+  it("qualifies missing and malformed-only transcript evidence before healthy fallback", () => {
+    const missing = decide(input({ transcriptPath: "/private/missing.jsonl" }), transcript({ pathReadable: false }));
+    const malformed = decide(
+      input({ transcriptPath: "/private/malformed.jsonl" }),
+      transcript({ linesRead: 2, malformedLines: 2 })
+    );
+
+    expect(missing).toMatchObject({
+      state: "Careful",
+      reasonCode: "transcript_unavailable",
+      primaryEvidence: "transcript unavailable",
+      action: "run bb-cc-lite doctor if this persists"
+    });
+    expect(malformed).toMatchObject({
+      state: "Careful",
+      reasonCode: "transcript_unreadable",
+      primaryEvidence: "transcript unreadable",
+      action: "run bb-cc-lite doctor"
+    });
+    expect(JSON.stringify([missing, malformed])).not.toContain("/private/");
+  });
+
+  it("does not treat high wall-clock duration as progress when no activity is present", () => {
     const decision = decide(input({ durationMs: 46 * 60_000 }), transcript());
+
+    expect(decision).toMatchObject({
+      state: "Healthy",
+      reasonCode: "no_session_activity",
+      primaryEvidence: "no session activity yet",
+      action: "start when ready"
+    });
+    expect(renderStatusLine(decision, 120)).not.toContain("ask Claude to summarize progress");
+  });
+
+  it("uses resume lifecycle wording when a resumed session has no activity yet", () => {
+    const decision = decide(input({ durationMs: 46 * 60_000 }), transcript({ latestLifecycleSource: "resume" }));
+
+    expect(decision).toMatchObject({
+      state: "Healthy",
+      reasonCode: "resumed_idle_session",
+      primaryEvidence: "resumed idle session",
+      action: "start when ready"
+    });
+    expect(renderStatusLine(decision, 140)).toContain("resumed idle session");
+    expect(renderStatusLine(decision, 140)).not.toContain("summarize progress");
+  });
+
+  it("keeps direct context and rate-limit warnings when duration evidence is idle", () => {
+    const context = decide(input({ durationMs: 46 * 60_000, contextPercent: 82 }), transcript());
+    const rateLimit = decide(input({ durationMs: 46 * 60_000, rateLimitPercent: 90 }), transcript());
+
+    expect(context).toMatchObject({
+      state: "Careful",
+      reasonCode: "context_high",
+      primaryEvidence: "ctx 82%"
+    });
+    expect(rateLimit).toMatchObject({
+      state: "Careful",
+      reasonCode: "rate_limit_high",
+      primaryEvidence: "rate limit 90%"
+    });
+  });
+
+  it("warns when session duration crosses the budget threshold with activity evidence", () => {
+    const decision = decide(input({ durationMs: 46 * 60_000 }), transcript({ toolCalls: 1 }));
 
     expect(decision).toMatchObject({
       state: "Careful",
@@ -1122,7 +1340,7 @@ describe("signals and renderer", () => {
 
     const durationDecision = decide(
       input({ durationMs: 6 * 60_000 }),
-      transcript(),
+      transcript({ toolCalls: 1 }),
       {
         budgetThresholds: { durationCarefulMs: 5 * 60_000 }
       }
@@ -1173,8 +1391,9 @@ describe("signals and renderer", () => {
       }
     };
 
-    const costDecision = decide(input({ costUsd: 2.4, costSource: "claude" }), transcript(), { baseline });
-    const durationDecision = decide(input({ durationMs: 60 * 60_000 }), transcript(), { baseline });
+    const active = transcript({ toolCalls: 1 });
+    const costDecision = decide(input({ costUsd: 2.4, costSource: "claude" }), active, { baseline });
+    const durationDecision = decide(input({ durationMs: 60 * 60_000 }), active, { baseline });
 
     expect(costDecision).toMatchObject({
       state: "Healthy",
@@ -1184,6 +1403,33 @@ describe("signals and renderer", () => {
       state: "Healthy",
       reasonCode: "healthy"
     });
+  });
+
+  it("does not let baseline budget history override sparse no-activity evidence", () => {
+    const baseline = {
+      budget: {
+        durationSamples: 10,
+        p90DurationMs: 2 * 60 * 60_000,
+        confidence: "high" as const
+      },
+      scenarios: {
+        read_heavy_debugging: { seen: 10, recentSeen: 10, confidence: "high" as const }
+      },
+      outcomes: {
+        healthyLike: { readHeavyNoFailure: 10 }
+      }
+    };
+
+    const decision = decide(input({ durationMs: 60 * 60_000 }), transcript(), { baseline });
+
+    expect(decision).toMatchObject({
+      state: "Healthy",
+      reasonCode: "no_session_activity",
+      primaryEvidence: "no session activity yet",
+      action: "start when ready"
+    });
+    expect(renderStatusLine(decision, 140)).not.toContain("usually ended OK");
+    expect(renderStatusLine(decision, 140)).not.toContain("session ran");
   });
 
   it("keeps budget plus no observed progress as stronger Careful wording", () => {
@@ -1246,7 +1492,7 @@ describe("signals and renderer", () => {
     expect(() => decide(input({ costUsd: undefined, durationMs: undefined }), transcript())).not.toThrow();
     expect(decide(input({ costUsd: undefined, durationMs: undefined }), transcript())).toMatchObject({
       state: "Healthy",
-      reasonCode: "healthy"
+      reasonCode: "no_session_activity"
     });
   });
 
@@ -1254,7 +1500,7 @@ describe("signals and renderer", () => {
     const costDecision = decide(input({ costUsd: 0.25, costSource: "claude" }), transcript(), {
       budgetThresholds: { costUsd: 0.2 }
     });
-    const durationDecision = decide(input({ durationMs: 10_000 }), transcript(), {
+    const durationDecision = decide(input({ durationMs: 10_000 }), transcript({ toolCalls: 1 }), {
       budgetThresholds: { durationMs: 10_000 }
     });
 
