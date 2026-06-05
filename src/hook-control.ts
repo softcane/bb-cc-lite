@@ -35,6 +35,11 @@ const EMPTY_TRANSCRIPT: TranscriptSummary = {
   toolCalls: 0,
   readToolCalls: 0,
   successfulEditResults: 0,
+  failedEditResults: 0,
+  unvalidatedEditResultCount: 0,
+  changedFileIdentityCount: 0,
+  unvalidatedChangedFileIdentityCount: 0,
+  workContinuedAfterFailedEdit: false,
   validationChecks: 0,
   validationSuccesses: 0,
   toolRecoveryEvents: 0,
@@ -46,6 +51,7 @@ const EMPTY_TRANSCRIPT: TranscriptSummary = {
   observedProgress: false,
   compactionEvents: 0,
   postCompactionActivity: 0,
+  terminalEvents: 0,
   usage: {}
 };
 

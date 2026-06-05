@@ -7,6 +7,11 @@ export function mergeHookSummary(
     toolCalls: number;
     readToolCalls?: number;
     successfulEditResults?: number;
+    failedEditResults?: number;
+    unvalidatedEditResultCount?: number;
+    changedFileIdentityCount?: number;
+    unvalidatedChangedFileIdentityCount?: number;
+    workContinuedAfterFailedEdit?: boolean;
     validationChecks?: number;
     validationSuccesses?: number;
     validationRecovered?: boolean;
@@ -19,6 +24,9 @@ export function mergeHookSummary(
     latestTimestamp?: string;
     latestLifecycleSource?: TranscriptSummary["latestLifecycleSource"];
     latestLifecycleTimestamp?: string;
+    terminalEvents?: number;
+    latestTerminalEvent?: TranscriptSummary["latestTerminalEvent"];
+    latestTerminalTimestamp?: string;
     latestCompactionTimestamp?: string;
     redundantRead?: TranscriptSummary["redundantRead"];
     activeFullFileReads?: TranscriptSummary["activeFullFileReads"];
@@ -42,6 +50,14 @@ export function mergeHookSummary(
     toolCalls: Math.max(transcript.toolCalls, hookData.toolCalls),
     readToolCalls: Math.max(transcript.readToolCalls, hookData.readToolCalls || 0),
     successfulEditResults: Math.max(transcript.successfulEditResults || 0, hookData.successfulEditResults || 0),
+    failedEditResults: Math.max(transcript.failedEditResults || 0, hookData.failedEditResults || 0),
+    unvalidatedEditResultCount: Math.max(transcript.unvalidatedEditResultCount || 0, hookData.unvalidatedEditResultCount || 0),
+    changedFileIdentityCount: Math.max(transcript.changedFileIdentityCount || 0, hookData.changedFileIdentityCount || 0),
+    unvalidatedChangedFileIdentityCount: Math.max(
+      transcript.unvalidatedChangedFileIdentityCount || 0,
+      hookData.unvalidatedChangedFileIdentityCount || 0
+    ),
+    workContinuedAfterFailedEdit: Boolean(transcript.workContinuedAfterFailedEdit || hookData.workContinuedAfterFailedEdit),
     validationChecks: Math.max(transcript.validationChecks || 0, hookData.validationChecks || 0),
     validationSuccesses: Math.max(transcript.validationSuccesses || 0, hookData.validationSuccesses || 0),
     failedToolResults: Math.max(transcript.failedToolResults, hookData.failedToolResults),
@@ -55,6 +71,9 @@ export function mergeHookSummary(
     latestTimestamp,
     latestLifecycleSource: latestLifecycle.source,
     latestLifecycleTimestamp: latestLifecycle.timestamp,
+    terminalEvents: Math.max(transcript.terminalEvents || 0, hookData.terminalEvents || 0),
+    latestTerminalEvent: latestTerminalEvent(transcript, hookData).event,
+    latestTerminalTimestamp: latestTerminalEvent(transcript, hookData).timestamp,
     latestCompactionTimestamp,
     redundantRead: strongestRedundantRead(transcript.redundantRead, hookData.redundantRead),
     activeFullFileReads: mergeActiveFullFileReads(transcript.activeFullFileReads, hookData.activeFullFileReads)
@@ -86,6 +105,20 @@ function latestLifecycleEvent(
   return transcript.latestLifecycleTimestamp
     ? { source: transcript.latestLifecycleSource, timestamp: transcript.latestLifecycleTimestamp }
     : { source: hookData.latestLifecycleSource, timestamp: hookData.latestLifecycleTimestamp };
+}
+
+function latestTerminalEvent(
+  transcript: Pick<TranscriptSummary, "latestTerminalEvent" | "latestTerminalTimestamp">,
+  hookData: { latestTerminalEvent?: TranscriptSummary["latestTerminalEvent"]; latestTerminalTimestamp?: string }
+): { event?: TranscriptSummary["latestTerminalEvent"]; timestamp?: string } {
+  if (transcript.latestTerminalTimestamp && hookData.latestTerminalTimestamp) {
+    return transcript.latestTerminalTimestamp >= hookData.latestTerminalTimestamp
+      ? { event: transcript.latestTerminalEvent, timestamp: transcript.latestTerminalTimestamp }
+      : { event: hookData.latestTerminalEvent, timestamp: hookData.latestTerminalTimestamp };
+  }
+  return transcript.latestTerminalTimestamp
+    ? { event: transcript.latestTerminalEvent, timestamp: transcript.latestTerminalTimestamp }
+    : { event: hookData.latestTerminalEvent, timestamp: hookData.latestTerminalTimestamp };
 }
 
 function strongestBlindRetry(

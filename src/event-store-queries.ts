@@ -31,6 +31,11 @@ export async function hookSummary(
   toolCalls: number;
   readToolCalls: number;
   successfulEditResults: number;
+  failedEditResults: number;
+  unvalidatedEditResultCount: number;
+  changedFileIdentityCount: number;
+  unvalidatedChangedFileIdentityCount: number;
+  workContinuedAfterFailedEdit: boolean;
   validationChecks: number;
   validationSuccesses: number;
   validationRecovered: boolean;
@@ -43,6 +48,9 @@ export async function hookSummary(
   latestTimestamp?: string;
   latestLifecycleSource?: SessionStartSource;
   latestLifecycleTimestamp?: string;
+  terminalEvents: number;
+  latestTerminalEvent?: "stop" | "session_end";
+  latestTerminalTimestamp?: string;
   latestCompactionTimestamp?: string;
   redundantRead?: RedundantReadSummary;
   activeFullFileReads: ActiveFullFileReadSummary[];
@@ -57,6 +65,10 @@ export async function hookSummary(
   let toolCalls = 0;
   let readToolCalls = 0;
   let successfulEditResults = 0;
+  let failedEditResults = 0;
+  let unvalidatedEditResultCount = 0;
+  let workContinuedAfterFailedEdit = false;
+  let failedEditOpen = false;
   let validationChecks = 0;
   let validationSuccesses = 0;
   let validationRecovered = false;
@@ -68,13 +80,19 @@ export async function hookSummary(
   let latestTimestamp: string | undefined;
   let latestLifecycleSource: SessionStartSource | undefined;
   let latestLifecycleTimestamp: string | undefined;
+  let terminalEvents = 0;
+  let latestTerminalEvent: "stop" | "session_end" | undefined;
+  let latestTerminalTimestamp: string | undefined;
   let latestCompactionTimestamp: string | undefined;
   const fullFileReadCounts = new Map<string, FileReadState>();
   let redundantRead: RedundantReadSummary | undefined;
+  const changedFileIdentityHashes = new Set<string>();
+  const unvalidatedChangedFileIdentityHashes = new Set<string>();
 
   for (const event of events) {
     const isCompaction = event.kind === "compaction";
     const isLifecycle = event.kind === "session_start";
+    const isTerminal = event.kind === "stop" || event.kind === "session_end";
     if (!isLifecycle) {
       latestTimestamp = !latestTimestamp || event.timestamp > latestTimestamp ? event.timestamp : latestTimestamp;
     }
@@ -87,6 +105,10 @@ export async function hookSummary(
       toolCalls = 0;
       readToolCalls = 0;
       successfulEditResults = 0;
+      failedEditResults = 0;
+      unvalidatedEditResultCount = 0;
+      workContinuedAfterFailedEdit = false;
+      failedEditOpen = false;
       validationChecks = 0;
       validationSuccesses = 0;
       validationRecovered = false;
@@ -95,14 +117,24 @@ export async function hookSummary(
       validationFailureOpen = false;
       failures.clear();
       fullFileReadCounts.clear();
+      changedFileIdentityHashes.clear();
+      unvalidatedChangedFileIdentityHashes.clear();
       redundantRead = undefined;
       safeEvents = [];
+    }
+    if (isTerminal && (!latestTerminalTimestamp || event.timestamp >= latestTerminalTimestamp)) {
+      terminalEvents += 1;
+      latestTerminalEvent = event.kind === "stop" ? "stop" : "session_end";
+      latestTerminalTimestamp = event.timestamp;
     }
     const safeEvent = safeToolResultEventFromHookEvent(event);
     if (safeEvent) {
       safeEvents.push(safeEvent);
     }
     if (event.kind === "tool_failure") {
+      if (failedEditOpen) {
+        workContinuedAfterFailedEdit = true;
+      }
       failedToolResults += 1;
       toolCalls += 1;
       if (isReadActivity(event)) {
@@ -115,11 +147,18 @@ export async function hookSummary(
       if (hasOpenUnvalidatedEdit) {
         unvalidatedEditToolSteps = (unvalidatedEditToolSteps || 0) + 1;
       }
+      if (isEditTool(event.toolName || "tool")) {
+        failedEditResults += 1;
+        failedEditOpen = true;
+      }
       const toolName = event.toolName || "tool";
       const key = failureKey(event);
       const existing = failures.get(key);
       failures.set(key, failureSummary(event, toolName, (existing?.count || 0) + 1));
     } else if (event.kind === "tool_success") {
+      if (failedEditOpen) {
+        workContinuedAfterFailedEdit = true;
+      }
       toolCalls += 1;
       const toolName = event.toolName || "tool";
       if (isReadActivity(event)) {
@@ -127,9 +166,12 @@ export async function hookSummary(
       }
       if (isEditTool(toolName)) {
         successfulEditResults += 1;
+        unvalidatedEditResultCount += 1;
         hasOpenUnvalidatedEdit = true;
         unvalidatedEditToolSteps = 0;
         if (event.fileIdentityHash) {
+          changedFileIdentityHashes.add(event.fileIdentityHash);
+          unvalidatedChangedFileIdentityHashes.add(event.fileIdentityHash);
           fullFileReadCounts.delete(event.fileIdentityHash);
           redundantRead = strongestActiveRedundantRead(fullFileReadCounts);
         }
@@ -140,6 +182,8 @@ export async function hookSummary(
         validationFailureOpen = false;
         hasOpenUnvalidatedEdit = false;
         unvalidatedEditToolSteps = undefined;
+        unvalidatedEditResultCount = 0;
+        unvalidatedChangedFileIdentityHashes.clear();
       } else if (hasOpenUnvalidatedEdit) {
         unvalidatedEditToolSteps = (unvalidatedEditToolSteps || 0) + 1;
       }
@@ -172,6 +216,11 @@ export async function hookSummary(
     toolCalls,
     readToolCalls,
     successfulEditResults,
+    failedEditResults,
+    unvalidatedEditResultCount,
+    changedFileIdentityCount: changedFileIdentityHashes.size,
+    unvalidatedChangedFileIdentityCount: unvalidatedChangedFileIdentityHashes.size,
+    workContinuedAfterFailedEdit,
     validationChecks,
     validationSuccesses,
     validationRecovered,
@@ -184,6 +233,9 @@ export async function hookSummary(
     latestTimestamp,
     latestLifecycleSource,
     latestLifecycleTimestamp,
+    terminalEvents,
+    latestTerminalEvent,
+    latestTerminalTimestamp,
     latestCompactionTimestamp,
     redundantRead,
     activeFullFileReads: activeFullFileReadSummaries(fullFileReadCounts)

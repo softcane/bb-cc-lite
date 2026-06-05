@@ -305,7 +305,51 @@ describe("parseTranscriptLines", () => {
     ]);
 
     expect(checked.hasUnvalidatedEdits).toBe(false);
+    expect(checked.unvalidatedEditResultCount).toBe(0);
+    expect(checked.unvalidatedChangedFileIdentityCount).toBe(0);
     expectNoPrivacySentinels(checked);
+  });
+
+  it("tracks unvalidated edit counts, changed file identities, failed edits, and terminal events safely", () => {
+    const firstPath = `/Users/private/${privacySentinels[3]}/src/first-secret.ts`;
+    const secondPath = `/Users/private/${privacySentinels[3]}/src/second-secret.ts`;
+    const summary = parseTranscriptLines([
+      ...mutationToolPair("edit-1", "Edit", firstPath),
+      ...mutationToolPair("write-1", "Write", secondPath),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", id: "edit-failed", name: "Edit", input: { file_path: firstPath } }]
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "edit-failed", is_error: true, content: privacySentinels[1] }]
+        }
+      }),
+      ...readToolPair("read-after-failed-edit", firstPath),
+      JSON.stringify({
+        timestamp: "2026-02-03T00:00:10.000Z",
+        hook_event_name: "SessionEnd"
+      })
+    ]);
+
+    expect(summary).toMatchObject({
+      successfulEditResults: 2,
+      failedEditResults: 1,
+      unvalidatedEditResultCount: 2,
+      changedFileIdentityCount: 2,
+      unvalidatedChangedFileIdentityCount: 2,
+      workContinuedAfterFailedEdit: true,
+      terminalEvents: 1,
+      latestTerminalEvent: "session_end"
+    });
+    expect(JSON.stringify(summary)).not.toContain(firstPath);
+    expect(JSON.stringify(summary)).not.toContain(secondPath);
+    expectNoPrivacySentinels(summary);
   });
 
   it("treats successful lint, typecheck, and build commands as edit validation", () => {

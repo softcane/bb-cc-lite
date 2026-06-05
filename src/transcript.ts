@@ -72,6 +72,10 @@ export function parseTranscriptLines(
   let toolCalls = 0;
   let readToolCalls = 0;
   let successfulEditResults = 0;
+  let failedEditResults = 0;
+  let unvalidatedEditResultCount = 0;
+  let workContinuedAfterFailedEdit = false;
+  let latestFailedEditResultStep: number | undefined;
   let validationChecks = 0;
   let validationSuccesses = 0;
   let toolRecoveryEvents = 0;
@@ -85,6 +89,9 @@ export function parseTranscriptLines(
   let cacheReadShare: CacheReadShareSummary | undefined;
   let latestTimestamp: string | undefined;
   let latestCompactionTimestamp: string | undefined;
+  let terminalEvents = 0;
+  let latestTerminalEvent: "stop" | "session_end" | undefined;
+  let latestTerminalTimestamp: string | undefined;
   let previousAssistantInputTokens: number | undefined;
   let toolResultsSincePreviousAssistantUsage = 0;
   let resetBoundarySincePreviousAssistantUsage = false;
@@ -92,6 +99,8 @@ export function parseTranscriptLines(
   let largestInputTokenJump: InputTokenJumpSummary | undefined;
   const fullFileReadCounts = new Map<string, FileReadState>();
   let redundantRead: RedundantReadSummary | undefined;
+  const changedFileIdentityHashes = new Set<string>();
+  const unvalidatedChangedFileIdentityHashes = new Set<string>();
 
   for (const line of lines) {
     let parsed: unknown;
@@ -143,6 +152,12 @@ export function parseTranscriptLines(
     } else if (compactionEvents > 0 && isPostCompactionActivity(entry, toolUses, toolResults)) {
       postCompactionActivity += 1;
     }
+    const terminalEvent = terminalEventKind(entry);
+    if (terminalEvent) {
+      terminalEvents += 1;
+      latestTerminalEvent = terminalEvent;
+      latestTerminalTimestamp = entryTimestamp || latestTerminalTimestamp;
+    }
 
     const assistantInputTokens = assistantMessageInputTokens(entry);
     if (assistantInputTokens !== undefined) {
@@ -165,6 +180,9 @@ export function parseTranscriptLines(
     }
 
     for (const toolUse of toolUses) {
+      if (latestFailedEditResultStep !== undefined) {
+        workContinuedAfterFailedEdit = true;
+      }
       toolCalls += 1;
       const identity = classifyToolIdentity(toolUse.name, toolUse.input, { basenameOnly: true, projectConfig: options.projectConfig });
       if (identity.isReadSearch) {
@@ -218,6 +236,11 @@ export function parseTranscriptLines(
         failureCounts.delete(key);
         if (meta.isEdit) {
           successfulEditResults += 1;
+          unvalidatedEditResultCount += 1;
+          if (meta.fileIdentityHash) {
+            changedFileIdentityHashes.add(meta.fileIdentityHash);
+            unvalidatedChangedFileIdentityHashes.add(meta.fileIdentityHash);
+          }
           hasUnvalidatedEdits = true;
           unvalidatedEditStep = toolResultStep;
           if (meta.fileIdentityHash) {
@@ -234,10 +257,19 @@ export function parseTranscriptLines(
           recentEditBeforeTest = false;
           hasUnvalidatedEdits = false;
           unvalidatedEditStep = undefined;
+          unvalidatedEditResultCount = 0;
+          unvalidatedChangedFileIdentityHashes.clear();
         }
         continue;
       }
+      if (latestFailedEditResultStep !== undefined && toolResultStep > latestFailedEditResultStep) {
+        workContinuedAfterFailedEdit = true;
+      }
       failedToolResults += 1;
+      if (meta.isEdit) {
+        failedEditResults += 1;
+        latestFailedEditResultStep = toolResultStep;
+      }
       const existing = failureCounts.get(key);
       failureCounts.set(key, failureSummary(meta, purpose, (existing?.count || 0) + 1));
       if (meta.name === "Bash" && purpose === "tests" && recentEditBeforeTest) {
@@ -265,6 +297,11 @@ export function parseTranscriptLines(
     toolCalls,
     readToolCalls,
     successfulEditResults,
+    failedEditResults,
+    unvalidatedEditResultCount,
+    changedFileIdentityCount: changedFileIdentityHashes.size,
+    unvalidatedChangedFileIdentityCount: unvalidatedChangedFileIdentityHashes.size,
+    workContinuedAfterFailedEdit,
     validationChecks,
     validationSuccesses,
     toolRecoveryEvents,
@@ -285,6 +322,9 @@ export function parseTranscriptLines(
     latestUsageTimestamp,
     cacheReadShare,
     latestTimestamp,
+    terminalEvents,
+    latestTerminalEvent,
+    latestTerminalTimestamp,
     latestCompactionTimestamp,
     redundantRead,
     activeFullFileReads: activeFullFileReadSummaries(fullFileReadCounts),
@@ -309,6 +349,11 @@ function emptySummary(pathReadable: boolean): TranscriptSummary {
     toolCalls: 0,
     readToolCalls: 0,
     successfulEditResults: 0,
+    failedEditResults: 0,
+    unvalidatedEditResultCount: 0,
+    changedFileIdentityCount: 0,
+    unvalidatedChangedFileIdentityCount: 0,
+    workContinuedAfterFailedEdit: false,
     validationChecks: 0,
     validationSuccesses: 0,
     toolRecoveryEvents: 0,
@@ -521,6 +566,17 @@ function isCompactionEvent(entry: Record<string, unknown>): boolean {
   const role = stringField(message?.role) || stringField(entry.role);
   const content = typeof entry.content === "string" ? entry.content : typeof message?.content === "string" ? message.content : "";
   return role === "system" && /\b(compact|compaction)\b/i.test(content);
+}
+
+function terminalEventKind(entry: Record<string, unknown>): "stop" | "session_end" | undefined {
+  const event = stringField(entry.hook_event_name) || stringField(entry.event) || stringField(entry.type);
+  if (event === "Stop" || event === "StopFailure" || event === "stop") {
+    return "stop";
+  }
+  if (event === "SessionEnd" || event === "session_end") {
+    return "session_end";
+  }
+  return undefined;
 }
 
 function isPostCompactionActivity(

@@ -58,9 +58,15 @@ export interface AuditFinding {
   savingsEstimateSource?: "measured" | "fallback";
 }
 
-interface TranscriptCandidate {
+export interface TranscriptCandidate {
   path: string;
   mtimeMs: number;
+}
+
+export interface AuditTranscriptCandidateResult {
+  scope: AuditReport["scope"];
+  recentLimit: number;
+  candidates: TranscriptCandidate[];
 }
 
 export interface AuditSavingsEstimate {
@@ -78,11 +84,7 @@ export interface FormatAuditReportOptions {
 
 export async function runAudit(options: AuditOptions = {}): Promise<AuditReport> {
   const recentLimit = normalizedRecentLimit(options.recent);
-  const candidates = options.transcriptPath
-    ? await directTranscriptCandidate(options.transcriptPath)
-    : options.allProjects
-      ? await allProjectTranscriptCandidates(options.homeDir, recentLimit)
-    : await projectTranscriptCandidates(options.homeDir, options.projectDir, recentLimit);
+  const { candidates } = await auditTranscriptCandidates(options);
   const findings: AuditFinding[] = [];
   let unreadableTranscripts = 0;
 
@@ -121,6 +123,20 @@ export async function runAudit(options: AuditOptions = {}): Promise<AuditReport>
     estimatedSavings,
     reportConfidence: confidence.confidence,
     reportConfidenceReason: confidence.reason
+  };
+}
+
+export async function auditTranscriptCandidates(options: AuditOptions = {}): Promise<AuditTranscriptCandidateResult> {
+  const recentLimit = normalizedRecentLimit(options.recent);
+  const candidates = options.transcriptPath
+    ? await directTranscriptCandidate(options.transcriptPath)
+    : options.allProjects
+      ? await allProjectTranscriptCandidates(options.homeDir, recentLimit)
+      : await projectTranscriptCandidates(options.homeDir, options.projectDir, recentLimit);
+  return {
+    scope: auditScope(options),
+    recentLimit,
+    candidates
   };
 }
 

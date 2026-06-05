@@ -128,6 +128,11 @@ export interface TranscriptSummary {
   toolCalls: number;
   readToolCalls: number;
   successfulEditResults?: number;
+  failedEditResults?: number;
+  unvalidatedEditResultCount?: number;
+  changedFileIdentityCount?: number;
+  unvalidatedChangedFileIdentityCount?: number;
+  workContinuedAfterFailedEdit?: boolean;
   validationChecks?: number;
   validationSuccesses?: number;
   toolRecoveryEvents?: number;
@@ -149,6 +154,9 @@ export interface TranscriptSummary {
   latestTimestamp?: string;
   latestLifecycleSource?: SessionStartSource;
   latestLifecycleTimestamp?: string;
+  terminalEvents?: number;
+  latestTerminalEvent?: Extract<HookEventKind, "stop" | "session_end">;
+  latestTerminalTimestamp?: string;
   latestCompactionTimestamp?: string;
   redundantRead?: RedundantReadSummary;
   activeFullFileReads?: ActiveFullFileReadSummary[];

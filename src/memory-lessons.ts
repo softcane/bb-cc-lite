@@ -113,7 +113,7 @@ export async function clearLessonMemory(options: { homeDir?: string; appHomePath
   await rm(join(options.appHomePath ?? appHome(options.homeDir), LESSON_MEMORY_DIR_NAME), { recursive: true, force: true });
 }
 
-async function readLessonMemory(options: LessonMemoryPathOptions): Promise<ProjectLessonMemory | undefined> {
+export async function readLessonMemory(options: LessonMemoryPathOptions): Promise<ProjectLessonMemory | undefined> {
   try {
     const path = lessonMemoryPath(options);
     const fileStat = await stat(path);

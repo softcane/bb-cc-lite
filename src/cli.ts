@@ -6,8 +6,10 @@ import {
   runDoctor
 } from "./doctor.js";
 import { formatAuditReport, runAudit } from "./audit.js";
+import { formatDeepAdvisoryReport, runDeepAdvisoryAudit } from "./deep-advisory.js";
 import { runBaselineRefresh } from "./baseline-refresh.js";
 import { handleHook } from "./hook-control.js";
+import { formatImproveReport, runImprove } from "./improve.js";
 import { installStatusLine, uninstallStatusLine, type InstallMode, type SettingsScope } from "./settings.js";
 import { readStdin } from "./status-input.js";
 import { createStatusLine } from "./statusline.js";
@@ -42,6 +44,9 @@ async function main(): Promise<void> {
       break;
     case "audit":
       await commandAudit(args);
+      break;
+    case "improve":
+      await commandImprove(args);
       break;
     case "baseline-refresh":
       await commandBaselineRefresh(args);
@@ -190,24 +195,59 @@ async function commandDoctor(args: ParsedArgs): Promise<void> {
 }
 
 async function commandAudit(args: ParsedArgs): Promise<void> {
+  validateAuditScopeFlags(args);
+  const options = {
+    projectDir: stringFlag(args, "project"),
+    homeDir: stringFlag(args, "home"),
+    transcriptPath: stringFlag(args, "transcript"),
+    allProjects: Boolean(args.flags["all-projects"]),
+    recent: numberFlag(args, "recent")
+  };
+  if (args.flags.deep) {
+    const report = await runDeepAdvisoryAudit(options);
+    if (args.flags.json) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+    console.log(formatDeepAdvisoryReport(report, { color: shouldUseColor() }));
+    return;
+  }
+  const report = await runAudit(options);
+  if (args.flags.json) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+  console.log(formatAuditReport(report, { color: shouldUseColor() }));
+}
+
+async function commandImprove(args: ParsedArgs): Promise<void> {
+  validateAuditScopeFlags(args);
+  if (args.flags.apply && args.flags.transcript) {
+    throw new Error("--apply cannot be combined with --transcript");
+  }
+  const report = await runImprove({
+    projectDir: stringFlag(args, "project"),
+    homeDir: stringFlag(args, "home"),
+    transcriptPath: stringFlag(args, "transcript"),
+    allProjects: Boolean(args.flags["all-projects"]),
+    recent: numberFlag(args, "recent"),
+    apply: Boolean(args.flags.apply),
+    global: Boolean(args.flags.global)
+  });
+  if (args.flags.json) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+  console.log(formatImproveReport(report));
+}
+
+function validateAuditScopeFlags(args: ParsedArgs): void {
   if (args.flags["all-projects"] && args.flags.transcript) {
     throw new Error("--all-projects cannot be combined with --transcript");
   }
   if (args.flags["all-projects"] && args.flags.project) {
     throw new Error("--all-projects cannot be combined with --project");
   }
-  const report = await runAudit({
-    projectDir: stringFlag(args, "project"),
-    homeDir: stringFlag(args, "home"),
-    transcriptPath: stringFlag(args, "transcript"),
-    allProjects: Boolean(args.flags["all-projects"]),
-    recent: numberFlag(args, "recent")
-  });
-  if (args.flags.json) {
-    console.log(JSON.stringify(report, null, 2));
-    return;
-  }
-  console.log(formatAuditReport(report, { color: shouldUseColor() }));
 }
 
 function shouldUseColor(): boolean {
@@ -291,7 +331,9 @@ function printHelp(): void {
 
 Usage:
   bb-cc-lite audit [--project <path>] [--all-projects] [--transcript <path>]
-                   [--recent <count>] [--json]
+                   [--recent <count>] [--deep] [--json]
+  bb-cc-lite improve [--project <path>] [--all-projects] [--transcript <path>]
+                     [--recent <count>] [--global] [--apply] [--json]
   bb-cc-lite install [--scope local|project|user] [--observe-only] [--guard]
                      [--replace] [--no-learn]
   bb-cc-lite statusline
@@ -303,6 +345,9 @@ Usage:
 
 Learning:
   audit scans recent local Claude JSONL history without installing bb-cc-lite.
+  audit --deep prints a multi-finding offline advisory report.
+  improve suggests Claude instruction updates from repeated safe findings.
+  improve --apply writes only marked bb-cc-lite blocks in CLAUDE.md.
   --all-projects scans newest local transcripts across ~/.claude/projects.
   install enables coach mode and builds a small local baseline by default.
   --observe-only keeps display and local telemetry without Claude-facing feedback.

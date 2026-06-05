@@ -293,6 +293,109 @@ describe("CLI behavior characterization", () => {
     }
   });
 
+  it("audit --deep prints a multi-finding advisory report without private text", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const transcriptPath = join(
+        workspace.homeDir,
+        ".claude",
+        "projects",
+        claudeProjectDirectoryName(workspace.projectDir),
+        "session.jsonl"
+      );
+      await writeTranscript(transcriptPath, [...repeatedFailedTestTranscript(3), ...unvalidatedEditTranscript()]);
+
+      const result = await runCli(["audit", "--deep", "--project", workspace.projectDir, "--home", workspace.homeDir], {
+        env: cliEnv(workspace)
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("bb deep advisory audit");
+      expect(result.stdout).toContain("same test failed 3x without a code change");
+      expect(result.stdout).toContain("code changed and no later check ran");
+      expect(result.stdout).not.toContain(transcriptPath);
+      expectNoPrivacySentinels(result.stdout);
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("audit --deep --json returns safe machine-readable findings", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const transcriptPath = join(
+        workspace.homeDir,
+        ".claude",
+        "projects",
+        claudeProjectDirectoryName(workspace.projectDir),
+        "session.jsonl"
+      );
+      await writeTranscript(transcriptPath, repeatedFailedTestTranscript(3));
+
+      const result = await runCli(["audit", "--deep", "--json", "--project", workspace.projectDir, "--home", workspace.homeDir], {
+        env: cliEnv(workspace)
+      });
+      const parsed = JSON.parse(result.stdout) as {
+        kind: string;
+        findings: Array<{ reasonCode: string; evidence: string }>;
+      };
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(parsed.kind).toBe("deep-advisory");
+      expect(parsed.findings).toContainEqual(
+        expect.objectContaining({
+          reasonCode: "blind_validation_retry",
+          evidence: "same test failed 3x without a code change"
+        })
+      );
+      expect(result.stdout).not.toContain(transcriptPath);
+      expectNoPrivacySentinels(result.stdout);
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("improve --json returns review-only instruction suggestions", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const transcriptDir = join(
+        workspace.homeDir,
+        ".claude",
+        "projects",
+        claudeProjectDirectoryName(workspace.projectDir)
+      );
+      await writeTranscript(join(transcriptDir, "one.jsonl"), unvalidatedEditTranscript());
+      await writeTranscript(join(transcriptDir, "two.jsonl"), unvalidatedEditTranscript());
+
+      const result = await runCli(["improve", "--json", "--project", workspace.projectDir, "--home", workspace.homeDir], {
+        env: cliEnv(workspace)
+      });
+      const parsed = JSON.parse(result.stdout) as {
+        kind: string;
+        mode: string;
+        suggestions: Array<{ scope: string; target: string; instruction: string }>;
+      };
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(parsed.kind).toBe("improve");
+      expect(parsed.mode).toBe("review");
+      expect(parsed.suggestions).toContainEqual(
+        expect.objectContaining({
+          scope: "project",
+          target: "project_claude",
+          instruction: "After changing code, run the smallest relevant check."
+        })
+      );
+      await expect(pathExists(join(workspace.projectDir, "CLAUDE.md"))).resolves.toBe(false);
+      expectNoPrivacySentinels(result.stdout);
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
   it("install preserves a custom statusline by default and skips learning", async () => {
     const workspace = await createTempWorkspace();
     try {

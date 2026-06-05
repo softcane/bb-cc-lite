@@ -146,11 +146,49 @@ npx --yes bb-cc-lite audit --all-projects --recent 200
 
 `audit` scans recent local Claude Code JSONL history and reports where `bb-cc-lite` would have warned. It highlights repeated retries and risky session patterns; it only shows duplicate retry cost/time when the transcript contains usable measured metadata. It does not install a status line or hooks. Use `--all-projects` only when you want to inspect newest transcripts across local Claude projects.
 
+## Deep Audit And Improve
+
+The deep offline flow is:
+
+```bash
+bb-cc-lite audit --deep --project .
+bb-cc-lite improve --project .
+bb-cc-lite improve --all-projects --global
+```
+
+The idea is simple:
+
+1. `audit --deep` finds risky session paths.
+2. `improve` turns repeated safe lessons into suggested Claude instruction updates.
+3. You review the suggestions before anything is written.
+
+`why` stays small. It explains the latest stored decision and does not edit instruction files.
+
+`improve` splits lessons by scope:
+
+- Global lessons go to the global Claude instruction file, such as `~/.claude/CLAUDE.md`.
+- Project lessons go to the current project's Claude instruction file, such as `./CLAUDE.md`.
+- One-off session notes stay in the report and are not written.
+
+Before applying a lesson, review:
+
+- Did this happen more than once?
+- Is this a global habit, or only true for this project?
+- Is the lesson short enough for Claude to follow?
+- Does it avoid raw prompts, tool output, commands, file contents, and local paths?
+- Could this instruction make Claude too cautious or too broad?
+
+The default is review-only. `--apply` writes only a marked `bb-cc-lite` block after review.
+
+`bb-cc-lite` is still a Claude Code tool. If a repo also uses `AGENTS.md`, `improve` can print an AGENTS-style suggestion, but automatic `AGENTS.md` editing should stay out of the first version.
+
 ## Useful Commands
 
 ```bash
 bb-cc-lite audit --project .
+bb-cc-lite audit --deep --project .
 bb-cc-lite audit --all-projects --recent 200
+bb-cc-lite improve --project .
 bb-cc-lite why
 bb-cc-lite doctor
 bb-cc-lite doctor --baseline
