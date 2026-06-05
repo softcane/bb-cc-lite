@@ -229,7 +229,7 @@ describe("CLI behavior characterization", () => {
     }
   });
 
-  it("audit scans project history without installing into Claude settings", async () => {
+  it("audit scans project history with deep advisory by default without installing into Claude settings", async () => {
     const workspace = await createTempWorkspace();
     try {
       const transcriptPath = join(
@@ -247,16 +247,41 @@ describe("CLI behavior characterization", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("bb deep advisory audit");
+      expect(result.stdout).toContain("Sessions with findings: 1");
+      expect(result.stdout).toContain("Stop");
+      expect(result.stdout).toContain("same test failed 3x without a code change");
+      expect(result.stdout).toContain("Report confidence: high");
+      await expect(pathExists(join(workspace.projectDir, ".claude", "settings.local.json"))).resolves.toBe(false);
+      expectNoPrivacySentinels(result.stdout);
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("audit --basic keeps the one-finding retrospective report available", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const transcriptPath = join(
+        workspace.homeDir,
+        ".claude",
+        "projects",
+        claudeProjectDirectoryName(workspace.projectDir),
+        "session.jsonl"
+      );
+      await writeTranscript(transcriptPath, repeatedFailedTestTranscript(3));
+
+      const result = await runCli(["audit", "--basic", "--project", workspace.projectDir, "--home", workspace.homeDir], {
+        env: cliEnv(workspace)
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
       expect(result.stdout).toContain("bb retrospective audit");
       expect(result.stdout).toContain("Would have helped: 1 session");
-      expect(result.stdout).toContain("Stop");
       expect(result.stdout).toContain("same test failed 3x without a fix");
       expect(result.stdout).toContain("Repeated retries spotted: 2");
       expect(result.stdout).toContain("Cost/time: not estimated");
-      expect(result.stdout).not.toContain("Estimated saved:");
-      expect(result.stdout).toContain("Report confidence: high");
-      expect(result.stdout).toContain("npx --yes bb-cc-lite install --scope local");
-      await expect(pathExists(join(workspace.projectDir, ".claude", "settings.local.json"))).resolves.toBe(false);
       expectNoPrivacySentinels(result.stdout);
     } finally {
       await removeTempWorkspace(workspace);
@@ -281,9 +306,8 @@ describe("CLI behavior characterization", () => {
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain("Scope: all local project transcripts, newest 10");
       expect(result.stdout).toContain("Scanned: 2 Claude Code sessions");
-      expect(result.stdout).toContain("Would have helped: 1 session");
-      expect(result.stdout).toContain("Repeated retries spotted: 2");
-      expect(result.stdout).toContain("Cost/time: not estimated");
+      expect(result.stdout).toContain("Sessions with findings: 1");
+      expect(result.stdout).toContain("same test failed 3x without a code change");
       expect(result.stdout).not.toContain("Estimated saved:");
       expect(result.stdout).not.toContain(privateProjectName);
       await expect(pathExists(join(workspace.projectDir, ".claude", "settings.local.json"))).resolves.toBe(false);

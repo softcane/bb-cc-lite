@@ -137,28 +137,28 @@ Supported install scopes are `local`, `project`, and `user`. Use `local` for the
 
 ## Try Before Installing
 
-Run a retrospective audit against recent local Claude Code history:
+Run a deep advisory audit against recent local Claude Code history:
 
 ```bash
 npx --yes bb-cc-lite audit --project .
 npx --yes bb-cc-lite audit --all-projects --recent 200
 ```
 
-`audit` scans recent local Claude Code JSONL history and reports where `bb-cc-lite` would have warned. It highlights repeated retries and risky session patterns; it only shows duplicate retry cost/time when the transcript contains usable measured metadata. It does not install a status line or hooks. Use `--all-projects` only when you want to inspect newest transcripts across local Claude projects.
+`audit` scans recent local Claude Code JSONL history and reports concrete risky paths. It highlights unchecked edits, blind retries, failed edits, repeated reads, recovery after change, compaction risk, and session-end risk. It does not install a status line or hooks. Use `--all-projects` only when you want to inspect newest transcripts across local Claude projects. Use `--basic` for the older one-finding retrospective audit.
 
-## Deep Audit And Improve
+## Audit And Improve
 
-The deep offline flow is:
+The offline flow is:
 
 ```bash
-bb-cc-lite audit --deep --project .
+bb-cc-lite audit --project .
 bb-cc-lite improve --project .
 bb-cc-lite improve --all-projects --global
 ```
 
 The idea is simple:
 
-1. `audit --deep` finds risky session paths.
+1. `audit` finds risky session paths.
 2. `improve` turns repeated safe lessons into suggested Claude instruction updates.
 3. You review the suggestions before anything is written.
 
@@ -180,14 +180,14 @@ Before applying a lesson, review:
 
 The default is review-only. `--apply` writes only a marked `bb-cc-lite` block after review.
 
-`bb-cc-lite` is still a Claude Code tool. If a repo also uses `AGENTS.md`, `improve` can print an AGENTS-style suggestion, but automatic `AGENTS.md` editing should stay out of the first version.
+`bb-cc-lite` is still a Claude Code tool. `improve` does not edit `AGENTS.md` in this version.
 
 ## Useful Commands
 
 ```bash
 bb-cc-lite audit --project .
-bb-cc-lite audit --deep --project .
 bb-cc-lite audit --all-projects --recent 200
+bb-cc-lite audit --basic --project .
 bb-cc-lite improve --project .
 bb-cc-lite why
 bb-cc-lite doctor

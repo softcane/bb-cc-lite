@@ -196,6 +196,9 @@ async function commandDoctor(args: ParsedArgs): Promise<void> {
 
 async function commandAudit(args: ParsedArgs): Promise<void> {
   validateAuditScopeFlags(args);
+  if (args.flags.deep && args.flags.basic) {
+    throw new Error("--deep cannot be combined with --basic");
+  }
   const options = {
     projectDir: stringFlag(args, "project"),
     homeDir: stringFlag(args, "home"),
@@ -203,7 +206,7 @@ async function commandAudit(args: ParsedArgs): Promise<void> {
     allProjects: Boolean(args.flags["all-projects"]),
     recent: numberFlag(args, "recent")
   };
-  if (args.flags.deep) {
+  if (!args.flags.basic) {
     const report = await runDeepAdvisoryAudit(options);
     if (args.flags.json) {
       console.log(JSON.stringify(report, null, 2));
@@ -331,7 +334,7 @@ function printHelp(): void {
 
 Usage:
   bb-cc-lite audit [--project <path>] [--all-projects] [--transcript <path>]
-                   [--recent <count>] [--deep] [--json]
+                   [--recent <count>] [--deep] [--basic] [--json]
   bb-cc-lite improve [--project <path>] [--all-projects] [--transcript <path>]
                      [--recent <count>] [--global] [--apply] [--json]
   bb-cc-lite install [--scope local|project|user] [--observe-only] [--guard]
@@ -344,8 +347,8 @@ Usage:
   bb-cc-lite uninstall [--scope local|project|user] [--force]
 
 Learning:
-  audit scans recent local Claude JSONL history without installing bb-cc-lite.
-  audit --deep prints a multi-finding offline advisory report.
+  audit scans recent local Claude JSONL history and prints a deep advisory report.
+  audit --basic prints the older one-finding retrospective audit.
   improve suggests Claude instruction updates from repeated safe findings.
   improve --apply writes only marked bb-cc-lite blocks in CLAUDE.md.
   --all-projects scans newest local transcripts across ~/.claude/projects.
