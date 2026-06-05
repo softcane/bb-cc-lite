@@ -61,6 +61,32 @@ describe("audit", () => {
     }
   });
 
+  it("finds project transcripts stored under Claude Code sanitized directory names", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-audit-sanitized-dir-"));
+    try {
+      const homeDir = join(tempDir, "home");
+      const projectDir = join(tempDir, "project_with_underscore");
+      const transcriptDir = join(homeDir, ".claude", "projects", claudeSanitizedProjectDirectoryName(projectDir));
+      await writeTranscript(join(transcriptDir, "session.jsonl"), repeatedFailedTestTranscript(3));
+
+      const report = await runAudit({ homeDir, projectDir });
+
+      expect(report).toMatchObject({
+        scope: "project",
+        sessionsScanned: 1,
+        sessionsWithFindings: 1,
+        reportConfidence: "high"
+      });
+      expect(report.findings[0]).toMatchObject({
+        reasonCode: "blind_retry_loop",
+        evidence: "same test failed 3x without a fix"
+      });
+      expectNoPrivacySentinels(report);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps a no-finding audit explicit and low confidence for a small sample", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-audit-empty-"));
     try {
@@ -184,6 +210,10 @@ async function writeTranscript(path: string, lines: string[]): Promise<void> {
 
 function claudeProjectDirectoryName(projectDir: string): string {
   return resolve(projectDir).replaceAll(/[\\/]/gu, "-");
+}
+
+function claudeSanitizedProjectDirectoryName(projectDir: string): string {
+  return resolve(projectDir).replaceAll(/[^A-Za-z0-9.-]/gu, "-");
 }
 
 function repeatedFailedTestTranscript(count: number): string[] {

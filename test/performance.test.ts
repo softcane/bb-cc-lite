@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
+import { runDeepAdvisoryAudit } from "../src/deep-advisory.js";
 import { createStatusLine } from "../src/statusline.js";
 import { parseTranscriptTail } from "../src/transcript.js";
 import { pathExists, setIsolatedEnv } from "./helpers/temp.js";
@@ -37,6 +38,38 @@ describe("large transcript performance", () => {
       expect(summary.bytesRead).toBeLessThanOrEqual(512 * 1024);
       expect(summary.linesRead).toBeGreaterThan(100);
       expect(elapsedMs).toBeLessThan(300);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps direct deep advisory bounded on large JSONL input", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-deep-perf-"));
+    try {
+      const transcriptPath = join(tempDir, "large-deep.jsonl");
+      const filler = JSON.stringify({
+        timestamp: "2026-05-18T20:00:00.000Z",
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "BB_CC_LITE_RAW_PROMPT_SENTINEL" }]
+        }
+      });
+      const repeat = Math.ceil((10 * 1024 * 1024) / (filler.length + 1));
+      await writeFile(
+        transcriptPath,
+        `${Array.from({ length: repeat }, () => filler).join("\n")}\n${privacyFailureTail().join("\n")}\n`,
+        "utf8"
+      );
+
+      const startedAt = performance.now();
+      const report = await runDeepAdvisoryAudit({ transcriptPath });
+      const elapsedMs = performance.now() - startedAt;
+
+      expect(report.sessionsScanned).toBe(1);
+      expect(report.findings).toContainEqual(expect.objectContaining({ reasonCode: "blind_validation_retry" }));
+      expect(elapsedMs).toBeLessThan(1000);
+      expectNoPrivacySentinels(report);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

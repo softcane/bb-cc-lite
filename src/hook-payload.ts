@@ -70,7 +70,6 @@ export function parseHookPayload(
       category: identity.category,
       identityHash: identity.identityHash,
       fileIdentityHash: fileIdentity?.fileIdentityHash,
-      safeFileLabel: fileIdentity?.safeFileLabel,
       ...(identity.displayName === "Read" ? { readKind: readKindFromInput(toolInput) } : {})
     };
   }

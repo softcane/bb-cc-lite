@@ -1111,8 +1111,7 @@ function redundantReadEvidence(redundantRead: TranscriptSummary["redundantRead"]
   if (!redundantRead) {
     return "same file reread";
   }
-  const label = redundantRead.safeFileLabel ? ` (${redundantRead.safeFileLabel})` : "";
-  return `same file reread ${formatFailureCount(redundantRead.unchangedFullFileReadCount)}${label}`;
+  return `same file reread ${formatFailureCount(redundantRead.unchangedFullFileReadCount)}`;
 }
 
 function strongestCrossedInputTokenJump(transcript: TranscriptSummary): TranscriptSummary["latestInputTokenJump"] {

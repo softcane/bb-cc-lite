@@ -1,10 +1,11 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { readBaselineForProject } from "./baseline.js";
+import { readBaselineForProject, type PersonalBaseline } from "./baseline.js";
 import { assertAdvisoryPrivacy, runDeepAdvisoryAudit, type DeepAdvisoryFinding, type DeepAdvisoryReport } from "./deep-advisory.js";
-import { readLessonMemory } from "./memory-lessons.js";
+import { readLessonMemory, type LessonCard } from "./memory-lessons.js";
 import { projectKeyFromPath } from "./paths.js";
+import { recoveryInsight, type FailureRecoveryCategory } from "./recovery-stats.js";
 import type { AuditOptions } from "./audit.js";
 import type { DecisionConfidence } from "./types.js";
 
@@ -17,6 +18,7 @@ type LessonKey = "unchecked_edits" | "blind_validation_retry" | "write_failed" |
 
 export interface ImproveOptions extends AuditOptions {
   apply?: boolean;
+  cleanup?: boolean;
   global?: boolean;
   now?: Date;
   appHomePath?: string;
@@ -34,6 +36,16 @@ export interface ImproveSuggestion {
     sessions: number;
     projects: number;
     findings: number;
+    memoryLessons: number;
+  };
+  baselineNote?: string;
+  review: {
+    repeated: string;
+    scope: string;
+    target: string;
+    safety: string;
+    caution: string;
+    apply: string;
   };
   note: string;
 }
@@ -42,13 +54,13 @@ export interface ImproveApplyResult {
   target: Exclude<ImproveTarget, "session_report">;
   changed: boolean;
   backupCreated: boolean;
-  blockAction: "created" | "updated" | "unchanged";
+  blockAction: "created" | "updated" | "removed" | "unchanged";
   suggestionIds: string[];
 }
 
 export interface ImproveReport {
   kind: "improve";
-  mode: "review" | "apply";
+  mode: "review" | "apply" | "cleanup";
   deepReportConfidence: DecisionConfidence;
   baselineSource: "project" | "personal" | "none";
   suggestions: ImproveSuggestion[];
@@ -61,22 +73,43 @@ interface LessonGroup {
   findings: DeepAdvisoryFinding[];
   sessions: Set<number>;
   projects: Set<string>;
+  safeCategories: Set<FailureRecoveryCategory>;
   memoryEvidence?: {
     failures: number;
     sessions: number;
+    lessons: number;
   };
 }
 
+interface BaselineSuggestionNote {
+  note: string;
+  confidence: DecisionConfidence;
+}
+
 export async function runImprove(options: ImproveOptions = {}): Promise<ImproveReport> {
-  const deepReport = await runDeepAdvisoryAudit(options);
   const baseline = await readBaselineForProject({
     projectDir: options.projectDir,
     homeDir: options.homeDir,
     appHomePath: options.appHomePath
   });
+  if (options.cleanup) {
+    const report: ImproveReport = {
+      kind: "improve",
+      mode: "cleanup",
+      deepReportConfidence: "low",
+      baselineSource: baseline.source,
+      suggestions: [],
+      applied: await cleanupInstructionBlocks(options),
+      privacyValidated: true
+    };
+    assertAdvisoryPrivacy(report);
+    return report;
+  }
+
+  const deepReport = await runDeepAdvisoryAudit(options);
   const groups = await improvementGroups(deepReport, options);
   const suggestions = [...groups.values()]
-    .map((group) => suggestionFromGroup(group, deepReport, options))
+    .map((group) => suggestionFromGroup(group, deepReport, options, baseline.baseline))
     .filter((suggestion): suggestion is ImproveSuggestion => Boolean(suggestion))
     .sort((left, right) => suggestionScore(right) - suggestionScore(left) || left.id.localeCompare(right.id));
   const applied = options.apply ? await applySuggestions(suggestions, options) : [];
@@ -96,11 +129,13 @@ export async function runImprove(options: ImproveOptions = {}): Promise<ImproveR
 export function formatImproveReport(report: ImproveReport): string {
   assertAdvisoryPrivacy(report);
   const lines: string[] = [];
-  lines.push(report.mode === "apply" ? "bb improve applied" : "bb improve suggestions");
-  lines.push(`Mode: ${report.mode === "apply" ? "apply" : "review only"}`);
+  lines.push(report.mode === "cleanup" ? "bb improve cleanup" : report.mode === "apply" ? "bb improve applied" : "bb improve suggestions");
+  lines.push(`Mode: ${report.mode === "cleanup" ? "cleanup" : report.mode === "apply" ? "apply" : "review only"}`);
   lines.push(`Baseline source: ${report.baselineSource}`);
   lines.push("");
-  if (report.suggestions.length === 0) {
+  if (report.mode === "cleanup") {
+    lines.push("Suggestions: cleanup mode does not scan or create suggestions.");
+  } else if (report.suggestions.length === 0) {
     lines.push("Suggestions: none strong enough to write.");
   } else {
     lines.push("Suggestions:");
@@ -109,23 +144,38 @@ export function formatImproveReport(report: ImproveReport): string {
         `${suggestion.scope.padEnd(7)} ${suggestion.confidence.padEnd(7)} ${targetLabel(suggestion.target)}: ${suggestion.instruction}`
       );
       lines.push(
-        `        evidence: ${suggestion.evidence.sessions} sessions, ${suggestion.evidence.projects} project groups, ${suggestion.evidence.findings} findings`
+        `        evidence: ${suggestion.evidence.sessions} sessions, ${suggestion.evidence.projects} project groups, ${suggestion.evidence.findings} findings, ${suggestion.evidence.memoryLessons} memory lessons`
       );
+      if (suggestion.baselineNote) {
+        lines.push(`        baseline: ${suggestion.baselineNote}`);
+      }
+      lines.push(`        review: ${suggestion.review.repeated}`);
+      lines.push(`        review: ${suggestion.review.scope}`);
+      lines.push(`        review: ${suggestion.review.target}`);
+      lines.push(`        review: ${suggestion.review.safety}`);
+      lines.push(`        review: ${suggestion.review.caution}`);
+      lines.push(`        review: ${suggestion.review.apply}`);
       lines.push(`        ${suggestion.note}`);
     }
   }
-  if (report.applied.length > 0) {
+  if (report.mode === "apply" || report.mode === "cleanup") {
     lines.push("");
-    lines.push("Applied:");
-    for (const applied of report.applied) {
-      lines.push(
-        `${targetLabel(applied.target)}: ${applied.blockAction}; backup ${applied.backupCreated ? "created" : "not needed"}`
-      );
+    lines.push(report.mode === "cleanup" ? "Cleaned:" : "Applied:");
+    if (report.applied.length === 0) {
+      lines.push("none; no writable global/project suggestions met the evidence threshold.");
+    } else {
+      for (const applied of report.applied) {
+        lines.push(
+          `${targetLabel(applied.target)}: ${applied.blockAction}; backup ${applied.backupCreated ? "created" : "not needed"}`
+        );
+      }
     }
   }
   lines.push("");
   lines.push("Privacy: suggestions use safe categories only. No commands, paths, prompts, tool output, or file contents are written.");
-  lines.push("Project validation command patterns belong in .bb-cc-lite.json, not CLAUDE.md.");
+  if (report.suggestions.some((suggestion) => suggestion.lessonKey === "blind_validation_retry")) {
+    lines.push("Project validation command patterns belong in .bb-cc-lite.json, not CLAUDE.md.");
+  }
   lines.push("AGENTS.md is not edited in this version.");
   const output = lines.join("\n");
   assertAdvisoryPrivacy(output);
@@ -144,11 +194,15 @@ async function improvementGroups(report: DeepAdvisoryReport, options: ImproveOpt
       lessonKey,
       findings: [],
       sessions: new Set<number>(),
-      projects: new Set<string>()
+      projects: new Set<string>(),
+      safeCategories: new Set<FailureRecoveryCategory>()
     };
     group.findings.push(finding);
     group.sessions.add(finding.session);
     group.projects.add(projectBySession.get(finding.session) || "transcript");
+    for (const category of safeCategoriesForFinding(finding)) {
+      group.safeCategories.add(category);
+    }
     groups.set(lessonKey, group);
   }
 
@@ -156,19 +210,30 @@ async function improvementGroups(report: DeepAdvisoryReport, options: ImproveOpt
   if (projectDir) {
     const projectKey = projectKeyFromPath(projectDir);
     const memory = await readLessonMemory({ projectKey, homeDir: options.homeDir, appHomePath: options.appHomePath });
-    const validationLesson = memory?.lessons
-      .filter((lesson) => lesson.reasonCode === "validation_repeated" && lesson.evidenceCounts.failures >= 3)
-      .sort((left, right) => right.evidenceCounts.failures - left.evidenceCounts.failures)[0];
-    if (validationLesson) {
-      const group = groups.get("blind_validation_retry") || {
-        lessonKey: "blind_validation_retry",
+    const now = options.now ?? new Date();
+    for (const lesson of memory?.lessons.filter((candidate) => !lessonExpired(candidate, now)) || []) {
+      const lessonKey = lessonKeyForMemory(lesson);
+      if (!lessonKey || lesson.evidenceCounts.failures < 3) {
+        continue;
+      }
+      const group = groups.get(lessonKey) || {
+        lessonKey,
         findings: [],
         sessions: new Set<number>(),
-        projects: new Set<string>()
+        projects: new Set<string>(),
+        safeCategories: new Set<FailureRecoveryCategory>()
       };
       group.projects.add(projectKey);
-      group.memoryEvidence = validationLesson.evidenceCounts;
-      groups.set("blind_validation_retry", group);
+      const category = failureCategoryFromLesson(lesson);
+      if (category) {
+        group.safeCategories.add(category);
+      }
+      group.memoryEvidence = {
+        failures: Math.max(group.memoryEvidence?.failures || 0, lesson.evidenceCounts.failures),
+        sessions: Math.max(group.memoryEvidence?.sessions || 0, lesson.evidenceCounts.sessions),
+        lessons: (group.memoryEvidence?.lessons || 0) + 1
+      };
+      groups.set(lessonKey, group);
     }
   }
   return groups;
@@ -177,7 +242,8 @@ async function improvementGroups(report: DeepAdvisoryReport, options: ImproveOpt
 function suggestionFromGroup(
   group: LessonGroup,
   report: DeepAdvisoryReport,
-  options: ImproveOptions
+  options: ImproveOptions,
+  baseline: PersonalBaseline | undefined
 ): ImproveSuggestion | undefined {
   const sessions = Math.max(group.sessions.size, group.memoryEvidence?.sessions || 0);
   const findings = Math.max(group.findings.length, group.memoryEvidence?.failures || 0);
@@ -188,19 +254,31 @@ function suggestionFromGroup(
   }
   const target = targetForScope(scope);
   const writable = target !== "session_report" && (scope === "global" || report.scope === "project");
+  const baselineNote = baselineNoteForGroup(group, baseline, findings);
   return {
     id: `${scope}:${group.lessonKey}`,
     scope,
     target,
     writable,
-    confidence: suggestionConfidence(scope, sessions, findings, projects),
+    confidence: suggestionConfidence(scope, sessions, findings, projects, baselineNote),
     lessonKey: group.lessonKey,
     instruction: instructionForLesson(group.lessonKey),
     evidence: {
       sessions,
       projects,
-      findings
+      findings,
+      memoryLessons: group.memoryEvidence?.lessons || 0
     },
+    baselineNote: baselineNote?.note,
+    review: reviewForSuggestion({
+      scope,
+      target,
+      writable,
+      sessions,
+      projects,
+      findings,
+      baselineNote: baselineNote?.note
+    }),
     note: noteForSuggestion(scope, writable)
   };
 }
@@ -235,7 +313,7 @@ function suggestionScope(args: {
   if (args.globalRequested && (args.projects >= 2 || args.sessions >= 5)) {
     return "global";
   }
-  if (args.sessions >= 2 || args.findings >= 3) {
+  if (args.sessions >= 2) {
     return "project";
   }
   if (args.findings > 0) {
@@ -254,7 +332,16 @@ function targetForScope(scope: ImproveScope): ImproveTarget {
   return "session_report";
 }
 
-function suggestionConfidence(scope: ImproveScope, sessions: number, findings: number, projects: number): DecisionConfidence {
+function suggestionConfidence(
+  scope: ImproveScope,
+  sessions: number,
+  findings: number,
+  projects: number,
+  baselineNote: BaselineSuggestionNote | undefined
+): DecisionConfidence {
+  if (baselineNote?.confidence === "high" && scope !== "session") {
+    return "high";
+  }
   if (scope === "global" && projects >= 2) {
     return "high";
   }
@@ -262,6 +349,185 @@ function suggestionConfidence(scope: ImproveScope, sessions: number, findings: n
     return "high";
   }
   return scope === "session" ? "low" : "medium";
+}
+
+function safeCategoriesForFinding(finding: DeepAdvisoryFinding): FailureRecoveryCategory[] {
+  const fromDetails = finding.evidenceDetails
+    .filter((detail) => detail.kind === "category" && detail.label === "safe category")
+    .flatMap((detail) => failureCategory(detail.value));
+  if (fromDetails.length > 0) {
+    return fromDetails;
+  }
+  switch (finding.reasonCode) {
+    case "code_change_unvalidated":
+    case "many_edits_unvalidated":
+    case "many_changed_files_unvalidated":
+    case "write_failed":
+    case "write_failed_then_continued":
+      return ["edit"];
+    case "redundant_read":
+      return ["read"];
+    case "blind_validation_retry":
+      return ["tests"];
+    case "compaction_with_open_risk":
+    case "session_end_with_open_risk":
+    case "validation_recovered_after_change":
+      return [];
+  }
+}
+
+function lessonKeyForMemory(lesson: LessonCard): LessonKey | undefined {
+  switch (lesson.reasonCode) {
+    case "validation_repeated":
+      return "blind_validation_retry";
+    case "unchecked_edits":
+      return "unchecked_edits";
+    case "write_failed":
+      return "write_failed";
+    case "context_pressure":
+      return "context_pressure";
+    case "redundant_read":
+      return "redundant_read";
+  }
+}
+
+function lessonExpired(lesson: LessonCard, now: Date): boolean {
+  const decayAt = Date.parse(lesson.decayAt);
+  return !Number.isFinite(decayAt) || decayAt <= now.getTime();
+}
+
+function failureCategoryFromLesson(lesson: LessonCard): FailureRecoveryCategory | undefined {
+  return failureCategory(lesson.safeCategory)[0];
+}
+
+function failureCategory(value: unknown): FailureRecoveryCategory[] {
+  if (
+    value === "tests" ||
+    value === "lint" ||
+    value === "typecheck" ||
+    value === "build" ||
+    value === "read" ||
+    value === "grep" ||
+    value === "glob" ||
+    value === "ls" ||
+    value === "edit" ||
+    value === "mcp" ||
+    value === "tool"
+  ) {
+    return [value];
+  }
+  return [];
+}
+
+function baselineNoteForGroup(
+  group: LessonGroup,
+  baseline: PersonalBaseline | undefined,
+  findings: number
+): BaselineSuggestionNote | undefined {
+  if (!baseline) {
+    return undefined;
+  }
+
+  if (group.lessonKey === "unchecked_edits") {
+    const editValidation = baseline.editValidation;
+    if (!editValidation) {
+      return undefined;
+    }
+    const total = editValidation.editsFollowedByValidation + editValidation.editsWithoutValidation;
+    if (total < 5) {
+      return undefined;
+    }
+    return {
+      note: `selected baseline saw ${editValidation.editsWithoutValidation} of ${total} edit sessions without later validation`,
+      confidence: total >= 10 ? "high" : "medium"
+    };
+  }
+
+  if (group.lessonKey === "redundant_read") {
+    const readHeavySessions = baseline.activity?.readHeavySessions || 0;
+    if (readHeavySessions < 5) {
+      return undefined;
+    }
+    return {
+      note: `selected baseline saw ${readHeavySessions} read-heavy sessions`,
+      confidence: baseline.activity?.confidence === "high" ? "high" : "medium"
+    };
+  }
+
+  if (group.lessonKey === "context_pressure") {
+    const seen = Math.max(
+      baseline.scenarios.repeated_failure.seen,
+      baseline.scenarios.validation_command_loop.seen,
+      baseline.outcomes.stopLike.sessionEndedInFailureLoop
+    );
+    if (seen < 5) {
+      return undefined;
+    }
+    return {
+      note: `selected baseline saw ${seen} sessions with unresolved loop or stop risk`,
+      confidence: seen >= 10 ? "high" : "medium"
+    };
+  }
+
+  const category = bestRecoveryCategory(group);
+  if (!category) {
+    return undefined;
+  }
+  const insight = recoveryInsight(baseline, category, Math.max(2, Math.min(5, findings)));
+  return insight
+    ? {
+        note: insight.baselineNote,
+        confidence: insight.confidence
+      }
+    : undefined;
+}
+
+function bestRecoveryCategory(group: LessonGroup): FailureRecoveryCategory | undefined {
+  const priority: FailureRecoveryCategory[] = ["tests", "lint", "typecheck", "build", "edit", "read", "tool"];
+  for (const category of priority) {
+    if (group.safeCategories.has(category)) {
+      return category;
+    }
+  }
+  return group.safeCategories.values().next().value;
+}
+
+function reviewForSuggestion(args: {
+  scope: ImproveScope;
+  target: ImproveTarget;
+  writable: boolean;
+  sessions: number;
+  projects: number;
+  findings: number;
+  baselineNote?: string;
+}): ImproveSuggestion["review"] {
+  return {
+    repeated:
+      args.sessions >= 2
+        ? `evidence is repeated across ${args.sessions} independent sessions`
+        : `evidence is session-only with ${args.findings} derived findings`,
+    scope: scopeReview(args.scope, args.sessions, args.projects),
+    target:
+      args.target === "session_report"
+        ? "target is this report only; no instruction file is selected"
+        : `target is the ${targetLabel(args.target)} managed block`,
+    safety:
+      args.baselineNote === undefined
+        ? "uses safe categories, counts, booleans, and hashes only"
+        : "uses safe categories, counts, booleans, hashes, and aggregate baseline facts only",
+    caution: "instruction is short; review that it is not broader than the repeated behavior",
+    apply: args.writable ? "--apply may write only the marked bb-cc-lite block" : "review-only in this scan mode"
+  };
+}
+
+function scopeReview(scope: ImproveScope, sessions: number, projects: number): string {
+  if (scope === "global") {
+    return `scope is global because evidence spans ${projects} project groups or ${sessions} sessions`;
+  }
+  if (scope === "project") {
+    return `scope is project because evidence repeated inside one project across ${sessions} sessions`;
+  }
+  return "scope is session because evidence is useful but weak";
 }
 
 function instructionForLesson(lessonKey: LessonKey): string {
@@ -317,6 +583,55 @@ async function applySuggestions(suggestions: ImproveSuggestion[], options: Impro
   return results;
 }
 
+async function cleanupInstructionBlocks(options: ImproveOptions): Promise<ImproveApplyResult[]> {
+  const targets: Array<{ target: Exclude<ImproveTarget, "session_report">; path: string }> = options.global
+    ? [{ target: "global_claude", path: globalClaudePath(options.homeDir) }]
+    : [{ target: "project_claude", path: projectClaudePath(options.projectDir) }];
+  const results: ImproveApplyResult[] = [];
+  for (const target of targets) {
+    results.push(await cleanupInstructionBlock({ ...target, now: options.now }));
+  }
+  return results;
+}
+
+async function cleanupInstructionBlock(options: {
+  target: Exclude<ImproveTarget, "session_report">;
+  path: string;
+  now?: Date;
+}): Promise<ImproveApplyResult> {
+  const before = await readTextFile(options.path);
+  if (!before.exists) {
+    return {
+      target: options.target,
+      changed: false,
+      backupCreated: false,
+      blockAction: "unchanged",
+      suggestionIds: []
+    };
+  }
+  const next = removeBlock(before.text);
+  if (next.text === before.text) {
+    return {
+      target: options.target,
+      changed: false,
+      backupCreated: false,
+      blockAction: "unchanged",
+      suggestionIds: []
+    };
+  }
+  await mkdir(dirname(options.path), { recursive: true });
+  const backupPath = backupInstructionPath(options.path, options.now ?? new Date());
+  await writeFile(backupPath, before.text, "utf8");
+  await writeFile(options.path, next.text, "utf8");
+  return {
+    target: options.target,
+    changed: true,
+    backupCreated: true,
+    blockAction: "removed",
+    suggestionIds: []
+  };
+}
+
 async function applyInstructionBlock(options: {
   target: Exclude<ImproveTarget, "session_report">;
   path: string;
@@ -350,6 +665,20 @@ async function applyInstructionBlock(options: {
     backupCreated,
     blockAction: next.action,
     suggestionIds: options.suggestions.map((suggestion) => suggestion.id)
+  };
+}
+
+function removeBlock(existing: string): { text: string; action: "removed" | "unchanged" } {
+  const start = existing.indexOf(BLOCK_START);
+  const end = existing.indexOf(BLOCK_END);
+  if (start < 0 || end <= start) {
+    return { text: existing, action: "unchanged" };
+  }
+  const afterEnd = end + BLOCK_END.length;
+  const suffix = existing.slice(afterEnd).replace(/^\n/u, "");
+  return {
+    text: `${existing.slice(0, start)}${suffix}`,
+    action: "removed"
   };
 }
 

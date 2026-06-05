@@ -14,7 +14,6 @@ import type {
 interface FileReadState {
   count: number;
   lastSeenToolCall: number;
-  safeFileLabel?: string;
 }
 
 export async function latestDecision(sessionKey?: string, storePath?: string): Promise<StoredDecision | undefined> {
@@ -201,8 +200,7 @@ export async function hookSummary(
       const existing = fullFileReadCounts.get(event.fileIdentityHash);
       fullFileReadCounts.set(event.fileIdentityHash, {
         count: (existing?.count || 0) + 1,
-        lastSeenToolCall: toolCalls,
-        safeFileLabel: event.safeFileLabel || existing?.safeFileLabel
+        lastSeenToolCall: toolCalls
       });
       redundantRead = strongestActiveRedundantRead(fullFileReadCounts);
     }
@@ -296,8 +294,7 @@ function strongestActiveRedundantRead(readCounts: Map<string, FileReadState>): R
       strongest = {
         fileIdentityHash,
         unchangedFullFileReadCount: state.count,
-        latestState: state.count >= 3 ? "Stop" : "Careful",
-        safeFileLabel: state.safeFileLabel
+        latestState: state.count >= 3 ? "Stop" : "Careful"
       };
       strongestLastSeen = state.lastSeenToolCall;
     }
@@ -308,7 +305,6 @@ function strongestActiveRedundantRead(readCounts: Map<string, FileReadState>): R
 function activeFullFileReadSummaries(readCounts: Map<string, FileReadState>): ActiveFullFileReadSummary[] {
   return [...readCounts.entries()].map(([fileIdentityHash, state]) => ({
     fileIdentityHash,
-    unchangedFullFileReadCount: state.count,
-    safeFileLabel: state.safeFileLabel
+    unchangedFullFileReadCount: state.count
   }));
 }

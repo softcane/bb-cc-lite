@@ -172,12 +172,11 @@ describe("signals and renderer", () => {
       transcript({
         toolCalls: 2,
         readToolCalls: 2,
-        redundantRead: {
-          fileIdentityHash: "safe-file-hash",
-          unchangedFullFileReadCount: 2,
-          latestState: "Careful",
-          safeFileLabel: "secret.ts"
-        }
+      redundantRead: {
+        fileIdentityHash: "safe-file-hash",
+        unchangedFullFileReadCount: 2,
+        latestState: "Careful"
+      }
       })
     );
     const rendered = stripAnsi(renderStatusLine(decision, 90));
@@ -187,12 +186,13 @@ describe("signals and renderer", () => {
       reasonCode: "redundant_read",
       diagnosisCode: "redundant_read_loop",
       diagnosis: "same file reread twice",
-      primaryEvidence: "same file reread twice (secret.ts)",
+      primaryEvidence: "same file reread twice",
       action: "ask Claude to use existing context before rereading"
     });
     expect(rendered).toContain("bb: Careful | same file reread twice");
     expect(visibleLength(rendered)).toBeLessThanOrEqual(90);
     expect(rendered).not.toContain(rawPath);
+    expect(rendered).not.toContain("secret.ts");
   });
 
   it("stops on the third unchanged full-file Read with short why wording", () => {
@@ -202,12 +202,11 @@ describe("signals and renderer", () => {
       transcript({
         toolCalls: 3,
         readToolCalls: 3,
-        redundantRead: {
-          fileIdentityHash: "safe-file-hash",
-          unchangedFullFileReadCount: 3,
-          latestState: "Stop",
-          safeFileLabel: "secret.ts"
-        }
+      redundantRead: {
+        fileIdentityHash: "safe-file-hash",
+        unchangedFullFileReadCount: 3,
+        latestState: "Stop"
+      }
       })
     );
     const rendered = stripAnsi(renderStatusLine(decision, 120));
@@ -217,11 +216,12 @@ describe("signals and renderer", () => {
       reasonCode: "redundant_read_loop",
       diagnosisCode: "redundant_read_loop",
       diagnosis: "same file reread 3x",
-      primaryEvidence: "same file reread 3x (secret.ts)",
+      primaryEvidence: "same file reread 3x",
       impact: "Claude is rereading an unchanged file",
       action: "stop and ask why the same file is needed again"
     });
     expect(rendered).toContain("bb: Stop | why: same file reread 3x");
+    expect(rendered).not.toContain("secret.ts");
     expect(visibleLength(rendered)).toBeLessThanOrEqual(120);
     expect(rendered).not.toContain(rawPath);
   });

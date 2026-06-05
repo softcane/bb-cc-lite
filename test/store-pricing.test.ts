@@ -199,8 +199,7 @@ describe("store and pricing", () => {
           redundantRead: {
             fileIdentityHash: hashValue(rawPath) || "safe-file-hash",
             unchangedFullFileReadCount: 3,
-            latestState: "Stop",
-            safeFileLabel: "secret.ts"
+            latestState: "Stop"
           }
         })
       );
@@ -209,7 +208,7 @@ describe("store and pricing", () => {
 
       const storeText = await readFile(storePath, "utf8");
       expect(storeText).toContain("redundant_read_loop");
-      expect(storeText).toContain("secret.ts");
+      expect(storeText).not.toContain("secret.ts");
       expect(storeText).not.toContain(rawPath);
     } finally {
       await rm(tempDir, { recursive: true, force: true });

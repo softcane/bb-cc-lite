@@ -57,7 +57,6 @@ export interface RedundantReadSummary {
   fileIdentityHash: string;
   unchangedFullFileReadCount: number;
   latestState: Extract<DecisionState, "Careful" | "Stop">;
-  safeFileLabel?: string;
 }
 
 export type ReadKind = "full" | "partial";
@@ -65,7 +64,6 @@ export type ReadKind = "full" | "partial";
 export interface ActiveFullFileReadSummary {
   fileIdentityHash: string;
   unchangedFullFileReadCount: number;
-  safeFileLabel?: string;
 }
 
 export interface InputTokenJumpSummary {
@@ -189,7 +187,6 @@ export interface DerivedHookEvent {
   category?: "MCP";
   identityHash?: string;
   fileIdentityHash?: string;
-  safeFileLabel?: string;
   readKind?: ReadKind;
   toolCount?: number;
   feedbackAction?: "coach" | "guard";

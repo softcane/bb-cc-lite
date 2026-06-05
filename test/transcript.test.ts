@@ -131,10 +131,10 @@ describe("parseTranscriptLines", () => {
     expect(summary.redundantRead).toMatchObject({
       fileIdentityHash: expect.stringMatching(/^[a-f0-9]{16}$/u),
       unchangedFullFileReadCount: 2,
-      latestState: "Careful",
-      safeFileLabel: "secret.ts"
+      latestState: "Careful"
     });
     expect(JSON.stringify(summary)).not.toContain(rawPath);
+    expect(JSON.stringify(summary)).not.toContain("secret.ts");
     expectNoPrivacySentinels(summary);
   });
 
@@ -148,10 +148,10 @@ describe("parseTranscriptLines", () => {
 
     expect(summary.redundantRead).toMatchObject({
       unchangedFullFileReadCount: 3,
-      latestState: "Stop",
-      safeFileLabel: "secret.ts"
+      latestState: "Stop"
     });
     expect(JSON.stringify(summary)).not.toContain(rawPath);
+    expect(JSON.stringify(summary)).not.toContain("secret.ts");
     expectNoPrivacySentinels(summary);
   });
 

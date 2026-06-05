@@ -10,7 +10,8 @@ export const LESSON_MEMORY_VERSION = 1;
 const LESSON_MEMORY_MAX_BYTES = 64 * 1024;
 const LESSON_DECAY_MS = 30 * 24 * 60 * 60 * 1000;
 
-type LessonSafeCategory = "tests" | "lint" | "typecheck" | "build";
+type LessonSafeCategory = "tests" | "lint" | "typecheck" | "build" | "edit" | "read" | "context";
+type LessonReasonCode = "validation_repeated" | "unchecked_edits" | "write_failed" | "context_pressure" | "redundant_read";
 
 export interface LessonEvidenceCounts {
   failures: number;
@@ -21,7 +22,7 @@ export interface LessonCard {
   schema: typeof LESSON_CARD_SCHEMA;
   lessonId: string;
   projectKey: string;
-  reasonCode: string;
+  reasonCode: LessonReasonCode;
   safeCategory: LessonSafeCategory;
   confidence: DecisionConfidence;
   evidenceCounts: LessonEvidenceCounts;
@@ -57,32 +58,25 @@ export async function recordLessonFromSummary(options: {
   appHomePath?: string;
   now?: Date;
 }): Promise<LessonCard | undefined> {
-  const candidate = lessonCandidate(options.projectKey, options.summary, options.now ?? new Date());
-  if (!candidate) {
+  const candidates = lessonCandidates(options.projectKey, options.summary, options.now ?? new Date());
+  if (candidates.length === 0) {
     return undefined;
   }
 
   const memoryPath = lessonMemoryPath(options);
   const existing = await readLessonMemory({ ...options, projectKey: options.projectKey });
-  const lessons = existing?.lessons.filter((lesson) => lesson.lessonId !== candidate.lessonId) ?? [];
-  const previous = existing?.lessons.find((lesson) => lesson.lessonId === candidate.lessonId);
-  const next: LessonCard = {
-    ...candidate,
-    createdAt: previous?.createdAt || candidate.createdAt,
-    evidenceCounts: {
-      failures: Math.max(previous?.evidenceCounts.failures || 0, candidate.evidenceCounts.failures),
-      sessions: Math.max(previous?.evidenceCounts.sessions || 0, candidate.evidenceCounts.sessions)
-    }
-  };
+  const candidateIds = new Set(candidates.map((candidate) => candidate.lessonId));
+  const lessons = existing?.lessons.filter((lesson) => !candidateIds.has(lesson.lessonId)) ?? [];
+  const nextLessons = candidates.map((candidate) => mergeLessonCandidate(candidate, existing?.lessons));
   const memory: ProjectLessonMemory = {
     schema: LESSON_MEMORY_SCHEMA,
     version: LESSON_MEMORY_VERSION,
     projectKey: options.projectKey,
-    updatedAt: next.updatedAt,
-    lessons: [...lessons, next].sort((left, right) => left.lessonId.localeCompare(right.lessonId))
+    updatedAt: candidates[0]?.updatedAt ?? new Date().toISOString(),
+    lessons: [...lessons, ...nextLessons].sort((left, right) => left.lessonId.localeCompare(right.lessonId))
   };
   await writeLessonMemory(memory, memoryPath);
-  return next;
+  return nextLessons.sort((left, right) => lessonPriority(right) - lessonPriority(left) || left.lessonId.localeCompare(right.lessonId))[0];
 }
 
 export async function lessonContextForProject(options: {
@@ -101,7 +95,12 @@ export async function lessonContextForProject(options: {
     await writeLessonMemory({ ...memory, updatedAt: now.toISOString(), lessons: active }, lessonMemoryPath(options));
   }
   const selected = active
-    .filter((lesson) => lesson.confidence !== "low" && lesson.evidenceCounts.failures >= 3)
+    .filter(
+      (lesson) =>
+        lesson.reasonCode === "validation_repeated" &&
+        lesson.confidence !== "low" &&
+        lesson.evidenceCounts.failures >= 3
+    )
     .sort((left, right) => right.evidenceCounts.failures - left.evidenceCounts.failures)[0];
   if (!selected) {
     return undefined;
@@ -135,30 +134,139 @@ async function writeLessonMemory(memory: ProjectLessonMemory, path: string): Pro
   await rename(tempPath, path);
 }
 
-function lessonCandidate(projectKey: string, summary: TranscriptSummary, now: Date): LessonCard | undefined {
+function lessonCandidates(projectKey: string, summary: TranscriptSummary, now: Date): LessonCard[] {
   assertProjectKey(projectKey);
-  const strongest = strongestValidationFailure(summary);
-  if (!strongest || strongest.failures < 2) {
-    return undefined;
-  }
+  const candidates: LessonCard[] = [];
   const timestamp = now.toISOString();
-  const confidence: DecisionConfidence = strongest.failures >= 3 ? "high" : "low";
+
+  const strongest = strongestValidationFailure(summary);
+  if (strongest && strongest.failures >= 2) {
+    candidates.push(
+      lessonCard({
+        projectKey,
+        timestamp,
+        reasonCode: "validation_repeated",
+        safeCategory: strongest.safeCategory,
+        evidenceCounts: { failures: strongest.failures, sessions: 1 },
+        confidence: strongest.failures >= 3 ? "high" : "low",
+        wordingKey: `validation_repeated:${strongest.safeCategory}`
+      })
+    );
+  }
+
+  if (summary.hasUnvalidatedEdits && (summary.unvalidatedEditResultCount || 0) >= 3) {
+    candidates.push(
+      lessonCard({
+        projectKey,
+        timestamp,
+        reasonCode: "unchecked_edits",
+        safeCategory: "edit",
+        evidenceCounts: { failures: summary.unvalidatedEditResultCount || 1, sessions: 1 },
+        confidence: (summary.unvalidatedEditResultCount || 0) >= 5 ? "high" : "medium",
+        wordingKey: "unchecked_edits:edit"
+      })
+    );
+  }
+
+  if ((summary.failedEditResults || 0) > 0) {
+    candidates.push(
+      lessonCard({
+        projectKey,
+        timestamp,
+        reasonCode: "write_failed",
+        safeCategory: "edit",
+        evidenceCounts: { failures: summary.failedEditResults || 1, sessions: 1 },
+        confidence: summary.workContinuedAfterFailedEdit ? "medium" : "low",
+        wordingKey: "write_failed:edit"
+      })
+    );
+  }
+
+  if ((summary.redundantRead?.unchangedFullFileReadCount || 0) >= 3) {
+    candidates.push(
+      lessonCard({
+        projectKey,
+        timestamp,
+        reasonCode: "redundant_read",
+        safeCategory: "read",
+        evidenceCounts: { failures: summary.redundantRead?.unchangedFullFileReadCount || 3, sessions: 1 },
+        confidence: "medium",
+        wordingKey: "redundant_read:read"
+      })
+    );
+  }
+
+  if (((summary.compactionEvents || 0) > 0 || (summary.terminalEvents || 0) > 0) && hasOpenRisk(summary)) {
+    candidates.push(
+      lessonCard({
+        projectKey,
+        timestamp,
+        reasonCode: "context_pressure",
+        safeCategory: "context",
+        evidenceCounts: { failures: (summary.compactionEvents || 0) + (summary.terminalEvents || 0), sessions: 1 },
+        confidence: "medium",
+        wordingKey: "context_pressure:context"
+      })
+    );
+  }
+
+  return candidates;
+}
+
+function lessonCard(args: {
+  projectKey: string;
+  timestamp: string;
+  reasonCode: LessonReasonCode;
+  safeCategory: LessonSafeCategory;
+  evidenceCounts: LessonEvidenceCounts;
+  confidence: DecisionConfidence;
+  wordingKey: string;
+}): LessonCard {
   return {
     schema: LESSON_CARD_SCHEMA,
-    lessonId: `validation_repeated:${strongest.safeCategory}`,
-    projectKey,
-    reasonCode: "validation_repeated",
-    safeCategory: strongest.safeCategory,
-    confidence,
-    evidenceCounts: {
-      failures: strongest.failures,
-      sessions: 1
-    },
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    decayAt: new Date(now.getTime() + LESSON_DECAY_MS).toISOString(),
-    wordingKey: `validation_repeated:${strongest.safeCategory}`
+    lessonId: `${args.reasonCode}:${args.safeCategory}`,
+    projectKey: args.projectKey,
+    reasonCode: args.reasonCode,
+    safeCategory: args.safeCategory,
+    confidence: args.confidence,
+    evidenceCounts: args.evidenceCounts,
+    createdAt: args.timestamp,
+    updatedAt: args.timestamp,
+    decayAt: new Date(Date.parse(args.timestamp) + LESSON_DECAY_MS).toISOString(),
+    wordingKey: args.wordingKey
   };
+}
+
+function mergeLessonCandidate(candidate: LessonCard, existing: LessonCard[] | undefined): LessonCard {
+  const previous = existing?.find((lesson) => lesson.lessonId === candidate.lessonId);
+  return {
+    ...candidate,
+    createdAt: previous?.createdAt || candidate.createdAt,
+    confidence: strongerConfidence(previous?.confidence, candidate.confidence),
+    evidenceCounts: {
+      failures: Math.max(previous?.evidenceCounts.failures || 0, candidate.evidenceCounts.failures),
+      sessions: Math.min(999, (previous?.evidenceCounts.sessions || 0) + candidate.evidenceCounts.sessions)
+    }
+  };
+}
+
+function hasOpenRisk(summary: TranscriptSummary): boolean {
+  return Boolean(
+    summary.hasUnvalidatedEdits ||
+      (summary.blindRetry?.blindRetryFailureCount || 0) >= 2 ||
+      (summary.failedEditResults || 0) > 0 ||
+      (summary.redundantRead?.unchangedFullFileReadCount || 0) >= 3
+  );
+}
+
+function strongerConfidence(left: DecisionConfidence | undefined, right: DecisionConfidence): DecisionConfidence {
+  const score = (value: DecisionConfidence | undefined): number => (value === "high" ? 2 : value === "medium" ? 1 : 0);
+  return score(left) > score(right) ? left! : right;
+}
+
+function lessonPriority(lesson: Pick<LessonCard, "confidence" | "evidenceCounts">): number {
+  const confidenceScore = lesson.confidence === "high" ? 100 : lesson.confidence === "medium" ? 50 : 0;
+  return confidenceScore + lesson.evidenceCounts.failures;
 }
 
 function strongestValidationFailure(summary: TranscriptSummary): { safeCategory: LessonSafeCategory; failures: number } | undefined {
@@ -185,7 +293,15 @@ function strongestValidationFailure(summary: TranscriptSummary): { safeCategory:
 }
 
 function lessonCategory(value: string | undefined): LessonSafeCategory | undefined {
-  return value === "tests" || value === "lint" || value === "typecheck" || value === "build" ? value : undefined;
+  return value === "tests" ||
+    value === "lint" ||
+    value === "typecheck" ||
+    value === "build" ||
+    value === "edit" ||
+    value === "read" ||
+    value === "context"
+    ? value
+    : undefined;
 }
 
 function isExpired(lesson: LessonCard, now: Date): boolean {
@@ -224,7 +340,7 @@ function isLessonCard(value: unknown, projectKey: string): value is LessonCard {
     root.schema !== LESSON_CARD_SCHEMA ||
     root.projectKey !== projectKey ||
     typeof root.lessonId !== "string" ||
-    typeof root.reasonCode !== "string" ||
+    !isReasonCode(root.reasonCode) ||
     !lessonCategory(String(root.safeCategory)) ||
     !isConfidence(root.confidence) ||
     typeof root.wordingKey !== "string" ||
@@ -240,6 +356,16 @@ function isLessonCard(value: unknown, projectKey: string): value is LessonCard {
       hasOnlyKeys(counts, EVIDENCE_KEYS) &&
       isNonNegativeInteger(counts.failures) &&
       isNonNegativeInteger(counts.sessions)
+  );
+}
+
+function isReasonCode(value: unknown): value is LessonReasonCode {
+  return (
+    value === "validation_repeated" ||
+    value === "unchecked_edits" ||
+    value === "write_failed" ||
+    value === "context_pressure" ||
+    value === "redundant_read"
   );
 }
 

@@ -140,18 +140,18 @@ Supported install scopes are `local`, `project`, and `user`. Use `local` for the
 Run a deep advisory audit against recent local Claude Code history:
 
 ```bash
-npx --yes bb-cc-lite audit --project .
-npx --yes bb-cc-lite audit --all-projects --recent 200
+npx --yes bb-cc-lite audit --deep --project .
+npx --yes bb-cc-lite audit --deep --all-projects --recent 200
 ```
 
-`audit` scans recent local Claude Code JSONL history and reports concrete risky paths. It highlights unchecked edits, blind retries, failed edits, repeated reads, recovery after change, compaction risk, and session-end risk. It does not install a status line or hooks. Use `--all-projects` only when you want to inspect newest transcripts across local Claude projects. Use `--basic` for the older one-finding retrospective audit.
+`audit --deep` scans recent local Claude Code JSONL history and reports concrete risky paths. It highlights unchecked edits, blind retries, failed edits, repeated reads, recovery after change, compaction risk, and session-end risk. It does not install a status line or hooks. Use `--all-projects` only when you want to inspect newest transcripts across local Claude projects. Plain `audit` keeps the compact one-finding retrospective report available.
 
 ## Audit And Improve
 
 The offline flow is:
 
 ```bash
-bb-cc-lite audit --project .
+bb-cc-lite audit --deep --project .
 bb-cc-lite improve --project .
 bb-cc-lite improve --all-projects --global
 ```
@@ -178,7 +178,7 @@ Before applying a lesson, review:
 - Does it avoid raw prompts, tool output, commands, file contents, and local paths?
 - Could this instruction make Claude too cautious or too broad?
 
-The default is review-only. `--apply` writes only a marked `bb-cc-lite` block after review.
+The default is review-only. `--apply` writes only a marked `bb-cc-lite` block after review. `improve --cleanup` removes a marked bb-managed block after creating a backup.
 
 `bb-cc-lite` is still a Claude Code tool. `improve` does not edit `AGENTS.md` in this version.
 
@@ -186,9 +186,11 @@ The default is review-only. `--apply` writes only a marked `bb-cc-lite` block af
 
 ```bash
 bb-cc-lite audit --project .
-bb-cc-lite audit --all-projects --recent 200
-bb-cc-lite audit --basic --project .
+bb-cc-lite audit --deep --project .
+bb-cc-lite audit --deep --all-projects --recent 200
 bb-cc-lite improve --project .
+bb-cc-lite improve --cleanup --project .
+bb-cc-lite learn --project .
 bb-cc-lite why
 bb-cc-lite doctor
 bb-cc-lite doctor --baseline
@@ -196,7 +198,9 @@ bb-cc-lite unlearn
 bb-cc-lite uninstall --scope local
 ```
 
-`audit` scans recent history without installing.
+`audit` scans recent history without installing. Use `audit --deep` for the multi-finding advisory report.
+
+`learn` refreshes the same safe aggregate baseline that install creates, without installing anything.
 
 `why` explains the latest stored status line decision and recent feedback outcomes when available. It reads the local derived event store; it does not reopen transcripts to expose raw content. Interactive `why` output is lightly colored; set `NO_COLOR=1` or `BB_CC_LITE_COLOR=0` for plain text.
 
@@ -297,11 +301,11 @@ bb: Careful | estimated cost $2.25 | ask Claude to summarize progress before con
 bb: Careful | session ran 1h plus 9 non-read tool calls, no check or recovery seen | pause and ask what changed before continuing
 bb: Careful | ctx 83% | ask Claude for a 6-bullet handoff before more work
 bb: Careful | compaction event seen | ask Claude to restate current goal and next 3 steps
-bb: Careful | same file reread twice (auth.ts) | ask Claude to use existing context before rereading
+bb: Careful | same file reread twice | ask Claude to use existing context before rereading
 bb: Careful | single tool result added ~12,400 tokens | compact or narrow the next step
 bb: Careful | cache reuse dropped from 68% to 29% | keep the next prompt narrow
 bb: Careful | tests failed twice; usually passes after one targeted fix | inspect first failure
-bb: Stop | why: same file reread 3x (auth.ts) | do: stop and ask why the same file is needed again
+bb: Stop | why: same file reread 3x | do: stop and ask why the same file is needed again
 bb: Stop | why: same test retried after feedback | do: inspect first failure
 bb: Stop | why: test loop rarely recovered after 3 failures | do: stop retrying and inspect first failure
 ```

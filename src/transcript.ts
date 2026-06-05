@@ -35,7 +35,6 @@ interface ToolMeta {
 interface FileReadState {
   count: number;
   lastSeenToolCall: number;
-  safeFileLabel?: string;
 }
 
 export async function parseTranscriptTail(
@@ -193,8 +192,7 @@ export function parseTranscriptLines(
         const existing = fullFileReadCounts.get(fileIdentity.fileIdentityHash);
         fullFileReadCounts.set(fileIdentity.fileIdentityHash, {
           count: (existing?.count || 0) + 1,
-          lastSeenToolCall: toolCalls,
-          safeFileLabel: fileIdentity.safeFileLabel || existing?.safeFileLabel
+          lastSeenToolCall: toolCalls
         });
         redundantRead = strongestActiveRedundantRead(fullFileReadCounts);
       }
@@ -422,8 +420,7 @@ function strongestActiveRedundantRead(readCounts: Map<string, FileReadState>): R
       strongest = {
         fileIdentityHash,
         unchangedFullFileReadCount: state.count,
-        latestState: state.count >= 3 ? "Stop" : "Careful",
-        safeFileLabel: state.safeFileLabel
+        latestState: state.count >= 3 ? "Stop" : "Careful"
       };
       strongestLastSeen = state.lastSeenToolCall;
     }
@@ -434,8 +431,7 @@ function strongestActiveRedundantRead(readCounts: Map<string, FileReadState>): R
 function activeFullFileReadSummaries(readCounts: Map<string, FileReadState>): ActiveFullFileReadSummary[] {
   return [...readCounts.entries()].map(([fileIdentityHash, state]) => ({
     fileIdentityHash,
-    unchangedFullFileReadCount: state.count,
-    safeFileLabel: state.safeFileLabel
+    unchangedFullFileReadCount: state.count
   }));
 }
 

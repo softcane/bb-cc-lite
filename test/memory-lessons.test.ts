@@ -67,6 +67,56 @@ describe("lesson memory", () => {
     }
   });
 
+  it("stores broader safe lesson cards without injecting them into live SessionStart context", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-lessons-broad-"));
+    try {
+      const projectDir = join(tempDir, "project");
+      const projectKey = projectKeyFromPath(projectDir);
+
+      await recordLessonFromSummary({
+        appHomePath: tempDir,
+        projectKey,
+        summary: broadRiskSummary(),
+        now: new Date("2026-05-23T00:00:00.000Z")
+      });
+      await recordLessonFromSummary({
+        appHomePath: tempDir,
+        projectKey,
+        summary: broadRiskSummary(),
+        now: new Date("2026-05-23T00:01:00.000Z")
+      });
+
+      const text = await readFile(lessonMemoryPath({ appHomePath: tempDir, projectKey }), "utf8");
+      const parsed = JSON.parse(text) as {
+        lessons: Array<{
+          reasonCode: string;
+          safeCategory: string;
+          evidenceCounts: { failures: number; sessions: number };
+        }>;
+      };
+
+      expect(parsed.lessons.map((lesson) => lesson.reasonCode).sort()).toEqual([
+        "context_pressure",
+        "redundant_read",
+        "unchecked_edits",
+        "write_failed"
+      ]);
+      expect(parsed.lessons).toContainEqual(
+        expect.objectContaining({
+          reasonCode: "unchecked_edits",
+          safeCategory: "edit",
+          evidenceCounts: expect.objectContaining({ sessions: 2 })
+        })
+      );
+      await expect(
+        lessonContextForProject({ appHomePath: tempDir, projectKey, now: new Date("2026-05-23T00:02:00.000Z") })
+      ).resolves.toBeUndefined();
+      expectNoPrivacySentinels(text, projectDir);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not inject sparse, stale, or corrupt lesson memory", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-lessons-sparse-"));
     try {
@@ -257,6 +307,38 @@ function repeatedTestFailureSummary(count: number): TranscriptSummary {
     validationRecovered: false,
     compactionEvents: 0,
     postCompactionActivity: 0,
+    usage: {}
+  };
+}
+
+function broadRiskSummary(): TranscriptSummary {
+  return {
+    pathReadable: true,
+    bytesRead: 0,
+    linesRead: 0,
+    malformedLines: 0,
+    toolCalls: 8,
+    readToolCalls: 3,
+    successfulEditResults: 3,
+    failedEditResults: 1,
+    unvalidatedEditResultCount: 3,
+    changedFileIdentityCount: 3,
+    unvalidatedChangedFileIdentityCount: 3,
+    workContinuedAfterFailedEdit: true,
+    validationChecks: 0,
+    failedToolResults: 1,
+    repeatedFailures: [],
+    editTestLoopFailures: 0,
+    hasUnvalidatedEdits: true,
+    validationRecovered: false,
+    compactionEvents: 1,
+    postCompactionActivity: 2,
+    terminalEvents: 1,
+    redundantRead: {
+      fileIdentityHash: "0123456789abcdef",
+      unchangedFullFileReadCount: 3,
+      latestState: "Careful"
+    },
     usage: {}
   };
 }

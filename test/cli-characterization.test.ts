@@ -41,7 +41,12 @@ let cliPath: string | undefined;
 
 beforeAll(async () => {
   compiledRoot = await mkdtemp(join(tmpdir(), "bb-cc-lite-cli-build-"));
-  await writeFile(join(compiledRoot, "package.json"), '{"type":"module"}\n', "utf8");
+  const repoPackage = JSON.parse(await readFile(join(repoRoot, "package.json"), "utf8")) as { version?: string };
+  await writeFile(
+    join(compiledRoot, "package.json"),
+    `${JSON.stringify({ type: "module", version: repoPackage.version }, null, 2)}\n`,
+    "utf8"
+  );
   const distDir = join(compiledRoot, "dist");
   const result = await runProcess(process.execPath, [tscPath, "-p", "tsconfig.json", "--outDir", distDir], {
     cwd: repoRoot
@@ -59,6 +64,33 @@ afterAll(async () => {
 });
 
 describe("CLI behavior characterization", () => {
+  it("prints version and command help without running command bodies", async () => {
+    const repoPackage = JSON.parse(await readFile(join(repoRoot, "package.json"), "utf8")) as { version: string };
+    const version = await runCli(["--version"]);
+    const versionCommand = await runCli(["version"]);
+    const improveHelp = await runCli(["improve", "--help"]);
+    const helpImprove = await runCli(["help", "improve"]);
+    const learnHelp = await runCli(["learn", "--help"]);
+    const auditShortHelp = await runCli(["audit", "-h"]);
+    const invalidCleanup = await runCli(["improve", "--cleanup", "--transcript", join(tmpdir(), "private.jsonl")]);
+
+    expect(version.exitCode).toBe(0);
+    expect(version.stdout.trim()).toBe(`bb-cc-lite ${repoPackage.version}`);
+    expect(versionCommand.exitCode).toBe(0);
+    expect(versionCommand.stdout.trim()).toBe(`bb-cc-lite ${repoPackage.version}`);
+    expect(improveHelp.exitCode).toBe(0);
+    expect(improveHelp.stderr).toBe("");
+    expect(improveHelp.stdout).toContain("bb-cc-lite improve");
+    expect(improveHelp.stdout).toContain("--cleanup");
+    expect(improveHelp.stdout).not.toContain("bb improve suggestions");
+    expect(helpImprove.stdout).toContain("bb-cc-lite improve");
+    expect(learnHelp.exitCode).toBe(0);
+    expect(learnHelp.stdout).toContain("bb-cc-lite learn");
+    expect(auditShortHelp.stdout).toContain("bb-cc-lite audit");
+    expect(invalidCleanup.exitCode).toBe(1);
+    expect(invalidCleanup.stderr).toContain("--cleanup cannot be combined with --transcript");
+  });
+
   it("install --no-learn skips personal baseline learning explicitly", async () => {
     const workspace = await createTempWorkspace();
     try {
@@ -229,7 +261,28 @@ describe("CLI behavior characterization", () => {
     }
   });
 
-  it("audit scans project history with deep advisory by default without installing into Claude settings", async () => {
+  it("learn refreshes the safe aggregate baseline without installing settings", async () => {
+    const workspace = await createTempWorkspace();
+    try {
+      const transcriptPath = join(workspace.homeDir, ".claude", "projects", "sample", "session.jsonl");
+      await writeTranscript(transcriptPath, repeatedFailedTestTranscript(3));
+
+      const result = await runCli(["learn", "--project", workspace.projectDir, "--home", workspace.homeDir], {
+        env: cliEnv(workspace)
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("Personal baseline ready (1 sessions).");
+      await expect(pathExists(join(workspace.appHome, "baseline.json"))).resolves.toBe(true);
+      await expect(pathExists(join(workspace.projectDir, ".claude", "settings.local.json"))).resolves.toBe(false);
+      expectNoPrivacySentinels(result.stdout, await readFile(join(workspace.appHome, "baseline.json"), "utf8"));
+    } finally {
+      await removeTempWorkspace(workspace);
+    }
+  });
+
+  it("audit scans project history with the compact report by default without installing into Claude settings", async () => {
     const workspace = await createTempWorkspace();
     try {
       const transcriptPath = join(
@@ -247,11 +300,11 @@ describe("CLI behavior characterization", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
-      expect(result.stdout).toContain("bb deep advisory audit");
-      expect(result.stdout).toContain("Sessions with findings: 1");
-      expect(result.stdout).toContain("Stop");
-      expect(result.stdout).toContain("same test failed 3x without a code change");
+      expect(result.stdout).toContain("bb retrospective audit");
+      expect(result.stdout).toContain("Would have helped: 1 session");
+      expect(result.stdout).toContain("same test failed 3x without a fix");
       expect(result.stdout).toContain("Report confidence: high");
+      expect(result.stdout).not.toContain("bb deep advisory audit");
       await expect(pathExists(join(workspace.projectDir, ".claude", "settings.local.json"))).resolves.toBe(false);
       expectNoPrivacySentinels(result.stdout);
     } finally {
@@ -306,8 +359,8 @@ describe("CLI behavior characterization", () => {
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain("Scope: all local project transcripts, newest 10");
       expect(result.stdout).toContain("Scanned: 2 Claude Code sessions");
-      expect(result.stdout).toContain("Sessions with findings: 1");
-      expect(result.stdout).toContain("same test failed 3x without a code change");
+      expect(result.stdout).toContain("Would have helped: 1 session");
+      expect(result.stdout).toContain("same test failed 3x without a fix");
       expect(result.stdout).not.toContain("Estimated saved:");
       expect(result.stdout).not.toContain(privateProjectName);
       await expect(pathExists(join(workspace.projectDir, ".claude", "settings.local.json"))).resolves.toBe(false);

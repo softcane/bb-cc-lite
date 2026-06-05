@@ -370,8 +370,10 @@ async function projectTranscriptCandidates(
   projectDir = process.cwd(),
   recentLimit = DEFAULT_RECENT_SESSIONS
 ): Promise<TranscriptCandidate[]> {
-  const root = join(resolve(homeDir), ".claude", "projects", claudeProjectDirectoryName(projectDir));
-  return (await listTranscriptCandidates(root))
+  const roots = claudeProjectDirectoryNames(projectDir).map((name) => join(resolve(homeDir), ".claude", "projects", name));
+  const candidates = (await Promise.all(roots.map((root) => listTranscriptCandidates(root)))).flat();
+  const uniqueCandidates = [...new Map(candidates.map((candidate) => [candidate.path, candidate])).values()];
+  return uniqueCandidates
     .sort((left, right) => right.mtimeMs - left.mtimeMs || left.path.localeCompare(right.path))
     .slice(0, recentLimit);
 }
@@ -509,6 +511,11 @@ function auditScope(options: AuditOptions): AuditReport["scope"] {
 
 function claudeProjectDirectoryName(projectDir: string): string {
   return resolve(projectDir).replaceAll(/[\\/]/gu, "-");
+}
+
+function claudeProjectDirectoryNames(projectDir: string): string[] {
+  const resolved = resolve(projectDir);
+  return [...new Set([claudeProjectDirectoryName(resolved), resolved.replaceAll(/[^A-Za-z0-9.-]/gu, "-")])];
 }
 
 function sortFindings(findings: AuditFinding[]): AuditFinding[] {

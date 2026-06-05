@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import {
   buildPersonalBaseline,
   clearPersonalBaseline,
@@ -23,6 +24,14 @@ interface ParsedArgs {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  if (isVersionRequest(args)) {
+    printVersion();
+    return;
+  }
+  if (isHelpRequest(args)) {
+    printHelp(helpTopic(args));
+    return;
+  }
   switch (args.command) {
     case "install":
       await commandInstall(args);
@@ -32,6 +41,9 @@ async function main(): Promise<void> {
       break;
     case "unlearn":
       await commandUnlearn(args);
+      break;
+    case "learn":
+      await commandLearn(args);
       break;
     case "statusline":
       await commandStatusLine();
@@ -55,8 +67,6 @@ async function main(): Promise<void> {
       await commandHook(args);
       break;
     case "help":
-    case "--help":
-    case "-h":
       printHelp();
       break;
     default:
@@ -111,6 +121,18 @@ async function commandUninstall(args: ParsedArgs): Promise<void> {
 async function commandUnlearn(args: ParsedArgs): Promise<void> {
   const result = await clearPersonalBaseline({ homeDir: stringFlag(args, "home") });
   console.log(result.message.replace(/^cleared/u, "Cleared") + ".");
+}
+
+async function commandLearn(args: ParsedArgs): Promise<void> {
+  const result = await buildPersonalBaseline({
+    homeDir: stringFlag(args, "home"),
+    projectDir: stringFlag(args, "project"),
+    transcriptPath: stringFlag(args, "transcript")
+  });
+  console.log(result.message);
+  if (!result.ok) {
+    process.exitCode = 1;
+  }
 }
 
 async function commandStatusLine(): Promise<void> {
@@ -206,7 +228,7 @@ async function commandAudit(args: ParsedArgs): Promise<void> {
     allProjects: Boolean(args.flags["all-projects"]),
     recent: numberFlag(args, "recent")
   };
-  if (!args.flags.basic) {
+  if (args.flags.deep) {
     const report = await runDeepAdvisoryAudit(options);
     if (args.flags.json) {
       console.log(JSON.stringify(report, null, 2));
@@ -228,6 +250,12 @@ async function commandImprove(args: ParsedArgs): Promise<void> {
   if (args.flags.apply && args.flags.transcript) {
     throw new Error("--apply cannot be combined with --transcript");
   }
+  if (args.flags.cleanup && args.flags.transcript) {
+    throw new Error("--cleanup cannot be combined with --transcript");
+  }
+  if (args.flags.cleanup && args.flags["all-projects"] && !args.flags.global) {
+    throw new Error("--cleanup --all-projects requires --global");
+  }
   const report = await runImprove({
     projectDir: stringFlag(args, "project"),
     homeDir: stringFlag(args, "home"),
@@ -235,6 +263,7 @@ async function commandImprove(args: ParsedArgs): Promise<void> {
     allProjects: Boolean(args.flags["all-projects"]),
     recent: numberFlag(args, "recent"),
     apply: Boolean(args.flags.apply),
+    cleanup: Boolean(args.flags.cleanup),
     global: Boolean(args.flags.global)
   });
   if (args.flags.json) {
@@ -263,6 +292,14 @@ function parseArgs(argv: string[]): ParsedArgs {
   const positionals: string[] = [];
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
+    if (arg === "-h") {
+      flags.help = true;
+      continue;
+    }
+    if (arg === "-v") {
+      flags.version = true;
+      continue;
+    }
     if (!arg.startsWith("--")) {
       positionals.push(arg);
       continue;
@@ -281,6 +318,28 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
   }
   return { command, flags, positionals };
+}
+
+function isHelpRequest(args: ParsedArgs): boolean {
+  return args.command === "help" || args.command === "--help" || args.command === "-h" || Boolean(args.flags.help);
+}
+
+function isVersionRequest(args: ParsedArgs): boolean {
+  return args.command === "version" || args.command === "--version" || args.command === "-v" || Boolean(args.flags.version);
+}
+
+function helpTopic(args: ParsedArgs): string | undefined {
+  if (args.command === "help") {
+    return args.positionals[0];
+  }
+  if (args.command !== "--help" && args.command !== "-h") {
+    return args.command;
+  }
+  return undefined;
+}
+
+function printVersion(): void {
+  console.log(`bb-cc-lite ${packageVersion()}`);
 }
 
 function scopeFlag(args: ParsedArgs): SettingsScope {
@@ -329,39 +388,135 @@ function numberFlag(args: ParsedArgs, name: string): number | undefined {
   throw new Error(`Invalid --${name} ${value}; expected a positive number`);
 }
 
-function printHelp(): void {
+function printHelp(topic?: string): void {
+  switch (topic) {
+    case "audit":
+      console.log(`bb-cc-lite audit
+
+Usage:
+  bb-cc-lite audit [--project <path>] [--all-projects] [--transcript <path>]
+                   [--recent <count>] [--deep] [--basic] [--json]
+
+Default audit prints the compact retrospective report.
+Use --deep for the multi-finding deep advisory report.
+Use --json for machine-readable output.
+`);
+      return;
+    case "improve":
+      console.log(`bb-cc-lite improve
+
+Usage:
+  bb-cc-lite improve [--project <path>] [--all-projects] [--transcript <path>]
+                     [--recent <count>] [--global] [--apply] [--cleanup] [--json]
+
+By default, improve prints reviewed instruction suggestions only.
+Use --apply to write writable global/project suggestions inside marked CLAUDE.md blocks.
+Use --cleanup to remove a marked bb-cc-lite CLAUDE.md block with a backup.
+Session-only suggestions are never written.
+`);
+      return;
+    case "install":
+      console.log(`bb-cc-lite install
+
+Usage:
+  bb-cc-lite install [--scope local|project|user] [--observe-only] [--guard]
+                     [--replace] [--no-learn]
+
+Installs the Claude Code statusLine and bb-owned hooks.
+Default mode is coach. --observe-only avoids Claude-facing feedback.
+`);
+      return;
+    case "doctor":
+      console.log(`bb-cc-lite doctor
+
+Usage:
+  bb-cc-lite doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing]
+                    [--baseline] [--build-baseline] [--replay-baseline] [--clear-baseline]
+`);
+      return;
+    case "why":
+      console.log(`bb-cc-lite why
+
+Usage:
+  bb-cc-lite why [--session <id>] [--json]
+`);
+      return;
+    case "statusline":
+      console.log(`bb-cc-lite statusline
+
+Usage:
+  bb-cc-lite statusline
+`);
+      return;
+    case "unlearn":
+      console.log(`bb-cc-lite unlearn
+
+Usage:
+  bb-cc-lite unlearn
+`);
+      return;
+    case "learn":
+      console.log(`bb-cc-lite learn
+
+Usage:
+  bb-cc-lite learn [--project <path>] [--transcript <path>]
+
+Builds the local safe aggregate baseline from Claude Code JSONL history.
+`);
+      return;
+    case "uninstall":
+      console.log(`bb-cc-lite uninstall
+
+Usage:
+  bb-cc-lite uninstall [--scope local|project|user] [--force]
+`);
+      return;
+  }
+
   console.log(`bb-cc-lite
 
 Usage:
   bb-cc-lite audit [--project <path>] [--all-projects] [--transcript <path>]
                    [--recent <count>] [--deep] [--basic] [--json]
   bb-cc-lite improve [--project <path>] [--all-projects] [--transcript <path>]
-                     [--recent <count>] [--global] [--apply] [--json]
+                     [--recent <count>] [--global] [--apply] [--cleanup] [--json]
   bb-cc-lite install [--scope local|project|user] [--observe-only] [--guard]
                      [--replace] [--no-learn]
   bb-cc-lite statusline
   bb-cc-lite why [--session <id>] [--json]
   bb-cc-lite doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing]
                     [--baseline] [--build-baseline] [--replay-baseline] [--clear-baseline]
+  bb-cc-lite learn [--project <path>] [--transcript <path>]
   bb-cc-lite unlearn
   bb-cc-lite uninstall [--scope local|project|user] [--force]
 
 Learning:
-  audit scans recent local Claude JSONL history and prints a deep advisory report.
-  audit --basic prints the older one-finding retrospective audit.
+  audit scans recent local Claude JSONL history and prints a compact retrospective report.
+  audit --deep prints the multi-finding deep advisory report.
   improve suggests Claude instruction updates from repeated safe findings.
   improve --apply writes only marked bb-cc-lite blocks in CLAUDE.md.
+  improve --cleanup removes a marked bb-cc-lite block after creating a backup.
   --all-projects scans newest local transcripts across ~/.claude/projects.
   install enables coach mode and builds a small local baseline by default.
   --observe-only keeps display and local telemetry without Claude-facing feedback.
   --guard enables coach feedback plus strict repeated-validation retry denial.
   install preserves an existing Claude statusLine unless --replace is passed.
   --no-learn skips baseline creation and disables lesson memory.
+  learn refreshes the same safe aggregate baseline without installing anything.
   doctor --baseline shows a safe aggregate summary, including recent and validation categories.
   doctor --build-baseline refreshes the baseline.
   doctor --replay-baseline evaluates aggregate holdout metrics from local JSONL history.
   doctor --clear-baseline and unlearn remove learned baselines.
 `);
+}
+
+function packageVersion(): string {
+  try {
+    const parsed = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: unknown };
+    return typeof parsed.version === "string" && parsed.version.trim() ? parsed.version : "0.0.0-dev";
+  } catch {
+    return "0.0.0-dev";
+  }
 }
 
 main().catch((error: unknown) => {

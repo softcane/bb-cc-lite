@@ -2,7 +2,10 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { recordLessonFromSummary } from "../src/memory-lessons.js";
 import { formatImproveReport, runImprove } from "../src/improve.js";
+import { projectKeyFromPath } from "../src/paths.js";
+import type { TranscriptSummary } from "../src/types.js";
 
 const privacySentinels = [
   "BB_CC_LITE_RAW_PROMPT_SENTINEL",
@@ -44,6 +47,37 @@ describe("improve", () => {
       await expect(pathExists(join(projectDir, "CLAUDE.md"))).resolves.toBe(false);
       expect(formatted).toContain("review only");
       expect(formatted).toContain("After changing code, run the smallest relevant check.");
+      expect(formatted).toContain("review: evidence is repeated across 2 independent sessions");
+      expect(formatted).toContain("review: target is the project CLAUDE.md managed block");
+      expectNoPrivacySentinels(report, formatted);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses aggregate baseline notes in reviewed suggestions", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-improve-baseline-"));
+    try {
+      const homeDir = join(tempDir, "home");
+      const appHomePath = join(tempDir, "bb-home");
+      const projectDir = join(tempDir, "project");
+      await mkdir(appHomePath, { recursive: true });
+      await writeFile(join(appHomePath, "baseline.json"), `${JSON.stringify(editValidationBaseline(), null, 2)}\n`, "utf8");
+      await writeProjectTranscript(homeDir, projectDir, "one.jsonl", uncheckedEditTranscript("one"));
+      await writeProjectTranscript(homeDir, projectDir, "two.jsonl", uncheckedEditTranscript("two"));
+
+      const report = await runImprove({ homeDir, appHomePath, projectDir });
+      const formatted = formatImproveReport(report);
+
+      expect(report.baselineSource).toBe("personal");
+      expect(report.suggestions).toContainEqual(
+        expect.objectContaining({
+          lessonKey: "unchecked_edits",
+          baselineNote: "selected baseline saw 6 of 10 edit sessions without later validation"
+        })
+      );
+      expect(formatted).toContain("baseline: selected baseline saw 6 of 10 edit sessions without later validation");
+      expect(formatted).toContain("aggregate baseline facts only");
       expectNoPrivacySentinels(report, formatted);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
@@ -196,6 +230,134 @@ describe("improve", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("does not promote many findings from one session into a writable project instruction", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-improve-single-session-"));
+    try {
+      const homeDir = join(tempDir, "home");
+      const projectDir = join(tempDir, "project");
+      await writeProjectTranscript(homeDir, projectDir, "one.jsonl", manyUncheckedEditsTranscript());
+
+      const report = await runImprove({ homeDir, projectDir, apply: true, now: new Date("2026-06-05T12:00:00.000Z") });
+      const formatted = formatImproveReport(report);
+
+      expect(report.suggestions).toContainEqual(
+        expect.objectContaining({
+          scope: "session",
+          target: "session_report",
+          writable: false,
+          lessonKey: "unchecked_edits"
+        })
+      );
+      expect(report.applied).toEqual([]);
+      expect(formatted).toContain("Applied:");
+      expect(formatted).toContain("none; no writable global/project suggestions met the evidence threshold.");
+      await expect(pathExists(join(projectDir, "CLAUDE.md"))).resolves.toBe(false);
+      expectNoPrivacySentinels(report, formatted);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses repeated safe lesson memory as improve evidence", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-improve-memory-"));
+    try {
+      const homeDir = join(tempDir, "home");
+      const appHomePath = join(tempDir, "bb-home");
+      const projectDir = join(tempDir, "project");
+      const projectKey = projectKeyFromPath(projectDir);
+      await recordLessonFromSummary({
+        appHomePath,
+        projectKey,
+        summary: uncheckedEditSummary(),
+        now: new Date("2026-06-05T08:00:00.000Z")
+      });
+      await recordLessonFromSummary({
+        appHomePath,
+        projectKey,
+        summary: uncheckedEditSummary(),
+        now: new Date("2026-06-05T09:00:00.000Z")
+      });
+
+      const report = await runImprove({ homeDir, appHomePath, projectDir });
+      const formatted = formatImproveReport(report);
+
+      expect(report.suggestions).toEqual([
+        expect.objectContaining({
+          scope: "project",
+          target: "project_claude",
+          writable: true,
+          lessonKey: "unchecked_edits",
+          evidence: expect.objectContaining({
+            sessions: 2,
+            memoryLessons: 1
+          })
+        })
+      ]);
+      expect(formatted).toContain("1 memory lessons");
+      expectNoPrivacySentinels(report, formatted);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("cleanup removes only the marked CLAUDE.md block and creates a backup", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-improve-cleanup-"));
+    try {
+      const homeDir = join(tempDir, "home");
+      const projectDir = join(tempDir, "project");
+      const claudePath = join(projectDir, "CLAUDE.md");
+      const agentsPath = join(projectDir, "AGENTS.md");
+      await mkdir(projectDir, { recursive: true });
+      await writeFile(
+        claudePath,
+        [
+          "# Project instructions",
+          "",
+          "Keep this line before.",
+          "",
+          "<!-- bb-cc-lite improve:start -->",
+          "## bb-cc-lite lessons",
+          "- After changing code, run the smallest relevant check.",
+          "<!-- bb-cc-lite improve:end -->",
+          "",
+          "Keep this line after.",
+          ""
+        ].join("\n"),
+        "utf8"
+      );
+      await writeFile(agentsPath, "Do not edit AGENTS.\n", "utf8");
+
+      const report = await runImprove({ homeDir, projectDir, cleanup: true, now: new Date("2026-06-05T13:00:00.000Z") });
+      const formatted = formatImproveReport(report);
+      const claudeText = await readFile(claudePath, "utf8");
+      const backupNames = (await readdir(projectDir)).filter((name) => name.startsWith("CLAUDE.md.bb-cc-lite-backup-"));
+      const backupText = await readFile(join(projectDir, backupNames[0] || ""), "utf8");
+
+      expect(report).toMatchObject({
+        mode: "cleanup",
+        suggestions: [],
+        applied: [
+          expect.objectContaining({
+            target: "project_claude",
+            changed: true,
+            backupCreated: true,
+            blockAction: "removed"
+          })
+        ]
+      });
+      expect(claudeText).toContain("Keep this line before.");
+      expect(claudeText).toContain("Keep this line after.");
+      expect(claudeText).not.toContain("bb-cc-lite improve:start");
+      expect(backupText).toContain("bb-cc-lite improve:start");
+      await expect(readFile(agentsPath, "utf8")).resolves.toBe("Do not edit AGENTS.\n");
+      expect(formatted).toContain("bb improve cleanup");
+      expect(formatted).toContain("project CLAUDE.md: removed; backup created");
+      expectNoPrivacySentinels(report, formatted, claudeText, backupText);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 async function writeProjectTranscript(homeDir: string, projectDir: string, fileName: string, lines: string[]): Promise<void> {
@@ -231,11 +393,114 @@ function uncheckedEditTranscript(idPrefix: string): string[] {
   ];
 }
 
+function manyUncheckedEditsTranscript(): string[] {
+  return [1, 2, 3].flatMap((index) => [
+    toolUse(`edit-${index}`, "Edit", {
+      file_path: `/tmp/bb-cc-lite/private/workspace/src/file-${index}.ts`,
+      old_string: privacySentinels[3],
+      new_string: "safe"
+    }),
+    toolResult(`edit-${index}`, false)
+  ]);
+}
+
 function blindRetryTranscript(idPrefix: string): string[] {
   return [1, 2, 3].flatMap((index) => [
     toolUse(`${idPrefix}-test-${index}`, "Bash", { command: `npm test -- ${privacySentinels[4]}` }),
     toolResult(`${idPrefix}-test-${index}`, true)
   ]);
+}
+
+function uncheckedEditSummary(): TranscriptSummary {
+  return {
+    pathReadable: true,
+    bytesRead: 0,
+    linesRead: 0,
+    malformedLines: 0,
+    toolCalls: 3,
+    readToolCalls: 0,
+    successfulEditResults: 3,
+    failedToolResults: 0,
+    repeatedFailures: [],
+    editTestLoopFailures: 0,
+    hasUnvalidatedEdits: true,
+    unvalidatedEditResultCount: 3,
+    validationChecks: 0,
+    validationRecovered: false,
+    compactionEvents: 0,
+    postCompactionActivity: 0,
+    usage: {}
+  };
+}
+
+function editValidationBaseline(): Record<string, unknown> {
+  return {
+    schema: "bb-cc-lite.baseline.v1",
+    version: 1,
+    createdAt: "2026-06-05T00:00:00.000Z",
+    updatedAt: "2026-06-05T00:00:00.000Z",
+    source: {
+      kind: "local_transcript_scan",
+      transcriptFilesScanned: 10,
+      sessionsSeen: 10,
+      malformedLines: 0,
+      maxBytesPerTranscript: 1048576
+    },
+    privacy: {
+      rawPromptsStored: false,
+      rawToolOutputStored: false,
+      rawPathsStored: false,
+      rawCommandsStored: false,
+      perSessionRowsStored: false
+    },
+    totals: {
+      toolCalls: 30,
+      successfulToolResults: 30,
+      failedToolResults: 0,
+      validationCalls: 4,
+      validationFailures: 0,
+      validationSuccesses: 4,
+      successfulEditResults: 10,
+      readSearchToolCalls: 0
+    },
+    scenarios: {
+      read_heavy_debugging: { seen: 0, confidence: "low" },
+      repeated_failure: { seen: 0, confidence: "low" },
+      validation_command_loop: { seen: 0, confidence: "low" },
+      edit_without_validation: { seen: 6, confidence: "medium" },
+      validation_recovered: { seen: 0, confidence: "low" }
+    },
+    outcomes: {
+      healthyLike: {
+        validationPassedAfterEdit: 4,
+        validationRecovered: 0,
+        readHeavyNoFailure: 0
+      },
+      carefulLike: {
+        editWithoutValidation: 6,
+        toolFailureRecovered: 0,
+        twoFailureStreakRecovered: 0
+      },
+      stopLike: {
+        validationLoopUnrecovered: 0,
+        toolLoopUnrecovered: 0,
+        sessionEndedInFailureLoop: 0
+      }
+    },
+    rates: {
+      toolFailureRate: 0,
+      repeatedFailureRate: 0,
+      validationFailureRate: 0,
+      cacheWritesHighRate: 0
+    },
+    editValidation: {
+      editsFollowedByValidation: 4,
+      editsWithoutValidation: 6,
+      editWithoutValidationRate: 0.6,
+      medianToolStepsFromEditToValidation: 4,
+      p75ToolStepsFromEditToValidation: 8
+    }
+  };
 }
 
 function toolUse(id: string, name: string, input: Record<string, unknown>): string {

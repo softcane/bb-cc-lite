@@ -267,10 +267,10 @@ describe("optional Claude Code hooks", () => {
       kind: "tool_success",
       toolName: "Read",
       fileIdentityHash: hashValue(rawPath),
-      safeFileLabel: "secret.ts",
       readKind: "full"
     });
     expect(JSON.stringify(event)).not.toContain(rawPath);
+    expect(JSON.stringify(event)).not.toContain("secret.ts");
     expectNoPrivacySentinels(event);
   });
 
@@ -723,21 +723,20 @@ describe("optional Claude Code hooks", () => {
         redundantRead: {
           fileIdentityHash: hashValue(rawPath),
           unchangedFullFileReadCount: 2,
-          latestState: "Careful",
-          safeFileLabel: "secret.ts"
+          latestState: "Careful"
         },
         activeFullFileReads: [
           {
             fileIdentityHash: hashValue(rawPath),
-            unchangedFullFileReadCount: 2,
-            safeFileLabel: "secret.ts"
+            unchangedFullFileReadCount: 2
           }
         ]
       });
+      expect(JSON.stringify(carefulSummary)).not.toContain("secret.ts");
       expect(decide(input({ sessionId }), mergeHookSummary(transcript(), carefulSummary))).toMatchObject({
         state: "Careful",
         reasonCode: "redundant_read",
-        primaryEvidence: "same file reread twice (secret.ts)"
+        primaryEvidence: "same file reread twice"
       });
 
       const notebookEdit = parseHookPayload(
