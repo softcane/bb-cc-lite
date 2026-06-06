@@ -61,10 +61,6 @@ This file governs the whole repository.
 ## Documentation Map
 
 - `README.md`: user-facing install, usage, privacy, and commands.
-- `doc_internal/02-prd.md`: product requirements and QA gate.
-- `doc_internal/03-qa-report.md`: current canonical QA report.
-- `doc_internal/qa-report.md`: older QA addendum.
-- `doc_internal/01-self-grill-questions.md`: product decision notes.
 - `assets/statusline-demo.gif`: README statusline demo.
 
 ## Build And Package Map
@@ -124,6 +120,6 @@ This file governs the whole repository.
 - Prefer small, behavior-preserving changes.
 - Add characterization tests before refactors that move CLI, statusline, transcript, store, or settings behavior.
 - Keep source and `dist/` aligned when changing runtime code.
-- Do not add new product scope from the PRD unless the user explicitly asks.
+- Do not add new product scope unless the user explicitly asks.
 - Do not commit secrets, local temp paths, Claude transcripts, or generated local stores.
 - If a real Claude Code check is blocked by external state, document the blocker and complete all local checks.
