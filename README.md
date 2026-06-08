@@ -4,15 +4,15 @@
 
 Behavioral health monitoring for Claude Code sessions.
 
-Claude Code can look busy while doing the wrong thing. It can retry the same failed test, edit without verification, burn tokens, fill the context window, thrash across files, and keep going long after a human should stop it.
+Claude Code can look busy while doing the wrong thing. It can retry the same failed test, edit without checking its work, burn tokens, fill the context window, reread files, and keep going after a human should stop it.
 
 The small local status line answers one question:
 
 > Should I let this Claude Code session keep going?
 
-Token spend tells you what it cost. `bb-cc-lite` tries to show whether the session behavior still looks healthy: continue, verify, or stop before more turns are burned.
+Token spend tells you what it cost. `bb-cc-lite` shows whether the session still looks healthy: continue, verify, or stop before more turns are burned.
 
-It is local. It is not a cloud dashboard, telemetry service, proxy, gateway, or message router.
+It runs locally. It is not a cloud dashboard, telemetry service, proxy, gateway, or message router.
 
 ```text
 bb: Healthy | ctx 42% | $0.18 | continue normally
@@ -25,17 +25,17 @@ bb: Stop | why: same failure retried 3x without a fix | do: stop and inspect fir
 
 ![bb-cc-lite statusline examples](./assets/statusline-demo.gif)
 
-_The demo shows the difference between healthy progress, unchecked edits, repeated validation failures, and Stop-level retry loops._
+_The demo shows healthy progress, unchecked edits, repeated validation failures, and Stop-level retry loops._
 
 ## Why This Exists
 
 Activity is not progress.
 
-The hard part is not seeing that Claude Code is active. The hard part is knowing whether its activity is still useful. Busy output, tool calls, and token spend can hide negative progress.
+Busy output, tool calls, and token spend can hide negative progress. The hard part is knowing whether Claude Code's activity still helps.
 
-Humans usually notice too late: after the same check has failed three times, after a broad edit streak was never verified, or after the context window is already under pressure.
+Humans usually notice too late: after the same check failed three times, after a broad edit streak went unchecked, or after the context window is already under pressure.
 
-`bb-cc-lite` watches local derived signals from the Claude Code status input, transcript tail, and optional hooks. It classifies the current session as `Healthy`, `Careful`, or `Stop`.
+`bb-cc-lite` watches derived local signals from the Claude Code status input, transcript tail, and optional hooks. It classifies the current session as `Healthy`, `Careful`, or `Stop`.
 
 ## What It Catches
 
@@ -57,15 +57,15 @@ Humans usually notice too late: after the same check has failed three times, aft
 
 `Careful` means slow down. Ask for verification, inspect the pattern, or make the next step smaller.
 
-`Stop` does not mean the project failed. It means the session pattern is no longer worth blindly continuing. Take over, redirect Claude, or inspect the first failure before spending more turns.
+`Stop` does not mean the project failed. It means the session pattern is no longer worth continuing blindly. Take over, redirect Claude, or inspect the first failure before spending more turns.
 
 ## How It Helps Claude
 
 `bb-cc-lite` can run in three install modes.
 
-`observe-only` keeps the status line and local derived event data, but does not send feedback to Claude.
+`observe-only` keeps the status line and local derived event data. It does not send feedback to Claude.
 
-`coach` is the default. It keeps the status line and can send short, safe Claude-facing notes when a risky pattern is visible, such as repeated validation failure, unchecked edits, high budget with no progress signal, or unresolved validation risk at finish.
+`coach` is the default. It keeps the status line and can send short, safe Claude-facing notes when a risky pattern appears. Examples include repeated validation failure, unchecked edits, high budget with no progress signal, and unresolved validation risk at finish.
 
 `guard` includes coach feedback. It may deny a high-confidence repeated Bash validation retry, such as rerunning the same test/lint/typecheck/build category after repeated failures without an edit or passing check. It does not broadly block normal reads, edits, or arbitrary commands.
 
@@ -144,7 +144,9 @@ npx --yes bb-cc-lite audit --deep --project .
 npx --yes bb-cc-lite audit --deep --all-projects --recent 200
 ```
 
-`audit --deep` scans recent local Claude Code JSONL history and reports concrete risky paths. It highlights unchecked edits, blind retries, failed edits, repeated reads, recovery after change, compaction risk, and session-end risk. It does not install a status line or hooks. Use `--all-projects` only when you want to inspect newest transcripts across local Claude projects. Plain `audit` keeps the compact one-finding retrospective report available.
+`audit --deep` scans recent local Claude Code JSONL history and reports concrete risky paths. It highlights unchecked edits, blind retries, failed edits, repeated reads, recovery after change, compaction risk, and session-end risk.
+
+It does not install a status line or hooks. Use `--all-projects` only when you want to inspect newest transcripts across local Claude projects. Plain `audit` keeps the compact one-finding retrospective report available.
 
 ## Audit And Improve
 
@@ -231,7 +233,7 @@ It recognizes common Bash validation commands and groups them into safe categori
 - typecheck
 - build
 
-Those categories are used for retry-loop detection, recovery baselines, coach feedback, and guard-mode retry denial.
+Those categories support retry-loop detection, recovery baselines, coach feedback, and guard-mode retry denial.
 
 ## Session Signals
 
@@ -276,11 +278,11 @@ This file is not generated automatically. It is only needed when you want to tea
 
 The health event store and baselines use derived metadata only: state, reason code, counts, rates, percentiles, confidence labels, feedback outcomes such as `resolved` or `ignored`, safe categories such as `tests`, token/cost/context fields, timestamps, weak pattern labels, hashed file identities, hashed session keys, and hashed project keys.
 
-The health data is designed not to store prompts, assistant text, tool output, shell output, command arguments, file contents, transcript paths, workspace paths, API keys, raw Claude session ids, or raw MCP names.
+The health data does not store prompts, assistant text, tool output, shell output, command arguments, file contents, transcript paths, workspace paths, API keys, raw Claude session ids, or raw MCP names.
 
 For repeated-read warnings, bb may show a short basename-style hint such as `auth.ts`. It does not store or print the full local path.
 
-Local files live under `~/.claude/bb-cc-lite` by default, unless `BB_CC_LITE_HOME` or other override environment variables are set. This includes:
+Local files live under `~/.claude/bb-cc-lite` by default, unless `BB_CC_LITE_HOME` or another override environment variable is set. This includes:
 
 - `events.json` for derived local decisions and hook events.
 - `baseline.json` for the personal aggregate baseline.
@@ -289,7 +291,7 @@ Local files live under `~/.claude/bb-cc-lite` by default, unless `BB_CC_LITE_HOM
 - `litellm-pricing.json` for cached public pricing data when refreshed.
 - `backups/` for Claude settings backups used by uninstall.
 
-Install backups are local settings snapshots so uninstall can restore prior Claude settings. They may contain whatever status line, hook commands, or paths existed in those Claude settings. They are not uploaded by `bb-cc-lite`.
+Install backups are local settings snapshots so uninstall can restore prior Claude settings. They may contain whatever status line, hook commands, or paths existed in those Claude settings. `bb-cc-lite` does not upload them.
 
 LiteLLM is used only as public pricing data for cost estimates. `bb-cc-lite` does not run a LiteLLM proxy or route messages.
 
