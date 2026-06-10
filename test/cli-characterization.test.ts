@@ -72,7 +72,7 @@ describe("CLI behavior characterization", () => {
     const helpImprove = await runCli(["help", "improve"]);
     const learnHelp = await runCli(["learn", "--help"]);
     const auditShortHelp = await runCli(["audit", "-h"]);
-    const invalidCleanup = await runCli(["improve", "--cleanup", "--transcript", join(tmpdir(), "private.jsonl")]);
+    const invalidCleanup = await runCli(["audit", "--cleanup", "--transcript", join(tmpdir(), "private.jsonl")]);
 
     expect(version.exitCode).toBe(0);
     expect(version.stdout.trim()).toBe(`bb-cc-lite ${repoPackage.version}`);
@@ -81,8 +81,7 @@ describe("CLI behavior characterization", () => {
     expect(improveHelp.exitCode).toBe(0);
     expect(improveHelp.stderr).toBe("");
     expect(improveHelp.stdout).toContain("bb-cc-lite improve");
-    expect(improveHelp.stdout).toContain("--cleanup");
-    expect(improveHelp.stdout).not.toContain("bb improve suggestions");
+    expect(improveHelp.stdout).toContain("folded into: bb-cc-lite audit");
     expect(helpImprove.stdout).toContain("bb-cc-lite improve");
     expect(learnHelp.exitCode).toBe(0);
     expect(learnHelp.stdout).toContain("bb-cc-lite learn");
@@ -261,28 +260,26 @@ describe("CLI behavior characterization", () => {
     }
   });
 
-  it("learn refreshes the safe aggregate baseline without installing settings", async () => {
-    const workspace = await createTempWorkspace();
-    try {
-      const transcriptPath = join(workspace.homeDir, ".claude", "projects", "sample", "session.jsonl");
-      await writeTranscript(transcriptPath, repeatedFailedTestTranscript(3));
+  it("learn, why, improve, and unlearn print one deprecation pointer and exit 0", async () => {
+    const learn = await runCli(["learn"]);
+    const why = await runCli(["why"]);
+    const improve = await runCli(["improve"]);
+    const unlearn = await runCli(["unlearn"]);
 
-      const result = await runCli(["learn", "--project", workspace.projectDir, "--home", workspace.homeDir], {
-        env: cliEnv(workspace)
-      });
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stderr).toBe("");
-      expect(result.stdout).toContain("Personal baseline ready (1 sessions).");
-      await expect(pathExists(join(workspace.appHome, "baseline.json"))).resolves.toBe(true);
-      await expect(pathExists(join(workspace.projectDir, ".claude", "settings.local.json"))).resolves.toBe(false);
-      expectNoPrivacySentinels(result.stdout, await readFile(join(workspace.appHome, "baseline.json"), "utf8"));
-    } finally {
-      await removeTempWorkspace(workspace);
+    expect(learn.exitCode).toBe(0);
+    expect(learn.stdout).toContain("deprecated");
+    expect(why.exitCode).toBe(0);
+    expect(why.stdout).toContain("folded into: bb-cc-lite audit");
+    expect(improve.exitCode).toBe(0);
+    expect(improve.stdout).toContain("folded into: bb-cc-lite audit");
+    expect(unlearn.exitCode).toBe(0);
+    expect(unlearn.stdout).toContain("folded into: bb-cc-lite uninstall --purge");
+    for (const result of [learn, why, improve, unlearn]) {
+      expect(result.stdout.trim().split("\n")).toHaveLength(1);
     }
   });
 
-  it("audit scans project history with the compact report by default without installing into Claude settings", async () => {
+  it("audit prints the three-section report without installing into Claude settings", async () => {
     const workspace = await createTempWorkspace();
     try {
       const transcriptPath = join(
@@ -300,41 +297,12 @@ describe("CLI behavior characterization", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
-      expect(result.stdout).toContain("bb retrospective audit");
-      expect(result.stdout).toContain("Would have helped: 1 session");
-      expect(result.stdout).toContain("same test failed 3x without a fix");
+      expect(result.stdout).toContain("[1] Current session");
+      expect(result.stdout).toContain("No bb history for this project.");
+      expect(result.stdout).toContain("[2] Recent patterns");
+      expect(result.stdout).toContain("same test failed 3x without a code change");
       expect(result.stdout).toContain("Report confidence: high");
-      expect(result.stdout).not.toContain("bb deep advisory audit");
       await expect(pathExists(join(workspace.projectDir, ".claude", "settings.local.json"))).resolves.toBe(false);
-      expectNoPrivacySentinels(result.stdout);
-    } finally {
-      await removeTempWorkspace(workspace);
-    }
-  });
-
-  it("audit --basic keeps the one-finding retrospective report available", async () => {
-    const workspace = await createTempWorkspace();
-    try {
-      const transcriptPath = join(
-        workspace.homeDir,
-        ".claude",
-        "projects",
-        claudeProjectDirectoryName(workspace.projectDir),
-        "session.jsonl"
-      );
-      await writeTranscript(transcriptPath, repeatedFailedTestTranscript(3));
-
-      const result = await runCli(["audit", "--basic", "--project", workspace.projectDir, "--home", workspace.homeDir], {
-        env: cliEnv(workspace)
-      });
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stderr).toBe("");
-      expect(result.stdout).toContain("bb retrospective audit");
-      expect(result.stdout).toContain("Would have helped: 1 session");
-      expect(result.stdout).toContain("same test failed 3x without a fix");
-      expect(result.stdout).toContain("Repeated retries spotted: 2");
-      expect(result.stdout).toContain("Cost/time: not estimated");
       expectNoPrivacySentinels(result.stdout);
     } finally {
       await removeTempWorkspace(workspace);
@@ -359,9 +327,7 @@ describe("CLI behavior characterization", () => {
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain("Scope: all local project transcripts, newest 10");
       expect(result.stdout).toContain("Scanned: 2 Claude Code sessions");
-      expect(result.stdout).toContain("Would have helped: 1 session");
-      expect(result.stdout).toContain("same test failed 3x without a fix");
-      expect(result.stdout).not.toContain("Estimated saved:");
+      expect(result.stdout).toContain("same test failed 3x without a code change");
       expect(result.stdout).not.toContain(privateProjectName);
       await expect(pathExists(join(workspace.projectDir, ".claude", "settings.local.json"))).resolves.toBe(false);
       expectNoPrivacySentinels(result.stdout);
@@ -370,35 +336,7 @@ describe("CLI behavior characterization", () => {
     }
   });
 
-  it("audit --deep prints a multi-finding advisory report without private text", async () => {
-    const workspace = await createTempWorkspace();
-    try {
-      const transcriptPath = join(
-        workspace.homeDir,
-        ".claude",
-        "projects",
-        claudeProjectDirectoryName(workspace.projectDir),
-        "session.jsonl"
-      );
-      await writeTranscript(transcriptPath, [...repeatedFailedTestTranscript(3), ...unvalidatedEditTranscript()]);
-
-      const result = await runCli(["audit", "--deep", "--project", workspace.projectDir, "--home", workspace.homeDir], {
-        env: cliEnv(workspace)
-      });
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stderr).toBe("");
-      expect(result.stdout).toContain("bb deep advisory audit");
-      expect(result.stdout).toContain("same test failed 3x without a code change");
-      expect(result.stdout).toContain("code changed and no later check ran");
-      expect(result.stdout).not.toContain(transcriptPath);
-      expectNoPrivacySentinels(result.stdout);
-    } finally {
-      await removeTempWorkspace(workspace);
-    }
-  });
-
-  it("audit --deep --json returns safe machine-readable findings", async () => {
+  it("audit --json covers all three sections and parses without private text", async () => {
     const workspace = await createTempWorkspace();
     try {
       const transcriptPath = join(
@@ -410,23 +348,28 @@ describe("CLI behavior characterization", () => {
       );
       await writeTranscript(transcriptPath, repeatedFailedTestTranscript(3));
 
-      const result = await runCli(["audit", "--deep", "--json", "--project", workspace.projectDir, "--home", workspace.homeDir], {
+      const result = await runCli(["audit", "--json", "--project", workspace.projectDir, "--home", workspace.homeDir], {
         env: cliEnv(workspace)
       });
       const parsed = JSON.parse(result.stdout) as {
         kind: string;
-        findings: Array<{ reasonCode: string; evidence: string }>;
+        session: { hasHistory: boolean };
+        patterns: { kind: string; findings: Array<{ reasonCode: string; evidence: string }> };
+        instructions: { windowSessions: number };
       };
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
-      expect(parsed.kind).toBe("deep-advisory");
-      expect(parsed.findings).toContainEqual(
+      expect(parsed.kind).toBe("audit");
+      expect(parsed.session).toHaveProperty("hasHistory");
+      expect(parsed.patterns.kind).toBe("deep-advisory");
+      expect(parsed.patterns.findings).toContainEqual(
         expect.objectContaining({
           reasonCode: "blind_validation_retry",
           evidence: "same test failed 3x without a code change"
         })
       );
+      expect(parsed.instructions).toHaveProperty("windowSessions");
       expect(result.stdout).not.toContain(transcriptPath);
       expectNoPrivacySentinels(result.stdout);
     } finally {
@@ -434,40 +377,39 @@ describe("CLI behavior characterization", () => {
     }
   });
 
-  it("improve --json returns review-only instruction suggestions", async () => {
+  it("audit --apply and --json deprecate improve while reporting from the v2 store", async () => {
     const workspace = await createTempWorkspace();
     try {
+      const sessionEnv = cliEnv(workspace);
       const transcriptDir = join(
         workspace.homeDir,
         ".claude",
         "projects",
         claudeProjectDirectoryName(workspace.projectDir)
       );
-      await writeTranscript(join(transcriptDir, "one.jsonl"), unvalidatedEditTranscript());
-      await writeTranscript(join(transcriptDir, "two.jsonl"), unvalidatedEditTranscript());
+      // Record three retry sessions so the instruction window sees validation_retry >= 3.
+      for (const session of ["apply-1", "apply-2", "apply-3"]) {
+        const transcriptPath = join(transcriptDir, `${session}.jsonl`);
+        await writeTranscript(transcriptPath, repeatedFailedTestTranscript(3));
+        await runCli(["statusline"], {
+          env: sessionEnv,
+          input: statusInput({ session_id: session, cwd: workspace.projectDir, transcript_path: transcriptPath, terminal_width: 180 })
+        });
+      }
+      await writeFile(join(workspace.projectDir, "CLAUDE.md"), "# Project\n\nKeep this user line.\n", "utf8");
 
-      const result = await runCli(["improve", "--json", "--project", workspace.projectDir, "--home", workspace.homeDir], {
-        env: cliEnv(workspace)
+      const result = await runCli(["audit", "--apply", "--project", workspace.projectDir, "--home", workspace.homeDir], {
+        env: sessionEnv
       });
-      const parsed = JSON.parse(result.stdout) as {
-        kind: string;
-        mode: string;
-        suggestions: Array<{ scope: string; target: string; instruction: string }>;
-      };
+      const claudeText = await readFile(join(workspace.projectDir, "CLAUDE.md"), "utf8");
 
       expect(result.exitCode).toBe(0);
-      expect(result.stderr).toBe("");
-      expect(parsed.kind).toBe("improve");
-      expect(parsed.mode).toBe("review");
-      expect(parsed.suggestions).toContainEqual(
-        expect.objectContaining({
-          scope: "project",
-          target: "project_claude",
-          instruction: "After changing code, run the smallest relevant check."
-        })
-      );
-      await expect(pathExists(join(workspace.projectDir, "CLAUDE.md"))).resolves.toBe(false);
-      expectNoPrivacySentinels(result.stdout);
+      expect(result.stdout).toContain("Proposed CLAUDE.md diff:");
+      expect(result.stdout).toContain("Applied:");
+      expect(claudeText).toContain("Keep this user line.");
+      expect(claudeText).toContain("<!-- bb-cc-lite improve:start -->");
+      expect(claudeText).toContain("- Inspect the first failure before rerunning a failed check.");
+      expectNoPrivacySentinels(result.stdout, claudeText);
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -539,27 +481,32 @@ describe("CLI behavior characterization", () => {
     }
   });
 
-  it("unlearn clears all learned baselines", async () => {
+  it("uninstall --purge removes learned baselines, lesson memory, and the event store", async () => {
     const workspace = await createTempWorkspace();
     try {
+      const env = cliEnv(workspace);
+      await runCli(["install", "--project", workspace.projectDir, "--home", workspace.homeDir, "--no-learn"], { env });
       const baselinePath = join(workspace.appHome, "baseline.json");
       const projectKey = projectKeyFromPath(workspace.projectDir);
       const projectBaselineFile = projectBaselinePath({ appHomePath: workspace.appHome, projectKey });
       const lessonFile = lessonMemoryPath({ appHomePath: workspace.appHome, projectKey });
+      const storeFile = join(workspace.appHome, "events.json");
       await writeFile(baselinePath, '{"schema":"bb-cc-lite.baseline.v1"}\n', "utf8");
       await writeJson(projectBaselineFile, { schema: "bb-cc-lite.baseline.v1" });
       await writeJson(lessonFile, { schema: "bb-cc-lite.lesson-memory.v1" });
+      await writeJson(storeFile, { version: 2, updatedAt: "2026-06-10T00:00:00.000Z", decisions: [], hookEvents: [], feedbackOutcomes: [] });
 
-      const result = await runCli(["unlearn", "--home", workspace.homeDir], {
-        env: cliEnv(workspace)
+      const result = await runCli(["uninstall", "--purge", "--project", workspace.projectDir, "--home", workspace.homeDir], {
+        env
       });
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
-      expect(result.stdout.trim()).toBe("Cleared learned baselines and lesson memory.");
+      expect(result.stdout).toContain("Purged learned data");
       await expect(pathExists(baselinePath)).resolves.toBe(false);
       await expect(pathExists(projectBaselineFile)).resolves.toBe(false);
       await expect(pathExists(lessonFile)).resolves.toBe(false);
+      await expect(pathExists(storeFile)).resolves.toBe(false);
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -640,6 +587,7 @@ describe("CLI behavior characterization", () => {
         env,
         input: statusInput({
           session_id: sessionId,
+          cwd: workspace.projectDir,
           context_window: {
             used_tokens: 84_000,
             total: 200_000
@@ -660,24 +608,17 @@ describe("CLI behavior characterization", () => {
       expect(statusline.stdout.trim()).toContain("●");
       expect(statusline.stdout).toContain("ctx 42%");
 
-      const why = await runCli(["why"], { env });
-      expect(why.exitCode).toBe(0);
-      expect(why.stdout).toContain("Last decision: Healthy.");
-      expect(why.stdout).toContain("Reason: ctx 42%. cache warm.");
-      expect(why.stdout).toContain("Next action: continue normally.");
-      expect(why.stdout).toContain("Cost evidence: $0.0421.");
-
-      const whyJson = await runCli(["why", "--json"], { env });
-      expect(whyJson.exitCode).toBe(0);
-      const parsedWhy = JSON.parse(whyJson.stdout) as { state: string; reasonCode: string; sessionKey?: string };
-      expect(parsedWhy).toMatchObject({
+      const audit = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir, "--json"], { env });
+      expect(audit.exitCode).toBe(0);
+      const parsed = JSON.parse(audit.stdout) as { session: { hasHistory: boolean; state: string; reasonCode: string } };
+      expect(parsed.session).toMatchObject({
+        hasHistory: true,
         state: "Healthy",
         reasonCode: "healthy"
       });
-      expect(parsedWhy.sessionKey).toEqual(expect.any(String));
 
       const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
-      expectNoPrivacySentinels(statusline.stdout, why.stdout, whyJson.stdout, storeText);
+      expectNoPrivacySentinels(statusline.stdout, audit.stdout, storeText);
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -801,18 +742,21 @@ describe("CLI behavior characterization", () => {
         BB_CC_LITE_BUDGET_DURATION_MS: "10000"
       };
 
+      const costProject = workspace.projectDir;
+      const durationProject = join(workspace.root, "proj-duration");
+
       const costStatusline = await runCli(["statusline"], {
         env,
         input: statusInput({
           session_id: "session-budget-env-cost",
-          cwd: workspace.projectDir,
+          cwd: costProject,
           cost: {
             total_cost_usd: 0.11
           },
           terminal_width: 180
         })
       });
-      const costWhy = await runCli(["why", "--session", "session-budget-env-cost", "--json"], { env });
+      const costAudit = await runCli(["audit", "--project", costProject, "--home", workspace.homeDir, "--json"], { env });
       const durationTranscriptPath = join(workspace.root, "transcripts", "duration-active.jsonl");
       await writeTranscript(durationTranscriptPath, readHeavyTranscript());
 
@@ -820,20 +764,20 @@ describe("CLI behavior characterization", () => {
         env,
         input: statusInput({
           session_id: "session-budget-env-duration",
-          cwd: workspace.projectDir,
+          cwd: durationProject,
           transcript_path: durationTranscriptPath,
           duration_ms: 11000,
           terminal_width: 180
         })
       });
-      const durationWhy = await runCli(["why", "--session", "session-budget-env-duration", "--json"], { env });
+      const durationAudit = await runCli(["audit", "--project", durationProject, "--home", workspace.homeDir, "--json"], { env });
 
       expect(costStatusline.exitCode).toBe(0);
       expect(durationStatusline.exitCode).toBe(0);
       expect(costStatusline.stdout).toContain("●");
       expect(durationStatusline.stdout).toContain("●");
-      expect(JSON.parse(costWhy.stdout)).toMatchObject({ reasonCode: "cost_budget" });
-      expect(JSON.parse(durationWhy.stdout)).toMatchObject({ reasonCode: "duration_budget" });
+      expect(JSON.parse(costAudit.stdout).session).toMatchObject({ reasonCode: "cost_budget" });
+      expect(JSON.parse(durationAudit.stdout).session).toMatchObject({ reasonCode: "duration_budget" });
       expectNoPrivacySentinels(costStatusline.stdout, durationStatusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
@@ -1043,6 +987,7 @@ describe("CLI behavior characterization", () => {
         env,
         input: statusInput({
           session_id: "session-recovery-baseline",
+          cwd: workspace.projectDir,
           transcript_path: transcriptPath,
           terminal_width: 180
         })
@@ -1053,16 +998,10 @@ describe("CLI behavior characterization", () => {
       expect(statusline.stdout).toContain("◐");
       expect(statusline.stdout).toContain("tests failed twice");
 
-      const why = await runCli(["why"], { env });
-      expect(why.stdout).toContain("Baseline: test failures usually recovered after one targeted fix.");
-
-      const whyJson = await runCli(["why", "--json"], { env });
-      const parsed = JSON.parse(whyJson.stdout) as { state: string; baselineNote?: string };
-      expect(parsed).toMatchObject({
-        state: "Careful",
-        baselineNote: "test failures usually recovered after one targeted fix"
-      });
-      expectNoPrivacySentinels(statusline.stdout, why.stdout, whyJson.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+      const audit = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir, "--json"], { env });
+      const parsed = JSON.parse(audit.stdout) as { session: { state: string; light: string } };
+      expect(parsed.session).toMatchObject({ state: "Careful", light: "blue" });
+      expectNoPrivacySentinels(statusline.stdout, audit.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -1079,6 +1018,7 @@ describe("CLI behavior characterization", () => {
         env,
         input: statusInput({
           session_id: "session-unchecked-edit",
+          cwd: workspace.projectDir,
           transcript_path: transcriptPath,
           terminal_width: 180
         })
@@ -1091,11 +1031,10 @@ describe("CLI behavior characterization", () => {
       expect(statusline.stdout).not.toContain("focused check");
       expect(statusline.stdout).not.toContain("validation lag");
 
-      const why = await runCli(["why"], { env });
-      expect(why.stdout).toContain("Reason: edits have not been checked.");
-      expect(why.stdout).toContain("Next action: ask Claude to run the smallest relevant check.");
-      expect(why.stdout).not.toContain("focused check");
-      expectNoPrivacySentinels(statusline.stdout, why.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+      const audit = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir, "--json"], { env });
+      const parsed = JSON.parse(audit.stdout) as { session: { hasHistory: boolean; light: string } };
+      expect(parsed.session).toMatchObject({ hasHistory: true, light: "green" });
+      expectNoPrivacySentinels(statusline.stdout, audit.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -1135,12 +1074,15 @@ describe("CLI behavior characterization", () => {
         env,
         input: statusInput({
           session_id: sessionId,
+          cwd: workspace.projectDir,
           terminal_width: 180
         })
       });
-      const why = await runCli(["why", "--session", sessionId], { env });
-      const whyJson = await runCli(["why", "--session", sessionId, "--json"], { env });
-      const parsedWhy = JSON.parse(whyJson.stdout) as { feedbackOutcomes?: Array<{ outcome?: string; reasonCode?: string }> };
+      const audit = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir], { env });
+      const auditJson = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir, "--json"], { env });
+      const parsed = JSON.parse(auditJson.stdout) as {
+        session: { feedbackOutcomes?: Array<{ outcome?: string; reasonCode?: string }> };
+      };
 
       expect(editHook.exitCode).toBe(0);
       expect(editHook.stdout).toContain("edits have not been validated yet");
@@ -1148,19 +1090,19 @@ describe("CLI behavior characterization", () => {
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stdout).toContain("●");
       expect(statusline.stdout).toContain("testing");
-      expect(why.stdout).toContain("Recent bb loop:");
-      expect(why.stdout).toContain("Coach feedback: edits needed validation.");
-      expect(why.stdout).toContain("Claude ran tests.");
-      expect(why.stdout).toContain("Tests passed.");
-      expect(why.stdout).toContain("Outcome: resolved.");
-      expect(parsedWhy.feedbackOutcomes).toEqual([
+      expect(audit.stdout).toContain("Recent bb loop:");
+      expect(audit.stdout).toContain("Coach feedback: edits needed validation.");
+      expect(audit.stdout).toContain("Claude ran tests.");
+      expect(audit.stdout).toContain("Tests passed.");
+      expect(audit.stdout).toContain("Outcome: resolved.");
+      expect(parsed.session.feedbackOutcomes).toEqual([
         expect.objectContaining({
           reasonCode: "edit_without_validation",
           outcome: "resolved"
         })
       ]);
-      expect(whyJson.stdout).not.toContain("\u001b[");
-      expectNoPrivacySentinels(editHook.stdout, validationHook.stdout, statusline.stdout, why.stdout, whyJson.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+      expect(auditJson.stdout).not.toContain("\u001b[");
+      expectNoPrivacySentinels(editHook.stdout, validationHook.stdout, statusline.stdout, audit.stdout, auditJson.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -1178,6 +1120,7 @@ describe("CLI behavior characterization", () => {
         env,
         input: statusInput({
           session_id: "session-unusual-unchecked-edit",
+          cwd: workspace.projectDir,
           transcript_path: transcriptPath,
           terminal_width: 180
         })
@@ -1190,9 +1133,11 @@ describe("CLI behavior characterization", () => {
       expect(statusline.stdout).not.toContain("focused check");
       expect(statusline.stdout).not.toContain("validation lag");
 
-      const why = await runCli(["why"], { env });
-      expect(why.stdout).toContain("Baseline: past sessions usually checked edits sooner.");
-      expectNoPrivacySentinels(statusline.stdout, why.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+      const audit = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir, "--json"], { env });
+      const parsed = JSON.parse(audit.stdout) as { session: { light: string; findings: Array<{ category: string }> } };
+      expect(parsed.session.light).toBe("blue");
+      expect(parsed.session.findings.map((finding) => finding.category)).toContain("edit_drift");
+      expectNoPrivacySentinels(statusline.stdout, audit.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -1224,18 +1169,20 @@ describe("CLI behavior characterization", () => {
     }
   });
 
-  it("renders Stop with inline why and lets why target an older explicit session", async () => {
+  it("renders Stop on the line and keeps each project's audit session isolated", async () => {
     const workspace = await createTempWorkspace();
     try {
       const env = cliEnv(workspace);
-      const stopSessionId = "session-stop";
+      const stopProject = workspace.projectDir;
+      const latestProject = join(workspace.root, "proj-latest");
       const transcriptPath = join(workspace.root, "transcripts", "stop.jsonl");
       await writeTranscript(transcriptPath, repeatedFailedTestTranscript(3));
 
       const stop = await runCli(["statusline"], {
         env,
         input: statusInput({
-          session_id: stopSessionId,
+          session_id: "session-stop",
+          cwd: stopProject,
           transcript_path: transcriptPath,
           terminal_width: 180
         })
@@ -1249,6 +1196,7 @@ describe("CLI behavior characterization", () => {
         env,
         input: statusInput({
           session_id: "session-latest",
+          cwd: latestProject,
           context_window: {
             used_tokens: 20_000,
             total: 200_000
@@ -1259,28 +1207,17 @@ describe("CLI behavior characterization", () => {
       expect(latest.exitCode).toBe(0);
       expect(latest.stdout).toContain("●");
 
-      const whyLatest = await runCli(["why"], { env });
-      expect(whyLatest.exitCode).toBe(0);
-      expect(whyLatest.stdout).toContain("Last decision: Healthy.");
+      const auditLatest = await runCli(["audit", "--project", latestProject, "--home", workspace.homeDir, "--json"], { env });
+      expect(JSON.parse(auditLatest.stdout).session).toMatchObject({ state: "Healthy" });
 
-      const whyStop = await runCli(["why", "--session", stopSessionId], { env });
-      expect(whyStop.exitCode).toBe(0);
-      expect(whyStop.stdout).toContain("Last decision: Stop.");
-      expect(whyStop.stdout).toContain(
-        "Reason: same test failed 3x without a fix. Claude is repeating the same failure without a fix or passing check."
-      );
-      expect(whyStop.stdout).toContain("Next action: stop and inspect first failure.");
-
-      const whyJson = await runCli(["why", "--session", stopSessionId, "--json"], { env });
-      expect(whyJson.exitCode).toBe(0);
-      expect(JSON.parse(whyJson.stdout)).toMatchObject({
-        state: "Stop",
-        reasonCode: "blind_retry_loop",
-        primaryEvidence: "same test failed 3x without a fix"
-      });
+      const auditStop = await runCli(["audit", "--project", stopProject, "--home", workspace.homeDir, "--json"], { env });
+      const stopSession = JSON.parse(auditStop.stdout).session as { state: string; reasonCode: string; findings: Array<{ category: string; evidence: string }> };
+      expect(stopSession.state).toBe("Stop");
+      expect(stopSession.reasonCode).toBe("blind_retry_loop");
+      expect(stopSession.findings[0]).toMatchObject({ category: "blind_retry_loop", evidence: "3 fails, no fix between runs" });
 
       const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
-      expectNoPrivacySentinels(stop.stdout, latest.stdout, whyLatest.stdout, whyStop.stdout, whyJson.stdout, storeText);
+      expectNoPrivacySentinels(stop.stdout, latest.stdout, auditLatest.stdout, auditStop.stdout, storeText);
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -1298,6 +1235,7 @@ describe("CLI behavior characterization", () => {
         env,
         input: statusInput({
           session_id: "session-mcp-stop",
+          cwd: workspace.projectDir,
           transcript_path: transcriptPath,
           terminal_width: 220
         })
@@ -1308,27 +1246,20 @@ describe("CLI behavior characterization", () => {
       expect(statusline.stdout).toContain("■");
       expect(statusline.stdout).toContain("3 fails, no fix between runs");
 
-      const why = await runCli(["why"], { env });
-      expect(why.exitCode).toBe(0);
-      expect(why.stdout).toContain(
-        "Reason: same MCP tool failed 3x without a fix. Claude is repeating the same failure without a fix or passing check."
-      );
-      expect(why.stdout).toContain("Next action: stop and inspect first failure.");
-
-      const whyJson = await runCli(["why", "--json"], { env });
-      expect(whyJson.exitCode).toBe(0);
-      expect(JSON.parse(whyJson.stdout)).toMatchObject({
+      const audit = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir], { env });
+      const auditJson = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir, "--json"], { env });
+      expect(auditJson.exitCode).toBe(0);
+      expect(JSON.parse(auditJson.stdout).session).toMatchObject({
         state: "Stop",
-        reasonCode: "blind_retry_loop",
-        primaryEvidence: "same MCP tool failed 3x without a fix"
+        reasonCode: "blind_retry_loop"
       });
 
       const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
-      for (const output of [statusline.stdout, why.stdout, whyJson.stdout, storeText]) {
+      for (const output of [statusline.stdout, audit.stdout, auditJson.stdout, storeText]) {
         expect(output).not.toContain(rawMcpName);
         expect(output).not.toContain("mcp__");
       }
-      expectNoPrivacySentinels(statusline.stdout, why.stdout, whyJson.stdout, storeText);
+      expectNoPrivacySentinels(statusline.stdout, audit.stdout, auditJson.stdout, storeText);
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -1346,6 +1277,7 @@ describe("CLI behavior characterization", () => {
         env,
         input: statusInput({
           session_id: rawSessionId,
+          cwd: workspace.projectDir,
           transcript_path: transcriptPath,
           terminal_width: 180
         })
@@ -1354,6 +1286,7 @@ describe("CLI behavior characterization", () => {
         env,
         input: statusInput({
           session_id: rawSessionId,
+          cwd: workspace.projectDir,
           transcript_path: transcriptPath,
           terminal_width: 52
         })
@@ -1367,23 +1300,19 @@ describe("CLI behavior characterization", () => {
       expect(visibleLength(narrow.stdout.trim())).toBeLessThanOrEqual(52);
       expect(narrow.stdout).toContain("●");
 
-      const why = await runCli(["why", "--session", rawSessionId], { env });
-      const whyJson = await runCli(["why", "--session", rawSessionId, "--json"], { env });
-      expect(why.exitCode).toBe(0);
-      expect(why.stdout).toContain("Reason: single tool result added ~12,400 tokens.");
-      expect(why.stdout).toContain("Next action: compact or narrow the next step.");
-      expect(whyJson.exitCode).toBe(0);
-      expect(JSON.parse(whyJson.stdout)).toMatchObject({
+      const audit = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir], { env });
+      const auditJson = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir, "--json"], { env });
+      expect(auditJson.exitCode).toBe(0);
+      expect(JSON.parse(auditJson.stdout).session).toMatchObject({
         state: "Careful",
-        reasonCode: "tool_result_explosion",
-        primaryEvidence: "single tool result added ~12,400 tokens"
+        reasonCode: "tool_result_explosion"
       });
 
       const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
       expect(storeText).toContain("tool_result_explosion");
-      expectNoPrivacySentinels(wide.stdout, narrow.stdout, why.stdout, whyJson.stdout, storeText);
+      expectNoPrivacySentinels(wide.stdout, narrow.stdout, audit.stdout, auditJson.stdout, storeText);
       for (const rawPath of [workspace.root, workspace.projectDir, workspace.homeDir, workspace.appHome, transcriptPath]) {
-        expect([wide.stdout, narrow.stdout, why.stdout, whyJson.stdout, storeText].join("\n")).not.toContain(rawPath);
+        expect([wide.stdout, narrow.stdout, audit.stdout, auditJson.stdout, storeText].join("\n")).not.toContain(rawPath);
       }
     } finally {
       await removeTempWorkspace(workspace);
@@ -1410,6 +1339,7 @@ describe("CLI behavior characterization", () => {
         env,
         input: statusInput({
           session_id: rawSessionId,
+          cwd: workspace.projectDir,
           transcript_path: transcriptPath,
           terminal_width: 240
         })
@@ -1419,11 +1349,11 @@ describe("CLI behavior characterization", () => {
       expect(statusline.stderr).toBe("");
       expect(statusline.stdout).toContain("■");
 
-      const why = await runCli(["why", "--session", rawSessionId], { env });
-      const whyJson = await runCli(["why", "--session", rawSessionId, "--json"], { env });
+      const why = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir, "--transcript", transcriptPath], { env });
+      const auditJson = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir, "--transcript", transcriptPath, "--json"], { env });
       expect(why.exitCode).toBe(0);
-      expect(whyJson.exitCode).toBe(0);
-      expect(JSON.parse(whyJson.stdout)).toMatchObject({
+      expect(auditJson.exitCode).toBe(0);
+      expect(JSON.parse(auditJson.stdout).session).toMatchObject({
         state: "Stop"
       });
 
@@ -1457,7 +1387,7 @@ describe("CLI behavior characterization", () => {
       const serializedSurfaces = [
         statusline.stdout,
         why.stdout,
-        whyJson.stdout,
+        auditJson.stdout,
         refresh.stdout,
         refresh.stderr,
         doctor.stdout,

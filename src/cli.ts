@@ -6,15 +6,14 @@ import {
   formatDoctorChecks,
   runDoctor
 } from "./doctor.js";
-import { formatAuditReport, runAudit } from "./audit.js";
-import { formatDeepAdvisoryReport, runDeepAdvisoryAudit } from "./deep-advisory.js";
+import { renderAuditReport, runAuditReport } from "./audit-report.js";
 import { runBaselineRefresh } from "./baseline-refresh.js";
 import { handleHook } from "./hook-control.js";
-import { formatImproveReport, runImprove } from "./improve.js";
+import { eventStorePath } from "./paths.js";
+import { rm } from "node:fs/promises";
 import { installStatusLine, uninstallStatusLine, type InstallMode, type SettingsScope } from "./settings.js";
 import { readStdin } from "./status-input.js";
 import { createStatusLine } from "./statusline.js";
-import { formatWhy, formatWhyJson, getWhyContext, shouldColorWhy } from "./why.js";
 
 interface ParsedArgs {
   command: string;
@@ -40,16 +39,16 @@ async function main(): Promise<void> {
       await commandUninstall(args);
       break;
     case "unlearn":
-      await commandUnlearn(args);
+      await commandUnlearn();
       break;
     case "learn":
-      await commandLearn(args);
+      await commandLearn();
       break;
     case "statusline":
       await commandStatusLine();
       break;
     case "why":
-      await commandWhy(args);
+      await commandWhy();
       break;
     case "doctor":
       await commandDoctor(args);
@@ -58,7 +57,7 @@ async function main(): Promise<void> {
       await commandAudit(args);
       break;
     case "improve":
-      await commandImprove(args);
+      await commandImprove();
       break;
     case "baseline-refresh":
       await commandBaselineRefresh(args);
@@ -115,24 +114,21 @@ async function commandUninstall(args: ParsedArgs): Promise<void> {
   console.log(result.message);
   if (result.status === "refused") {
     process.exitCode = 1;
+    return;
+  }
+  if (args.flags.purge) {
+    const cleared = await clearPersonalBaseline({ homeDir: stringFlag(args, "home") });
+    await rm(eventStorePath(), { force: true });
+    console.log(`Purged learned data: ${cleared.message.replace(/^cleared /u, "")}, and the derived event store.`);
   }
 }
 
-async function commandUnlearn(args: ParsedArgs): Promise<void> {
-  const result = await clearPersonalBaseline({ homeDir: stringFlag(args, "home") });
-  console.log(result.message.replace(/^cleared/u, "Cleared") + ".");
+async function commandUnlearn(): Promise<void> {
+  console.log("`bb-cc-lite unlearn` is deprecated; folded into: bb-cc-lite uninstall --purge");
 }
 
-async function commandLearn(args: ParsedArgs): Promise<void> {
-  const result = await buildPersonalBaseline({
-    homeDir: stringFlag(args, "home"),
-    projectDir: stringFlag(args, "project"),
-    transcriptPath: stringFlag(args, "transcript")
-  });
-  console.log(result.message);
-  if (!result.ok) {
-    process.exitCode = 1;
-  }
+async function commandLearn(): Promise<void> {
+  console.log("`bb-cc-lite learn` is deprecated; the baseline is built on install and refreshed automatically.");
 }
 
 async function commandStatusLine(): Promise<void> {
@@ -184,18 +180,8 @@ async function commandHook(args: ParsedArgs): Promise<void> {
   }
 }
 
-async function commandWhy(args: ParsedArgs): Promise<void> {
-  const context = await getWhyContext({ sessionId: stringFlag(args, "session") });
-  const decision = context.decision;
-  if (args.flags.json) {
-    console.log(JSON.stringify(decision ? formatWhyJson(decision, context.feedbackOutcomes) : null, null, 2));
-    return;
-  }
-  if (!decision) {
-    console.log("No bb-cc-lite decision has been recorded yet. Run the statusline command from Claude Code first.");
-    return;
-  }
-  console.log(formatWhy(decision, { feedbackOutcomes: context.feedbackOutcomes, color: shouldColorWhy() }));
+async function commandWhy(): Promise<void> {
+  console.log("`bb-cc-lite why` is deprecated; folded into: bb-cc-lite audit (current-session view)");
 }
 
 async function commandDoctor(args: ParsedArgs): Promise<void> {
@@ -218,45 +204,16 @@ async function commandDoctor(args: ParsedArgs): Promise<void> {
 
 async function commandAudit(args: ParsedArgs): Promise<void> {
   validateAuditScopeFlags(args);
-  if (args.flags.deep && args.flags.basic) {
-    throw new Error("--deep cannot be combined with --basic");
+  if (args.flags.apply && args.flags.cleanup) {
+    throw new Error("--apply cannot be combined with --cleanup");
   }
-  const options = {
-    projectDir: stringFlag(args, "project"),
-    homeDir: stringFlag(args, "home"),
-    transcriptPath: stringFlag(args, "transcript"),
-    allProjects: Boolean(args.flags["all-projects"]),
-    recent: numberFlag(args, "recent")
-  };
-  if (args.flags.deep) {
-    const report = await runDeepAdvisoryAudit(options);
-    if (args.flags.json) {
-      console.log(JSON.stringify(report, null, 2));
-      return;
-    }
-    console.log(formatDeepAdvisoryReport(report, { color: shouldUseColor() }));
-    return;
-  }
-  const report = await runAudit(options);
-  if (args.flags.json) {
-    console.log(JSON.stringify(report, null, 2));
-    return;
-  }
-  console.log(formatAuditReport(report, { color: shouldUseColor() }));
-}
-
-async function commandImprove(args: ParsedArgs): Promise<void> {
-  validateAuditScopeFlags(args);
   if (args.flags.apply && args.flags.transcript) {
     throw new Error("--apply cannot be combined with --transcript");
   }
   if (args.flags.cleanup && args.flags.transcript) {
     throw new Error("--cleanup cannot be combined with --transcript");
   }
-  if (args.flags.cleanup && args.flags["all-projects"] && !args.flags.global) {
-    throw new Error("--cleanup --all-projects requires --global");
-  }
-  const report = await runImprove({
+  const report = await runAuditReport({
     projectDir: stringFlag(args, "project"),
     homeDir: stringFlag(args, "home"),
     transcriptPath: stringFlag(args, "transcript"),
@@ -270,7 +227,11 @@ async function commandImprove(args: ParsedArgs): Promise<void> {
     console.log(JSON.stringify(report, null, 2));
     return;
   }
-  console.log(formatImproveReport(report));
+  console.log(renderAuditReport(report, { color: shouldUseColor() }));
+}
+
+async function commandImprove(): Promise<void> {
+  console.log("`bb-cc-lite improve` is deprecated; folded into: bb-cc-lite audit (instruction report; --apply to write)");
 }
 
 function validateAuditScopeFlags(args: ParsedArgs): void {
@@ -395,24 +356,25 @@ function printHelp(topic?: string): void {
 
 Usage:
   bb-cc-lite audit [--project <path>] [--all-projects] [--transcript <path>]
-                   [--recent <count>] [--deep] [--basic] [--json]
+                   [--recent <count>] [--global] [--apply] [--cleanup] [--json]
 
-Default audit prints the compact retrospective report.
-Use --deep for the multi-finding deep advisory report.
-Use --json for machine-readable output.
+audit prints three sections:
+  [1] Current session - the current project's latest decision: dot, age, all findings,
+      the edit ledger, and the coach/guard feedback-outcome ledger.
+  [2] Recent patterns - aggregated behavioral patterns across recent local history.
+  [3] Instruction report - your CLAUDE.md lines correlated against recent findings:
+      removal candidates, apparently-followed lines, and gaps.
+
+Plain audit never writes. --apply shows a diff, then writes only inside the marked
+bb-cc-lite CLAUDE.md block (backup first). --cleanup removes that block (backup first).
+Use --json for machine-readable output covering all three sections.
 `);
       return;
     case "improve":
       console.log(`bb-cc-lite improve
 
-Usage:
-  bb-cc-lite improve [--project <path>] [--all-projects] [--transcript <path>]
-                     [--recent <count>] [--global] [--apply] [--cleanup] [--json]
-
-By default, improve prints reviewed instruction suggestions only.
-Use --apply to write writable global/project suggestions inside marked CLAUDE.md blocks.
-Use --cleanup to remove a marked bb-cc-lite CLAUDE.md block with a backup.
-Session-only suggestions are never written.
+improve is deprecated and folded into: bb-cc-lite audit
+The instruction report replaces it; use --apply to write, --cleanup to remove the block.
 `);
       return;
     case "install":
@@ -437,8 +399,8 @@ Usage:
     case "why":
       console.log(`bb-cc-lite why
 
-Usage:
-  bb-cc-lite why [--session <id>] [--json]
+why is deprecated and folded into: bb-cc-lite audit
+The current-session view (section 1) replaces it, correctly scoped to this project.
 `);
       return;
     case "statusline":
@@ -451,24 +413,22 @@ Usage:
     case "unlearn":
       console.log(`bb-cc-lite unlearn
 
-Usage:
-  bb-cc-lite unlearn
+unlearn is deprecated and folded into: bb-cc-lite uninstall --purge
 `);
       return;
     case "learn":
       console.log(`bb-cc-lite learn
 
-Usage:
-  bb-cc-lite learn [--project <path>] [--transcript <path>]
-
-Builds the local safe aggregate baseline from Claude Code JSONL history.
+learn is deprecated; the baseline is built on install and refreshed automatically.
 `);
       return;
     case "uninstall":
       console.log(`bb-cc-lite uninstall
 
 Usage:
-  bb-cc-lite uninstall [--scope local|project|user] [--force]
+  bb-cc-lite uninstall [--scope local|project|user] [--force] [--purge]
+
+--purge also deletes learned baselines, lesson memory, and the derived event store.
 `);
       return;
   }
@@ -477,36 +437,29 @@ Usage:
 
 Usage:
   bb-cc-lite audit [--project <path>] [--all-projects] [--transcript <path>]
-                   [--recent <count>] [--deep] [--basic] [--json]
-  bb-cc-lite improve [--project <path>] [--all-projects] [--transcript <path>]
-                     [--recent <count>] [--global] [--apply] [--cleanup] [--json]
+                   [--recent <count>] [--global] [--apply] [--cleanup] [--json]
   bb-cc-lite install [--scope local|project|user] [--observe-only] [--guard]
                      [--replace] [--no-learn]
   bb-cc-lite statusline
-  bb-cc-lite why [--session <id>] [--json]
   bb-cc-lite doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing]
                     [--baseline] [--build-baseline] [--replay-baseline] [--clear-baseline]
-  bb-cc-lite learn [--project <path>] [--transcript <path>]
-  bb-cc-lite unlearn
-  bb-cc-lite uninstall [--scope local|project|user] [--force]
+  bb-cc-lite uninstall [--scope local|project|user] [--force] [--purge]
 
-Learning:
-  audit scans recent local Claude JSONL history and prints a compact retrospective report.
-  audit --deep prints the multi-finding deep advisory report.
-  improve suggests Claude instruction updates from repeated safe findings.
-  improve --apply writes only marked bb-cc-lite blocks in CLAUDE.md.
-  improve --cleanup removes a marked bb-cc-lite block after creating a backup.
+audit:
+  audit [1] current session, [2] recent patterns, [3] instruction report.
+  Plain audit never writes; --apply writes only the marked bb-cc-lite CLAUDE.md block
+  after showing a diff, and --cleanup removes that block. Both back up first.
   --all-projects scans newest local transcripts across ~/.claude/projects.
+
+install:
   install enables coach mode and builds a small local baseline by default.
   --observe-only keeps display and local telemetry without Claude-facing feedback.
   --guard enables coach feedback plus strict repeated-validation retry denial.
   install preserves an existing Claude statusLine unless --replace is passed.
   --no-learn skips baseline creation and disables lesson memory.
-  learn refreshes the same safe aggregate baseline without installing anything.
-  doctor --baseline shows a safe aggregate summary, including recent and validation categories.
-  doctor --build-baseline refreshes the baseline.
-  doctor --replay-baseline evaluates aggregate holdout metrics from local JSONL history.
-  doctor --clear-baseline and unlearn remove learned baselines.
+  uninstall --purge removes learned baselines, lesson memory, and the event store.
+
+Deprecated (folded into audit): why, improve, learn, unlearn.
 `);
 }
 

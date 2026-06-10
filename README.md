@@ -89,9 +89,9 @@ Humans usually notice too late: after the same check failed three times, after a
 
 `guard` includes coach feedback. It may deny a high-confidence repeated Bash validation retry, such as rerunning the same test/lint/typecheck/build category after repeated failures without an edit or passing check. It does not broadly block normal reads, edits, or arbitrary commands.
 
-`bb-cc-lite` also records safe feedback outcomes. For example, if bb asks Claude to validate after an edit and Claude runs a passing test, `bb-cc-lite why` can show that the feedback was resolved.
+`bb-cc-lite` also records safe feedback outcomes. For example, if bb asks Claude to validate after an edit and Claude runs a passing test, the current-session view of `bb-cc-lite audit` can show that the feedback was resolved.
 
-When available, `why` includes the recent bb loop:
+When available, the current-session view includes the recent bb loop:
 
 ```text
 Recent bb loop:
@@ -157,82 +157,59 @@ Supported install scopes are `local`, `project`, and `user`. Use `local` for the
 
 ## Try Before Installing
 
-Run a deep advisory audit against recent local Claude Code history:
+Run an audit against recent local Claude Code history:
 
 ```bash
-npx --yes bb-cc-lite audit --deep --project .
-npx --yes bb-cc-lite audit --deep --all-projects --recent 200
+npx --yes bb-cc-lite audit --project .
+npx --yes bb-cc-lite audit --all-projects --recent 200
 ```
 
-`audit --deep` scans recent local Claude Code JSONL history and reports concrete risky paths. It highlights unchecked edits, blind retries, failed edits, repeated reads, recovery after change, compaction risk, and session-end risk.
+`audit` reads local history and prints three sections. It does not install a status line or hooks. Use `--all-projects` only when you want to inspect newest transcripts across local Claude projects.
 
-It does not install a status line or hooks. Use `--all-projects` only when you want to inspect newest transcripts across local Claude projects. Plain `audit` keeps the compact one-finding retrospective report available.
+## Audit
 
-## Audit And Improve
+`audit` is the offline gauge: the status line is *now*, audit is *the story*. It prints three sections.
 
-The offline flow is:
+**[1] Current session** — the current project's latest decision: its dot, age (`12s ago`), every finding behind the dot with confidence, the edit ledger (file, edit count, unchecked/cleared), and the coach/guard feedback-outcome ledger. It is scoped to *this* project: if a repo has no bb history, audit says so rather than showing another repo's session.
 
-```bash
-bb-cc-lite audit --deep --project .
-bb-cc-lite improve --project .
-bb-cc-lite improve --all-projects --global
-```
+**[2] Recent patterns** — aggregated behavioral patterns across recent local history: blind retries, unchecked-edit streaks, repeated reads, recovery after change, compaction and session-end risk, with counts and the worst sessions.
 
-The idea is simple:
+**[3] Instruction report** — your `CLAUDE.md` lines correlated against recent finding categories. It reports, in order and only when non-empty:
 
-1. `audit` finds risky session paths.
-2. `improve` turns repeated safe lessons into suggested Claude instruction updates.
-3. You review the suggestions before anything is written.
+- **Candidates for removal** — lines that matched no recent finding category, cited by file and line number.
+- **Apparently followed** — lines whose category shows high compliance (possibly redundant).
+- **Gaps** — recurring finding categories (seen at least three times) that no instruction line addresses.
 
-`why` stays small. It explains the latest stored decision and does not edit instruction files.
+Every claim is phrased as "matched / didn't match", never as causality. bb reads your `CLAUDE.md` locally to quote lines with line numbers; that content is never written into bb's store.
 
-`improve` splits lessons by scope:
+### Writing changes
 
-- Global lessons go to the global Claude instruction file, such as `~/.claude/CLAUDE.md`.
-- Project lessons go to the current project's Claude instruction file, such as `./CLAUDE.md`.
-- One-off session notes stay in the report and are not written.
+Plain `audit` never writes anything outside bb's own store. `audit --apply` first prints a unified diff, then writes only inside a marked `bb-cc-lite` block (backup first). Additions are stingy: a pattern seen at least three times, one generic line per pattern, at most two per apply, never raw commands, paths, or prompts. bb never modifies or deletes a line you wrote — removal suggestions appear in the diff as commented proposals only, and a re-run with unchanged evidence is a no-op. `audit --cleanup` removes the marked block after a backup.
 
-Before applying a lesson, review:
-
-- Did this happen more than once?
-- Is this a global habit, or only true for this project?
-- Is the lesson short enough for Claude to follow?
-- Does it avoid raw prompts, tool output, commands, file contents, and local paths?
-- Could this instruction make Claude too cautious or too broad?
-
-The default is review-only. `--apply` writes only a marked `bb-cc-lite` block after review. `improve --cleanup` removes a marked bb-managed block after creating a backup.
-
-`bb-cc-lite` is still a Claude Code tool. `improve` does not edit `AGENTS.md` in this version.
+Project-specific lessons route to `./CLAUDE.md`; cross-project habits (with `--global` or `--all-projects`) route to `~/.claude/CLAUDE.md`. `audit` does not edit `AGENTS.md`.
 
 ## Useful Commands
 
 ```bash
 bb-cc-lite audit --project .
-bb-cc-lite audit --deep --project .
-bb-cc-lite audit --deep --all-projects --recent 200
-bb-cc-lite improve --project .
-bb-cc-lite improve --cleanup --project .
-bb-cc-lite learn --project .
-bb-cc-lite why
+bb-cc-lite audit --all-projects --recent 200
+bb-cc-lite audit --apply --project .
+bb-cc-lite audit --cleanup --project .
 bb-cc-lite doctor
 bb-cc-lite doctor --baseline
-bb-cc-lite unlearn
 bb-cc-lite uninstall --scope local
+bb-cc-lite uninstall --purge
 ```
 
-`audit` scans recent history without installing. Use `audit --deep` for the multi-finding advisory report.
-
-`learn` refreshes the same safe aggregate baseline that install creates, without installing anything.
-
-`why` explains the latest stored status line decision and recent feedback outcomes when available. It reads the local derived event store; it does not reopen transcripts to expose raw content. Interactive `why` output is lightly colored; set `NO_COLOR=1` or `BB_CC_LITE_COLOR=0` for plain text.
+`audit` scans recent history without installing. Its current-session view reads the local derived event store; it does not reopen transcripts to expose raw content. Interactive output is lightly colored; set `NO_COLOR=1` or `BB_CC_LITE_COLOR=0` for plain text.
 
 `doctor` checks Node, Claude settings, optional hooks, transcript access, pricing cache, and related diagnostics.
 
 `doctor --baseline` shows safe aggregate baseline facts.
 
-`unlearn` clears learned personal baselines, project baselines, and lesson memory.
+`uninstall` removes bb-owned status line and hooks. When a valid backup exists, it restores the previous Claude Code status line. `uninstall --purge` also deletes learned baselines, lesson memory, and the derived event store.
 
-`uninstall` removes bb-owned status line and hooks. When a valid backup exists, it restores the previous Claude Code status line.
+The earlier `why`, `improve`, `learn`, and `unlearn` commands are deprecated. `why` and `improve` are folded into `audit`; `unlearn` is folded into `uninstall --purge`. Each prints a one-line pointer for one minor version.
 
 Budget thresholds can be changed with environment variables:
 

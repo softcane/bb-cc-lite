@@ -14,12 +14,11 @@ This file governs the whole repository.
 ## Command Map
 
 - `bb-cc-lite install [--scope local|project|user] [--replace] [--hooks] [--no-learn]`
-- `bb-cc-lite audit [--project <path>] [--all-projects] [--transcript <path>] [--recent <count>] [--json]`
+- `bb-cc-lite audit [--project <path>] [--all-projects] [--transcript <path>] [--recent <count>] [--global] [--apply] [--cleanup] [--json]`
 - `bb-cc-lite statusline`
-- `bb-cc-lite why [--session <raw-claude-session-id>] [--json]`
 - `bb-cc-lite doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing] [--baseline] [--build-baseline] [--replay-baseline] [--clear-baseline]`
-- `bb-cc-lite unlearn`
-- `bb-cc-lite uninstall [--scope local|project|user]`
+- `bb-cc-lite uninstall [--scope local|project|user] [--purge]`
+- Deprecated pointers (one minor version): `why`, `improve`, `learn` -> `audit`; `unlearn` -> `uninstall --purge`.
 
 ## Source Map
 
@@ -33,7 +32,11 @@ This file governs the whole repository.
 - `src/historical-replay.ts`: aggregate-only holdout replay for baseline QA.
 - `src/signals.ts`: state decision rules.
 - `src/renderer.ts`: width-aware one-line rendering and ANSI color.
-- `src/why.ts`: human-readable explanation for stored decisions.
+- `src/audit-report.ts`: `audit` orchestrator (current session, recent patterns, instruction report) plus the `--apply`/`--cleanup` write path.
+- `src/instruction-correlator.ts`: coarse keyword-to-finding-category matching for the instruction report (isolated, derived-only).
+- `src/instruction-block.ts`: marked CLAUDE.md block convention, backup, and scope routing.
+- `src/feedback-ledger.ts`: coach/guard feedback-outcome ledger rendering (audit section 1).
+- `src/why.ts`: pure formatters for the parallel `decide()` layer (the `why` command is retired).
 - `src/store.ts`: compatibility facade over event-store modules.
 - `src/event-store-*.ts`: local derived event persistence and lookup.
 - `src/hooks.ts`, `src/hook-*.ts`: optional Claude Code hook ingestion.
@@ -45,7 +48,10 @@ This file governs the whole repository.
 ## Test Map
 
 - `test/settings.test.ts`: install, replace, hooks, uninstall, backup restore.
-- `test/cli-characterization.test.ts`: CLI behavior, privacy, statusline/why integration.
+- `test/cli-characterization.test.ts`: CLI behavior, privacy, statusline/audit integration, deprecation pointers.
+- `test/audit-report.test.ts`: audit sections, two-project isolation, zero-write, apply/cleanup, --json.
+- `test/instruction-correlator.test.ts`: keyword/category matching and the three instruction subsections.
+- `test/feedback-ledger.test.ts`: coach/guard feedback-outcome ledger rendering.
 - `test/signals-renderer.test.ts`: signal rules, width-aware rendering, colors.
 - `test/transcript.test.ts`: JSONL transcript parsing and failure detection.
 - `test/failure-episodes.test.ts`: safe failure episodes and blind retry behavior.
