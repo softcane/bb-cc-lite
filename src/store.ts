@@ -11,7 +11,7 @@ import { eventStorePath } from "./paths.js";
 import type { Decision, DerivedHookEvent, FeedbackOutcomeRecord, StoredDecision, StoredFeedbackOutcome, StoredHookEvent } from "./types.js";
 
 export { readStore } from "./event-store-persistence.js";
-export { hookSummary, latestDecision } from "./event-store-queries.js";
+export { hookSummary, latestDecision, latestProjectDecision } from "./event-store-queries.js";
 export { FEEDBACK_OUTCOME_STORE_LIMIT } from "./event-store-persistence.js";
 
 export async function recordDecision(decision: Decision, storePath = eventStorePath()): Promise<StoredDecision> {
@@ -22,6 +22,7 @@ export async function recordDecision(decision: Decision, storePath = eventStoreP
     };
     store.decisions.push(stored);
     store.decisions = store.decisions.slice(-STORE_LIMIT);
+    store.version = 2;
     store.updatedAt = new Date().toISOString();
     return { store, result: stored };
   });

@@ -160,7 +160,12 @@ export interface TranscriptSummary {
   activeFullFileReads?: ActiveFullFileReadSummary[];
   latestInputTokenJump?: InputTokenJumpSummary;
   largestInputTokenJump?: InputTokenJumpSummary;
+  // Gauge fields (PRD-01).
+  ledger?: import("./edit-ledger.js").EditLedger;
+  latestActivityKind?: ActivityKind;
 }
+
+export type ActivityKind = "edit" | "validate" | "read" | "exec" | "mcp" | "other";
 
 export type HookEventKind =
   | "session_start"
@@ -370,6 +375,53 @@ export interface DecisionPersonalBaseline {
   };
 }
 
+export type GaugeLight = "green" | "blue" | "red" | "gray";
+export type ActivityVerb = "retrying" | "testing" | "editing" | "exploring" | "idle";
+export type FindingSeverity = "red" | "blue" | "info";
+
+export interface Finding {
+  category: string;
+  severity: FindingSeverity;
+  confidence: DecisionConfidence;
+  evidence: string;
+  fileHint?: string;
+  note?: string;
+}
+
+export interface LedgerEntry {
+  identityHash: string;
+  basename?: string;
+  edits: number;
+  unchecked: boolean;
+}
+
+export interface GaugeFiles {
+  edited: number;
+  unchecked: number;
+  latestUncheckedBasename?: string;
+}
+
+export interface GaugeFacts {
+  contextPercent?: number;
+  contextHighlighted?: boolean;
+  costUsd?: number;
+  costSource?: "claude" | "estimated";
+  durationMs?: number;
+  rateLimitPercent?: number;
+}
+
+export interface Gauge {
+  light: GaugeLight;
+  activity: ActivityVerb;
+  activityTarget?: string;
+  files: GaugeFiles;
+  facts: GaugeFacts;
+  findings: Finding[];
+  sessionKey?: string;
+  projectKey?: string;
+  createdAt: string;
+}
+
 export interface Decision {
   state: DecisionState;
   reasonCode: string;
@@ -387,6 +439,14 @@ export interface Decision {
   rateLimitPercent?: number;
   sessionKey?: string;
   createdAt: string;
+  // Gauge schema v2 fields (PRD-01). Optional so v1 records and bare decisions stay valid.
+  schemaVersion?: 2;
+  projectKey?: string;
+  light?: GaugeLight;
+  activity?: ActivityVerb;
+  findings?: Finding[];
+  ledger?: LedgerEntry[];
+  files?: GaugeFiles;
 }
 
 export interface StoredDecision extends Decision {
@@ -394,7 +454,7 @@ export interface StoredDecision extends Decision {
 }
 
 export interface EventStoreData {
-  version: 1;
+  version: 1 | 2;
   updatedAt: string;
   decisions: StoredDecision[];
   hookEvents: StoredHookEvent[];

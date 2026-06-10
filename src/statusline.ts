@@ -1,17 +1,17 @@
 import { mergeHookSummary } from "./hook-summary.js";
 import { readBaselineForProject } from "./baseline.js";
 import { maybeTriggerBaselineRefresh, type MaybeTriggerBaselineRefreshOptions } from "./baseline-refresh.js";
-import { statuslineFeedbackNote } from "./feedback-outcomes.js";
-import { toDecisionPresentation } from "./decision-presentation.js";
+import { buildGauge } from "./gauge.js";
+import { renderGauge } from "./gauge-renderer.js";
 import { estimateCostUsd, loadPricing } from "./pricing.js";
 import { loadProjectConfig } from "./project-config.js";
-import { renderStatusLine } from "./renderer.js";
+import { projectKeyFromPath } from "./paths.js";
 import { sessionKeyFromId } from "./session.js";
 import { decide } from "./signals.js";
 import { mergeUsage, parseStatusLineInput } from "./status-input.js";
-import { hookSummary, latestDecision, recentFeedbackOutcomes, recordDecision } from "./store.js";
+import { hookSummary, latestDecision, recordDecision } from "./store.js";
 import { parseTranscriptTail } from "./transcript.js";
-import type { StoredFeedbackOutcome } from "./types.js";
+import type { Decision } from "./types.js";
 
 const EMPTY_HOOK_SUMMARY = {
   failedToolResults: 0,
@@ -58,13 +58,25 @@ export async function createStatusLine(
   const previous = sessionKey ? await latestDecision(sessionKey) : undefined;
   const baselineSelection = await readBaselineForProject({ projectDir: input.cwd });
   const baseline = baselineSelection.baseline;
+  const projectKey = input.cwd ? projectKeyFromPath(input.cwd) : undefined;
   const decision = decide(input, transcript, { previous, baseline });
-  await recordDecision(decision);
+  const gauge = buildGauge(input, transcript, {
+    baseline,
+    previous: previous ? { costUsd: previous.costUsd } : undefined,
+    sessionKey,
+    projectKey
+  });
+  const record: Decision = {
+    ...decision,
+    schemaVersion: 2,
+    projectKey,
+    light: gauge.light,
+    activity: gauge.activity,
+    findings: gauge.findings,
+    ledger: transcript.ledger?.entries ?? [],
+    files: gauge.files
+  };
+  await recordDecision(record);
   await maybeTriggerBaselineRefresh({ ...options.baselineRefresh, baseline, projectDir: input.cwd, transcriptPath: input.transcriptPath });
-  const feedbackNote = statuslineFeedbackNote(latestResolvedFeedbackOutcome(sessionKey ? await recentFeedbackOutcomes(sessionKey) : []));
-  return renderStatusLine(toDecisionPresentation(decision, feedbackNote), input.terminalWidth || terminalColumns);
-}
-
-function latestResolvedFeedbackOutcome(outcomes: StoredFeedbackOutcome[]): StoredFeedbackOutcome | undefined {
-  return outcomes.filter((outcome) => outcome.outcome !== "pending").at(-1);
+  return renderGauge(gauge, input.terminalWidth || terminalColumns);
 }

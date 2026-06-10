@@ -1,9 +1,11 @@
+import { buildEditLedger, type EditLedger, type LedgerEvent } from "./edit-ledger.js";
 import { readStore } from "./event-store-persistence.js";
 import { safeToolResultEventFromHookEvent, summarizeBlindRetry, summarizeFailureEpisodes } from "./failure-episodes.js";
 import type { SafeToolResultEvent } from "./failure-episodes.js";
 import { isEditTool, isReadSearchTool } from "./tool-metadata.js";
 import type {
   ActiveFullFileReadSummary,
+  ActivityKind,
   BlindRetrySummary,
   RedundantReadSummary,
   SessionStartSource,
@@ -20,6 +22,16 @@ export async function latestDecision(sessionKey?: string, storePath?: string): P
   const store = await readStore(storePath);
   const decisions = sessionKey ? store.decisions.filter((decision) => decision.sessionKey === sessionKey) : store.decisions;
   return decisions.at(-1);
+}
+
+// Project-scoped latest decision (PRD-01, branch G/H2). Two concurrent sessions in different
+// repos must never read each other's latest decision.
+export async function latestProjectDecision(projectKey: string | undefined, storePath?: string): Promise<StoredDecision | undefined> {
+  if (!projectKey) {
+    return undefined;
+  }
+  const store = await readStore(storePath);
+  return store.decisions.filter((decision) => decision.projectKey === projectKey).at(-1);
 }
 
 export async function hookSummary(
@@ -53,6 +65,8 @@ export async function hookSummary(
   latestCompactionTimestamp?: string;
   redundantRead?: RedundantReadSummary;
   activeFullFileReads: ActiveFullFileReadSummary[];
+  ledger: EditLedger;
+  latestActivityKind?: ActivityKind;
 }> {
   const store = await readStore(storePath);
   const events = store.hookEvents
@@ -87,6 +101,8 @@ export async function hookSummary(
   let redundantRead: RedundantReadSummary | undefined;
   const changedFileIdentityHashes = new Set<string>();
   const unvalidatedChangedFileIdentityHashes = new Set<string>();
+  const ledgerEvents: LedgerEvent[] = [];
+  let latestActivityKind: ActivityKind | undefined;
 
   for (const event of events) {
     const isCompaction = event.kind === "compaction";
@@ -120,6 +136,7 @@ export async function hookSummary(
       unvalidatedChangedFileIdentityHashes.clear();
       redundantRead = undefined;
       safeEvents = [];
+      ledgerEvents.push({ kind: "lifecycle_reset" });
     }
     if (isTerminal && (!latestTerminalTimestamp || event.timestamp >= latestTerminalTimestamp)) {
       terminalEvents += 1;
@@ -136,12 +153,14 @@ export async function hookSummary(
       }
       failedToolResults += 1;
       toolCalls += 1;
+      latestActivityKind = hookActivityKind(event);
       if (isReadActivity(event)) {
         readToolCalls += 1;
       }
       if (isValidationPurpose(event.purpose)) {
         validationChecks += 1;
         validationFailureOpen = true;
+        ledgerEvents.push({ kind: "validation_fail" });
       }
       if (hasOpenUnvalidatedEdit) {
         unvalidatedEditToolSteps = (unvalidatedEditToolSteps || 0) + 1;
@@ -160,6 +179,7 @@ export async function hookSummary(
       }
       toolCalls += 1;
       const toolName = event.toolName || "tool";
+      latestActivityKind = hookActivityKind(event);
       if (isReadActivity(event)) {
         readToolCalls += 1;
       }
@@ -168,6 +188,7 @@ export async function hookSummary(
         unvalidatedEditResultCount += 1;
         hasOpenUnvalidatedEdit = true;
         unvalidatedEditToolSteps = 0;
+        ledgerEvents.push({ kind: "edit", identityHash: event.fileIdentityHash });
         if (event.fileIdentityHash) {
           changedFileIdentityHashes.add(event.fileIdentityHash);
           unvalidatedChangedFileIdentityHashes.add(event.fileIdentityHash);
@@ -183,6 +204,7 @@ export async function hookSummary(
         unvalidatedEditToolSteps = undefined;
         unvalidatedEditResultCount = 0;
         unvalidatedChangedFileIdentityHashes.clear();
+        ledgerEvents.push({ kind: "validation_pass" });
       } else if (hasOpenUnvalidatedEdit) {
         unvalidatedEditToolSteps = (unvalidatedEditToolSteps || 0) + 1;
       }
@@ -195,6 +217,7 @@ export async function hookSummary(
       latestCompactionTimestamp = event.timestamp;
       fullFileReadCounts.clear();
       redundantRead = undefined;
+      ledgerEvents.push({ kind: "compaction" });
     }
     if (event.kind === "tool_success" && event.toolName === "Read" && event.readKind === "full" && event.fileIdentityHash) {
       const existing = fullFileReadCounts.get(event.fileIdentityHash);
@@ -236,8 +259,30 @@ export async function hookSummary(
     latestTerminalTimestamp,
     latestCompactionTimestamp,
     redundantRead,
-    activeFullFileReads: activeFullFileReadSummaries(fullFileReadCounts)
+    activeFullFileReads: activeFullFileReadSummaries(fullFileReadCounts),
+    ledger: buildEditLedger(ledgerEvents),
+    latestActivityKind
   };
+}
+
+function hookActivityKind(event: { toolName?: string; purpose?: string; category?: "MCP" }): ActivityKind {
+  if (event.category === "MCP" || event.toolName === "MCP tool") {
+    return "mcp";
+  }
+  const toolName = event.toolName || "tool";
+  if (isEditTool(toolName)) {
+    return "edit";
+  }
+  if (toolName === "Bash" && isValidationPurpose(event.purpose)) {
+    return "validate";
+  }
+  if (isReadActivity(event)) {
+    return "read";
+  }
+  if (toolName === "Bash") {
+    return "exec";
+  }
+  return "other";
 }
 
 function resetsOpenRisk(source: SessionStartSource | undefined): boolean {

@@ -8,3 +8,4 @@ coverage/
 .env
 .env.*
 !.env.example
+doc_internal/

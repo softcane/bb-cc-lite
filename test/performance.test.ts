@@ -101,7 +101,7 @@ describe("large transcript performance", () => {
       const elapsedMs = performance.now() - startedAt;
 
       expect(rendered.split("\n").filter(Boolean)).toHaveLength(1);
-      expect(rendered).toContain("bb: Healthy");
+      expect(rendered).toContain("●");
       expect(spawned).toBe(1);
       expect(elapsedMs).toBeLessThan(300);
     } finally {
@@ -142,7 +142,7 @@ describe("large transcript performance", () => {
       );
       const elapsedMs = performance.now() - startedAt;
 
-      expect(rendered).toContain("bb: Healthy");
+      expect(rendered).toContain("●");
       expect(elapsedMs).toBeLessThan(300);
       await expect(pathExists(join(appHome, "baseline.json"))).resolves.toBe(false);
       expectNoPrivacySentinels(rendered, await readFile(storePath, "utf8"));
@@ -191,7 +191,7 @@ describe("large transcript performance", () => {
       const elapsedMs = performance.now() - startedAt;
 
       expect(rendered.split("\n").filter(Boolean)).toHaveLength(1);
-      expect(rendered).toContain("bb: Stop");
+      expect(rendered).toContain("■");
       expect(elapsedMs).toBeLessThan(500);
       expectNoPrivacySentinels(rendered, await readFile(storePath, "utf8"));
     } finally {

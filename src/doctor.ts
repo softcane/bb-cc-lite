@@ -5,8 +5,9 @@ import { clearAllBaselines, readBaseline, readBaselineForProject, summarizeBasel
 import { buildBaseline } from "./baseline-builder.js";
 import { evaluateHistoricalReplay, formatHistoricalReplayMetrics } from "./historical-replay.js";
 import { clearLessonMemory } from "./memory-lessons.js";
-import { baselinePath, pricingCachePath } from "./paths.js";
+import { baselinePath, eventStorePath, pricingCachePath } from "./paths.js";
 import { refreshPricing } from "./pricing.js";
+import { readStore } from "./store.js";
 import {
   describeSettingsTarget,
   hasBbHooks,
@@ -95,6 +96,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorChec
   }
 
   addAnthropicBaseUrlCheck(checks);
+  await addStoreSchemaCheck(checks);
   if (options.clearBaseline) {
     await addClearBaselineCheck(checks, options);
   }
@@ -396,6 +398,19 @@ async function addLiteLLMChecks(checks: DoctorCheck[], shouldRefreshPricing: boo
     }
   }
 
+}
+
+async function addStoreSchemaCheck(checks: DoctorCheck[]): Promise<void> {
+  try {
+    const store = await readStore(eventStorePath());
+    checks.push({
+      level: "OK",
+      name: "store",
+      message: `event store schema version ${store.version} (${store.decisions.length} recorded decisions)`
+    });
+  } catch {
+    checks.push({ level: "WARN", name: "store", message: "could not read the local event store" });
+  }
 }
 
 function addAnthropicBaseUrlCheck(checks: DoctorCheck[]): void {

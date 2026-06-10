@@ -140,7 +140,7 @@ async function commandStatusLine(): Promise<void> {
     const raw = await readStdin();
     process.stdout.write(`${await createStatusLine(raw, process.stdout.columns)}\n`);
   } catch {
-    process.stdout.write("bb: Careful | statusline crashed | run bb-cc-lite doctor\n");
+    process.stdout.write("○ no signal · statusline crashed\n");
   }
 }
 

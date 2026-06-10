@@ -657,10 +657,8 @@ describe("CLI behavior characterization", () => {
 
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stderr).toBe("");
-      expect(statusline.stdout.trim()).toContain("bb: Healthy");
+      expect(statusline.stdout.trim()).toContain("●");
       expect(statusline.stdout).toContain("ctx 42%");
-      expect(statusline.stdout).toContain("cache warm");
-      expect(statusline.stdout).toContain("continue normally");
 
       const why = await runCli(["why"], { env });
       expect(why.exitCode).toBe(0);
@@ -704,9 +702,8 @@ describe("CLI behavior characterization", () => {
 
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stderr).toBe("");
-      expect(statusline.stdout).toContain("bb: Healthy");
-      expect(statusline.stdout).toContain("research-heavy session usually ended OK");
-      expect(statusline.stdout).toContain("similar research-heavy sessions usually ended OK");
+      expect(statusline.stdout).toContain("●");
+      expect(statusline.stdout).toContain("exploring");
       expectNoPrivacySentinels(statusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
@@ -758,7 +755,7 @@ describe("CLI behavior characterization", () => {
 
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stderr).toBe("");
-      expect(statusline.stdout).toContain("bb: Healthy");
+      expect(statusline.stdout).toContain("●");
       expect(statusline.stdout).not.toContain("cost is above");
       expect(statusline.stdout).not.toContain("session ran");
       expect(statusline.stdout).not.toContain(workspace.projectDir);
@@ -787,7 +784,7 @@ describe("CLI behavior characterization", () => {
 
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stderr).toBe("");
-      expect(statusline.stdout).toContain("bb: Healthy");
+      expect(statusline.stdout).toContain("●");
       expect(statusline.stdout).not.toContain("test loop");
       expectNoPrivacySentinels(statusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
     } finally {
@@ -833,8 +830,8 @@ describe("CLI behavior characterization", () => {
 
       expect(costStatusline.exitCode).toBe(0);
       expect(durationStatusline.exitCode).toBe(0);
-      expect(costStatusline.stdout).toContain("bb: Careful");
-      expect(durationStatusline.stdout).toContain("bb: Careful");
+      expect(costStatusline.stdout).toContain("●");
+      expect(durationStatusline.stdout).toContain("●");
       expect(JSON.parse(costWhy.stdout)).toMatchObject({ reasonCode: "cost_budget" });
       expect(JSON.parse(durationWhy.stdout)).toMatchObject({ reasonCode: "duration_budget" });
       expectNoPrivacySentinels(costStatusline.stdout, durationStatusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
@@ -874,7 +871,7 @@ describe("CLI behavior characterization", () => {
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stderr).toBe("");
       expect(statusline.stdout.split("\n").filter(Boolean)).toHaveLength(1);
-      expect(statusline.stdout).toContain("research-heavy session usually ended OK");
+      expect(statusline.stdout).toContain("exploring");
       expect(elapsedMs).toBeLessThan(1000);
 
       const refreshed = await waitForBaselineUpdated(join(workspace.appHome, "baseline.json"), staleBaseline.updatedAt);
@@ -1011,7 +1008,7 @@ describe("CLI behavior characterization", () => {
         })
       });
       expect(corrupt.exitCode).toBe(0);
-      expect(corrupt.stdout).toContain("bb: Careful");
+      expect(corrupt.stdout).toContain("◐");
       expect(corrupt.stdout).toContain("tests failed twice");
       expect(corrupt.stdout).not.toContain("usually passes");
 
@@ -1025,7 +1022,7 @@ describe("CLI behavior characterization", () => {
         })
       });
       expect(sparse.exitCode).toBe(0);
-      expect(sparse.stdout).toContain("bb: Careful");
+      expect(sparse.stdout).toContain("◐");
       expect(sparse.stdout).toContain("tests failed twice");
       expect(sparse.stdout).not.toContain("usually passes");
       expectNoPrivacySentinels(corrupt.stdout, sparse.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
@@ -1053,8 +1050,8 @@ describe("CLI behavior characterization", () => {
 
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stderr).toBe("");
-      expect(statusline.stdout).toContain("bb: Careful");
-      expect(statusline.stdout).toContain("tests failed twice; usually passes after one targeted fix");
+      expect(statusline.stdout).toContain("◐");
+      expect(statusline.stdout).toContain("tests failed twice");
 
       const why = await runCli(["why"], { env });
       expect(why.stdout).toContain("Baseline: test failures usually recovered after one targeted fix.");
@@ -1089,9 +1086,8 @@ describe("CLI behavior characterization", () => {
 
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stderr).toBe("");
-      expect(statusline.stdout).toContain("bb: Careful");
-      expect(statusline.stdout).toContain("edits have not been checked yet");
-      expect(statusline.stdout).toContain("ask Claude to run the smallest relevant check");
+      expect(statusline.stdout).toContain("● editing");
+      expect(statusline.stdout).toContain("1 unchecked");
       expect(statusline.stdout).not.toContain("focused check");
       expect(statusline.stdout).not.toContain("validation lag");
 
@@ -1150,8 +1146,8 @@ describe("CLI behavior characterization", () => {
       expect(editHook.stdout).toContain("edits have not been validated yet");
       expect(validationHook.exitCode).toBe(0);
       expect(statusline.exitCode).toBe(0);
-      expect(statusline.stdout).toContain("bb: Healthy");
-      expect(statusline.stdout).toContain("validation resolved");
+      expect(statusline.stdout).toContain("●");
+      expect(statusline.stdout).toContain("testing");
       expect(why.stdout).toContain("Recent bb loop:");
       expect(why.stdout).toContain("Coach feedback: edits needed validation.");
       expect(why.stdout).toContain("Claude ran tests.");
@@ -1189,10 +1185,8 @@ describe("CLI behavior characterization", () => {
 
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stderr).toBe("");
-      expect(statusline.stdout).toContain("bb: Careful");
-      expect(statusline.stdout).toContain("edits have gone longer than usual without a check");
-      expect(statusline.stdout).toContain("past sessions usually checked edits sooner");
-      expect(statusline.stdout).toContain("ask Claude to run the smallest relevant check");
+      expect(statusline.stdout).toContain("◐ editing");
+      expect(statusline.stdout).toContain("1 unchecked");
       expect(statusline.stdout).not.toContain("focused check");
       expect(statusline.stdout).not.toContain("validation lag");
 
@@ -1222,9 +1216,8 @@ describe("CLI behavior characterization", () => {
       const rendered = statusline.stdout.trim();
       expect(statusline.exitCode).toBe(0);
       expect(visibleLength(rendered)).toBeLessThanOrEqual(55);
-      expect(rendered).toContain("bb: Careful");
-      expect(rendered).toContain("ctx 82%");
-      expect(rendered).not.toContain("ask Claude for a 6-bullet handoff before more work");
+      expect(rendered).toContain("●");
+      expect(rendered).toContain("82%");
       expectNoPrivacySentinels(rendered, await readFile(cliEnv(workspace).BB_CC_LITE_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
@@ -1249,9 +1242,8 @@ describe("CLI behavior characterization", () => {
       });
 
       expect(stop.exitCode).toBe(0);
-      expect(stop.stdout).toContain("bb: Stop");
-      expect(stop.stdout).toContain("why: same failure retried 3x without a fix");
-      expect(stop.stdout).toContain("do: stop and inspect first failure");
+      expect(stop.stdout).toContain("■");
+      expect(stop.stdout).toContain("3 fails, no fix between runs");
 
       const latest = await runCli(["statusline"], {
         env,
@@ -1265,7 +1257,7 @@ describe("CLI behavior characterization", () => {
         })
       });
       expect(latest.exitCode).toBe(0);
-      expect(latest.stdout).toContain("bb: Healthy");
+      expect(latest.stdout).toContain("●");
 
       const whyLatest = await runCli(["why"], { env });
       expect(whyLatest.exitCode).toBe(0);
@@ -1313,9 +1305,8 @@ describe("CLI behavior characterization", () => {
 
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stderr).toBe("");
-      expect(statusline.stdout).toContain(
-        "bb: Stop | why: same failure retried 3x without a fix"
-      );
+      expect(statusline.stdout).toContain("■");
+      expect(statusline.stdout).toContain("3 fails, no fix between runs");
 
       const why = await runCli(["why"], { env });
       expect(why.exitCode).toBe(0);
@@ -1370,14 +1361,11 @@ describe("CLI behavior characterization", () => {
 
       expect(wide.exitCode).toBe(0);
       expect(wide.stderr).toBe("");
-      expect(wide.stdout).toContain("bb: Careful");
-      expect(wide.stdout).toContain("single tool result added ~12,400 tokens");
-      expect(wide.stdout).toContain("compact or narrow the next step");
-      expect(wide.stdout).not.toContain("bb: Stop");
+      expect(wide.stdout).toContain("●");
+      expect(wide.stdout).not.toContain("■");
       expect(narrow.exitCode).toBe(0);
       expect(visibleLength(narrow.stdout.trim())).toBeLessThanOrEqual(52);
-      expect(narrow.stdout).toContain("bb: Careful");
-      expect(narrow.stdout).toContain("~12,400");
+      expect(narrow.stdout).toContain("●");
 
       const why = await runCli(["why", "--session", rawSessionId], { env });
       const whyJson = await runCli(["why", "--session", rawSessionId, "--json"], { env });
@@ -1429,7 +1417,7 @@ describe("CLI behavior characterization", () => {
 
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stderr).toBe("");
-      expect(statusline.stdout).toContain("bb: Stop");
+      expect(statusline.stdout).toContain("■");
 
       const why = await runCli(["why", "--session", rawSessionId], { env });
       const whyJson = await runCli(["why", "--session", rawSessionId, "--json"], { env });
@@ -1500,7 +1488,7 @@ describe("CLI behavior characterization", () => {
           session_id: "fixture-fresh",
           terminal_width: 180
         },
-        expected: ["bb: Healthy", "no session activity yet", "start when ready"]
+        expected: ["●", "idle", "no activity yet"]
       },
       {
         name: "empty readable transcript",
@@ -1509,7 +1497,7 @@ describe("CLI behavior characterization", () => {
           terminal_width: 180
         },
         transcript: [],
-        expected: ["bb: Healthy", "no session activity yet", "start when ready"]
+        expected: ["●", "idle", "no activity yet"]
       },
       {
         name: "two repeated failed test commands",
@@ -1518,7 +1506,7 @@ describe("CLI behavior characterization", () => {
           terminal_width: 180
         },
         transcript: repeatedFailedTestTranscript(2),
-        expected: ["bb: Careful", "same test failed twice without a fix", "inspect first failure"]
+        expected: ["◐", "retrying tests", "2 fails, no fix between runs"]
       },
       {
         name: "three repeated failed test commands",
@@ -1527,11 +1515,7 @@ describe("CLI behavior characterization", () => {
           terminal_width: 180
         },
         transcript: repeatedFailedTestTranscript(3),
-        expected: [
-          "bb: Stop",
-          "why: same failure retried 3x without a fix",
-          "do: stop and inspect first failure"
-        ]
+        expected: ["■", "retrying tests", "3 fails, no fix between runs"]
       },
       {
         name: "mismatched transcript session",
@@ -1543,7 +1527,7 @@ describe("CLI behavior characterization", () => {
           repeatedFailedTestTranscript(3),
           `fixture-other-session-${privacySentinels[6]}`
         ),
-        expected: ["bb: Careful", "transcript session mismatch", "run bb-cc-lite doctor if this persists"]
+        expected: ["○", "no signal", "transcript session mismatch"]
       },
       {
         name: "three redundant full-file reads",
@@ -1552,11 +1536,7 @@ describe("CLI behavior characterization", () => {
           terminal_width: 180
         },
         transcript: redundantReadTranscript(3),
-        expected: [
-          "bb: Stop",
-          "why: same file reread 3x",
-          "do: stop and ask why the same file is needed again"
-        ]
+        expected: ["■", "same file reread 3x"]
       },
       {
         name: "high context",
@@ -1568,7 +1548,7 @@ describe("CLI behavior characterization", () => {
           },
           terminal_width: 180
         },
-        expected: ["bb: Careful", "ctx 82%", "ask Claude for a 6-bullet handoff before more work"]
+        expected: ["●", "ctx 82%"]
       },
       {
         name: "cache risk",
@@ -1580,7 +1560,7 @@ describe("CLI behavior characterization", () => {
           },
           terminal_width: 180
         },
-        expected: ["bb: Careful", "cache writes high", "keep the next prompt narrow and avoid broad repo scans"]
+        expected: ["●"]
       },
       {
         name: "cache efficiency regression",
@@ -1589,7 +1569,7 @@ describe("CLI behavior characterization", () => {
           terminal_width: 180
         },
         transcript: cacheEfficiencyRegressionTranscript(),
-        expected: ["bb: Careful", "cache reuse dropped from 68% to 29%", "keep the next prompt narrow"]
+        expected: ["◐", "cache reuse dropped from 68% to 29%"]
       },
       {
         name: "compaction event",
@@ -1598,7 +1578,7 @@ describe("CLI behavior characterization", () => {
           terminal_width: 180
         },
         transcript: compactionTranscript(),
-        expected: ["bb: Careful", "compaction event seen", "ask Claude to restate current goal and next 3 steps"]
+        expected: ["◐", "compaction boundary open"]
       },
       {
         name: "malformed transcript",
@@ -1607,7 +1587,7 @@ describe("CLI behavior characterization", () => {
           terminal_width: 180
         },
         transcript: ["not-json", "{\"type\":\"assistant\""],
-        expected: ["bb: Careful", "transcript unreadable", "run bb-cc-lite doctor"]
+        expected: ["○", "no signal", "transcript unreadable"]
       },
       {
         name: "missing transcript",
@@ -1616,7 +1596,7 @@ describe("CLI behavior characterization", () => {
           transcript_path: "/tmp/bb-cc-lite/missing/transcript.jsonl",
           terminal_width: 180
         },
-        expected: ["bb: Careful", "transcript unavailable", "run bb-cc-lite doctor if this persists"]
+        expected: ["○", "no signal", "transcript unavailable"]
       }
     ];
 

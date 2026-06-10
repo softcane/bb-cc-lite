@@ -6,26 +6,44 @@ Behavioral health monitoring for Claude Code sessions.
 
 Claude Code can look busy while doing the wrong thing. It can retry the same failed test, edit without checking its work, burn tokens, fill the context window, reread files, and keep going after a human should stop it.
 
-The small local status line answers one question:
+The small local status line is a behavioral gauge. It answers one question at a glance:
 
-> Should I let this Claude Code session keep going?
+> What is the agent doing right now, and does its behavior look healthy?
 
-Token spend tells you what it cost. `bb-cc-lite` shows whether the session still looks healthy: continue, verify, or stop before more turns are burned.
+Token spend tells you what it cost. `bb-cc-lite` shows a colored state dot, what the agent is doing, and declarative evidence — no instructions, ever. The line grammar is:
+
+```text
+<dot> · <verb> · <evidence> · <files> · <ctx> · <cost>
+```
+
+```text
+● editing · 3 files, 2 unchecked (auth.ts…) · ctx 42% · $0.18
+◐ editing · 3 files, 2 unchecked (auth.ts…) · ctx 42%
+■ retrying tests · 3 fails, no fix between runs
+○ no signal · transcript unreadable
+● idle · no activity yet
+```
 
 It runs locally. It is not a cloud dashboard, telemetry service, proxy, gateway, or message router.
 
-```text
-bb: Healthy | ctx 42% | $0.18 | continue normally
-bb: Healthy | validation resolved | continue normally
-bb: Careful | edits have not been checked yet | run the smallest relevant check
-bb: Careful | same test failed twice without a fix | inspect first failure
-bb: Careful | 9 non-read tool calls, no check or recovery seen | pause and ask what changed
-bb: Stop | why: same failure retried 3x without a fix | do: stop and inspect first failure
-```
+### Legend
+
+State dots (a distinct shape per state, so the gauge survives `NO_COLOR`):
+
+| Dot | State | Meaning |
+| --- | --- | --- |
+| `●` green | progressing | behavior looks healthy |
+| `◐` blue | drifting | glance when convenient |
+| `■` red | intervene | act before more turns burn |
+| `○` gray | no signal | bb cannot read the evidence (never a warning) |
+
+Activity verbs, in priority order when several apply: `retrying` > `testing` > `editing` > `exploring` > `idle`.
+
+Context and cost are passive facts. They never change the dot by themselves; only behavior does (the one exception is context `≥92%`, which is red because reasoning degrades).
 
 ![bb-cc-lite statusline examples](./assets/statusline-demo.gif)
 
-_The demo shows healthy progress, unchecked edits, repeated validation failures, and Stop-level retry loops._
+_The demo shows healthy editing, unchecked-edit drift, repeated validation retries, and a no-signal line._
 
 ## Why This Exists
 
@@ -35,7 +53,7 @@ Busy output, tool calls, and token spend can hide negative progress. The hard pa
 
 Humans usually notice too late: after the same check failed three times, after a broad edit streak went unchecked, or after the context window is already under pressure.
 
-`bb-cc-lite` watches derived local signals from the Claude Code status input, transcript tail, and optional hooks. It classifies the current session as `Healthy`, `Careful`, or `Stop`.
+`bb-cc-lite` watches derived local signals from the Claude Code status input, transcript tail, and optional hooks. It renders a behavioral gauge: a green/blue/red/gray state dot with declarative evidence, never advice.
 
 ## What It Catches
 
@@ -51,13 +69,15 @@ Humans usually notice too late: after the same check failed three times, after a
 - Cost and time budget warnings that make a stuck session easier to spot.
 - Local baseline patterns, when there is enough aggregate local history.
 
-## Healthy / Careful / Stop
+## What The Dot Means
 
-`Healthy` means the session still looks safe to continue.
+`●` green (progressing) means the session still looks healthy to continue.
 
-`Careful` means slow down. Ask for verification, inspect the pattern, or make the next step smaller.
+`◐` blue (drifting) means glance when convenient: edits are accumulating without a check, a failure has repeated once, or cache reuse slipped.
 
-`Stop` does not mean the project failed. It means the session pattern is no longer worth continuing blindly. Take over, redirect Claude, or inspect the first failure before spending more turns.
+`■` red (intervene) means the behavior is no longer worth continuing blindly: a retry loop, a repeated failure, or critical context pressure. Take over or redirect Claude before more turns burn.
+
+`○` gray (no signal) means bb itself cannot read the evidence (bad input, missing or unreadable transcript, session mismatch). It is never a warning about the agent.
 
 ## How It Helps Claude
 
@@ -298,16 +318,16 @@ LiteLLM is used only as public pricing data for cost estimates. `bb-cc-lite` doe
 ## More Examples
 
 ```text
-bb: Healthy | read-only exploration | continue normally
-bb: Careful | estimated cost $2.25 | ask Claude to summarize progress before continuing
-bb: Careful | session ran 1h plus 9 non-read tool calls, no check or recovery seen | pause and ask what changed before continuing
-bb: Careful | ctx 83% | ask Claude for a 6-bullet handoff before more work
-bb: Careful | compaction event seen | ask Claude to restate current goal and next 3 steps
-bb: Careful | same file reread twice | ask Claude to use existing context before rereading
-bb: Careful | single tool result added ~12,400 tokens | compact or narrow the next step
-bb: Careful | cache reuse dropped from 68% to 29% | keep the next prompt narrow
-bb: Careful | tests failed twice; usually passes after one targeted fix | inspect first failure
-bb: Stop | why: same file reread 3x | do: stop and ask why the same file is needed again
-bb: Stop | why: same test retried after feedback | do: inspect first failure
-bb: Stop | why: test loop rarely recovered after 3 failures | do: stop retrying and inspect first failure
+● exploring · ctx 24% · $0.12
+● editing · 2 files, 1 unchecked (router.ts…) · ctx 31%
+◐ editing · 4 files, 3 unchecked (router.ts…) · ctx 44%
+◐ testing · tests failed twice · ctx 52%
+◐ exploring · cache reuse dropped from 68% to 29%
+◐ idle · compaction boundary open
+■ retrying tests · 3 fails, no fix between runs
+■ exploring · same file reread 3x
+■ exploring · ctx 93%, nearly full
+○ no signal · transcript session mismatch
 ```
+
+Each example is one line. The dot and verb are leftmost; passive facts (`ctx`, cost) are rightmost. On narrow terminals the line degrades to compact counts (`◐ editing · 3✎? · 44%`) and then to a minimal `◐ 3✎? 44%`, but the dot always survives.

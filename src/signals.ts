@@ -30,7 +30,7 @@ export interface BudgetThresholds {
   durationCarefulMs?: number;
 }
 
-interface NormalizedBudgetThresholds {
+export interface NormalizedBudgetThresholds {
   costUsd: number;
   costDeltaUsd: number;
   durationMs: number;
@@ -901,12 +901,12 @@ function cacheWarm(usage: TokenUsage): boolean {
   return reads > 0 && reads >= writes;
 }
 
-interface CacheEfficiencyRegression {
+export interface CacheEfficiencyRegression {
   peak: CacheReadSharePoint;
   current: CacheReadSharePoint;
 }
 
-function cacheEfficiencyRegression(inputUsage: TokenUsage, transcript: TranscriptSummary): CacheEfficiencyRegression | undefined {
+export function cacheEfficiencyRegression(inputUsage: TokenUsage, transcript: TranscriptSummary): CacheEfficiencyRegression | undefined {
   const inputCurrent = cacheReadSharePoint(inputUsage);
   const transcriptCurrent = transcript.cacheReadShare?.current;
   const current = inputCurrent || transcriptCurrent;
@@ -929,14 +929,14 @@ function cacheEfficiencyRegression(inputUsage: TokenUsage, transcript: Transcrip
   return { peak, current };
 }
 
-function suppressCacheEfficiencyRegressionAfterCompaction(transcript: TranscriptSummary): boolean {
+export function suppressCacheEfficiencyRegressionAfterCompaction(transcript: TranscriptSummary): boolean {
   return (
     transcript.compactionEvents > 0 &&
     transcript.postCompactionActivity <= CACHE_EFFICIENCY_COMPACTION_SUPPRESSION_ACTIVITY
   );
 }
 
-function cacheEfficiencyEvidence(regression: CacheEfficiencyRegression): string {
+export function cacheEfficiencyEvidence(regression: CacheEfficiencyRegression): string {
   return `cache reuse dropped from ${formatPercent(regression.peak.ratio)} to ${formatPercent(regression.current.ratio)}`;
 }
 
@@ -1154,7 +1154,7 @@ function formatWholeNumber(value: number): string {
   return Math.round(value).toString().replace(/\B(?=(\d{3})+(?!\d))/gu, ",");
 }
 
-function normalizeBudgetThresholds(thresholds: BudgetThresholds | undefined): NormalizedBudgetThresholds {
+export function normalizeBudgetThresholds(thresholds: BudgetThresholds | undefined): NormalizedBudgetThresholds {
   return {
     costUsd: thresholdOrDefault(thresholds?.costTotalCarefulUsd ?? thresholds?.costUsd, DEFAULT_BUDGET_THRESHOLDS.costUsd),
     costDeltaUsd: thresholdOrDefault(
@@ -1165,7 +1165,7 @@ function normalizeBudgetThresholds(thresholds: BudgetThresholds | undefined): No
   };
 }
 
-function budgetThresholdsFromEnv(env: NodeJS.ProcessEnv = process.env): BudgetThresholds | undefined {
+export function budgetThresholdsFromEnv(env: NodeJS.ProcessEnv = process.env): BudgetThresholds | undefined {
   const costUsd = numberEnv(env, "BB_CC_LITE_BUDGET_COST_USD", "BB_CC_LITE_COST_BUDGET_USD");
   const costDeltaUsd = numberEnv(env, "BB_CC_LITE_BUDGET_COST_DELTA_USD", "BB_CC_LITE_COST_DELTA_BUDGET_USD");
   const durationMs =
@@ -1267,7 +1267,7 @@ function formatDuration(durationMs: number): string {
   return remainingMinutes === 0 ? `${hours}h` : `${hours}h ${remainingMinutes}m`;
 }
 
-function hasUnusualEditValidationLag(transcript: TranscriptSummary, baseline: DecisionPersonalBaseline | undefined): boolean {
+export function hasUnusualEditValidationLag(transcript: TranscriptSummary, baseline: DecisionPersonalBaseline | undefined): boolean {
   const currentLag = transcript.unvalidatedEditToolSteps;
   const p75 = baseline?.editValidation?.p75ToolStepsFromEditToValidation || 0;
   const followed = baseline?.editValidation?.editsFollowedByValidation || 0;

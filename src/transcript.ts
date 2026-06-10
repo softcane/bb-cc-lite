@@ -1,13 +1,15 @@
 import { asRecord, extractUsage, mergeUsage, stringField } from "./status-input.js";
 import { cacheReadSharePoint, updateCacheReadShareSummary } from "./cache-efficiency.js";
+import { buildEditLedger, type LedgerEvent } from "./edit-ledger.js";
 import { extractFailureEpisodesFromTranscriptLines, summarizeBlindRetry } from "./failure-episodes.js";
-import { fileIdentityFromToolInput, isFullFileReadInput } from "./file-identity.js";
+import { fileBasenameFromToolInput, fileIdentityFromToolInput, isFullFileReadInput } from "./file-identity.js";
 import { sessionKeyFromId } from "./session.js";
 import { classifyResultPurpose, classifyToolIdentity } from "./tool-metadata.js";
 import { readTranscriptTail, type ReadTranscriptTailOptions } from "./transcript-reader.js";
 import type { ProjectConfig } from "./project-config.js";
 import type {
   ActiveFullFileReadSummary,
+  ActivityKind,
   CacheReadShareSummary,
   InputTokenJumpSummary,
   RedundantReadSummary,
@@ -28,6 +30,7 @@ interface ToolMeta {
   category?: "MCP";
   identityHash?: string;
   fileIdentityHash?: string;
+  basename?: string;
   isEdit: boolean;
   isReadSearch: boolean;
 }
@@ -100,6 +103,8 @@ export function parseTranscriptLines(
   let redundantRead: RedundantReadSummary | undefined;
   const changedFileIdentityHashes = new Set<string>();
   const unvalidatedChangedFileIdentityHashes = new Set<string>();
+  const ledgerEvents: LedgerEvent[] = [];
+  let latestActivityKind: ActivityKind | undefined;
 
   for (const line of lines) {
     let parsed: unknown;
@@ -196,6 +201,7 @@ export function parseTranscriptLines(
         });
         redundantRead = strongestActiveRedundantRead(fullFileReadCounts);
       }
+      const basename = identity.isEdit ? fileBasenameFromToolInput(identity.displayName, toolUse.input) : undefined;
       if (toolUse.id) {
         toolById.set(toolUse.id, {
           name: identity.displayName,
@@ -203,6 +209,7 @@ export function parseTranscriptLines(
           category: identity.category,
           identityHash: identity.identityHash,
           fileIdentityHash: fileIdentity?.fileIdentityHash,
+          basename,
           isEdit: identity.isEdit,
           isReadSearch: identity.isReadSearch
         });
@@ -210,6 +217,7 @@ export function parseTranscriptLines(
       if (identity.isEdit) {
         recentEditBeforeTest = true;
       }
+      latestActivityKind = activityKindFromIdentity(identity);
     }
 
     for (const toolResult of toolResults) {
@@ -239,6 +247,7 @@ export function parseTranscriptLines(
             changedFileIdentityHashes.add(meta.fileIdentityHash);
             unvalidatedChangedFileIdentityHashes.add(meta.fileIdentityHash);
           }
+          ledgerEvents.push({ kind: "edit", identityHash: meta.fileIdentityHash, basename: meta.basename });
           hasUnvalidatedEdits = true;
           unvalidatedEditStep = toolResultStep;
           if (meta.fileIdentityHash) {
@@ -257,6 +266,7 @@ export function parseTranscriptLines(
           unvalidatedEditStep = undefined;
           unvalidatedEditResultCount = 0;
           unvalidatedChangedFileIdentityHashes.clear();
+          ledgerEvents.push({ kind: "validation_pass" });
         }
         continue;
       }
@@ -327,8 +337,35 @@ export function parseTranscriptLines(
     redundantRead,
     activeFullFileReads: activeFullFileReadSummaries(fullFileReadCounts),
     latestInputTokenJump,
-    largestInputTokenJump
+    largestInputTokenJump,
+    ledger: buildEditLedger(ledgerEvents),
+    latestActivityKind
   };
+}
+
+function activityKindFromIdentity(identity: {
+  isEdit: boolean;
+  isReadSearch: boolean;
+  category?: "MCP";
+  displayName: string;
+  purpose?: string;
+}): ActivityKind {
+  if (identity.category === "MCP") {
+    return "mcp";
+  }
+  if (identity.isEdit) {
+    return "edit";
+  }
+  if (identity.displayName === "Bash" && isValidationPurpose(identity.purpose)) {
+    return "validate";
+  }
+  if (identity.isReadSearch || identity.purpose === "read") {
+    return "read";
+  }
+  if (identity.displayName === "Bash") {
+    return "exec";
+  }
+  return "other";
 }
 
 function emptySummary(pathReadable: boolean): TranscriptSummary {

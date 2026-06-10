@@ -22,7 +22,7 @@ export async function readStore(storePath = eventStorePath()): Promise<EventStor
   try {
     const parsed = JSON.parse(await readFile(storePath, "utf8")) as Partial<EventStoreData>;
     return {
-      version: 1,
+      version: parsed.version === 2 ? 2 : 1,
       updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date(0).toISOString(),
       decisions: Array.isArray(parsed.decisions)
         ? parsed.decisions.flatMap((decision) => sanitizeStoredDecision(decision) ?? []).slice(-STORE_LIMIT)
@@ -92,7 +92,92 @@ function sanitizeStoredDecision(value: unknown): StoredDecision | undefined {
     contextPercent: numberField(record.contextPercent),
     rateLimitPercent: numberField(record.rateLimitPercent),
     sessionKey: stringField(record.sessionKey),
-    createdAt: stringField(record.createdAt) || new Date(0).toISOString()
+    createdAt: stringField(record.createdAt) || new Date(0).toISOString(),
+    schemaVersion: record.schemaVersion === 2 ? 2 : undefined,
+    projectKey: projectKey(record.projectKey),
+    light: gaugeLight(record.light),
+    activity: activityVerb(record.activity),
+    findings: sanitizeFindings(record.findings),
+    ledger: sanitizeLedger(record.ledger),
+    files: sanitizeGaugeFiles(record.files)
+  };
+}
+
+function projectKey(value: unknown): string | undefined {
+  const text = stringField(value);
+  return text && /^[a-f0-9]{64}$/u.test(text) ? text : undefined;
+}
+
+function gaugeLight(value: unknown): StoredDecision["light"] {
+  return value === "green" || value === "blue" || value === "red" || value === "gray" ? value : undefined;
+}
+
+function activityVerb(value: unknown): StoredDecision["activity"] {
+  return value === "retrying" || value === "testing" || value === "editing" || value === "exploring" || value === "idle"
+    ? value
+    : undefined;
+}
+
+function findingSeverity(value: unknown): "red" | "blue" | "info" | undefined {
+  return value === "red" || value === "blue" || value === "info" ? value : undefined;
+}
+
+function sanitizeFindings(value: unknown): StoredDecision["findings"] {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const findings = value.flatMap((item) => {
+    const record = asRecord(item);
+    const category = stringField(record?.category);
+    const severity = findingSeverity(record?.severity);
+    const evidence = stringField(record?.evidence);
+    if (!record || containsForbiddenRawDataKey(record) || containsRawMcpName(record) || !category || !severity || !evidence) {
+      return [];
+    }
+    return [
+      {
+        category,
+        severity,
+        confidence: confidence(record.confidence) || "medium",
+        evidence,
+        fileHint: stringField(record.fileHint),
+        note: stringField(record.note)
+      }
+    ];
+  });
+  return findings;
+}
+
+function sanitizeLedger(value: unknown): StoredDecision["ledger"] {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  return value.flatMap((item) => {
+    const record = asRecord(item);
+    const identityHash = stringField(record?.identityHash);
+    if (!record || containsForbiddenRawDataKey(record) || containsRawMcpName(record) || !identityHash) {
+      return [];
+    }
+    return [
+      {
+        identityHash,
+        basename: stringField(record.basename),
+        edits: numberField(record.edits) ?? 0,
+        unchecked: record.unchecked === true
+      }
+    ];
+  });
+}
+
+function sanitizeGaugeFiles(value: unknown): StoredDecision["files"] {
+  const record = asRecord(value);
+  if (!record || containsForbiddenRawDataKey(record) || containsRawMcpName(record)) {
+    return undefined;
+  }
+  return {
+    edited: numberField(record.edited) ?? 0,
+    unchecked: numberField(record.unchecked) ?? 0,
+    latestUncheckedBasename: stringField(record.latestUncheckedBasename)
   };
 }
 

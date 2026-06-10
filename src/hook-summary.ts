@@ -1,3 +1,4 @@
+import { emptyLedger } from "./edit-ledger.js";
 import type { TranscriptSummary } from "./types.js";
 
 export function mergeHookSummary(
@@ -30,6 +31,8 @@ export function mergeHookSummary(
     latestCompactionTimestamp?: string;
     redundantRead?: TranscriptSummary["redundantRead"];
     activeFullFileReads?: TranscriptSummary["activeFullFileReads"];
+    ledger?: TranscriptSummary["ledger"];
+    latestActivityKind?: TranscriptSummary["latestActivityKind"];
   }
 ): TranscriptSummary {
   const hookOpenRiskCleared = transcriptClearsOlderHookRisk(transcript, hookData);
@@ -76,8 +79,25 @@ export function mergeHookSummary(
     latestTerminalTimestamp: latestTerminalEvent(transcript, hookData).timestamp,
     latestCompactionTimestamp,
     redundantRead: strongestRedundantRead(transcript.redundantRead, hookData.redundantRead),
-    activeFullFileReads: mergeActiveFullFileReads(transcript.activeFullFileReads, hookData.activeFullFileReads)
+    activeFullFileReads: mergeActiveFullFileReads(transcript.activeFullFileReads, hookData.activeFullFileReads),
+    ledger: mergeLedger(transcript.ledger, hookData.ledger),
+    latestActivityKind: transcript.toolCalls > 0 ? transcript.latestActivityKind : hookData.latestActivityKind ?? transcript.latestActivityKind
   };
+}
+
+function mergeLedger(
+  transcriptLedger: TranscriptSummary["ledger"],
+  hookLedger: TranscriptSummary["ledger"]
+): TranscriptSummary["ledger"] {
+  // Prefer the transcript ledger (it carries basenames) when it observed edits; otherwise
+  // fall back to the hook-derived ledger. Avoids double-counting the same edits across streams.
+  if (transcriptLedger && transcriptLedger.edited > 0) {
+    return transcriptLedger;
+  }
+  if (hookLedger && hookLedger.edited > 0) {
+    return hookLedger;
+  }
+  return transcriptLedger ?? hookLedger ?? emptyLedger();
 }
 
 function transcriptClearsOlderHookRisk(
