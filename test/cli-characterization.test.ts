@@ -407,7 +407,7 @@ describe("CLI behavior characterization", () => {
       expect(result.stdout).toContain("Proposed CLAUDE.md diff:");
       expect(result.stdout).toContain("Applied:");
       expect(claudeText).toContain("Keep this user line.");
-      expect(claudeText).toContain("<!-- bb-cc-lite improve:start -->");
+      expect(claudeText).toContain("<!-- bb-cc-lite audit:start -->");
       expect(claudeText).toContain("- Inspect the first failure before rerunning a failed check.");
       expectNoPrivacySentinels(result.stdout, claudeText);
     } finally {

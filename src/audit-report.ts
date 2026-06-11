@@ -1,4 +1,10 @@
 import type { AuditOptions } from "./audit.js";
+import {
+  genericFallbackForCategory,
+  planContextualLessons,
+  type ContextualLessonCandidate,
+  type LessonEvidence
+} from "./contextual-lessons.js";
 import { runDeepAdvisoryAudit, type DeepAdvisoryReport } from "./deep-advisory.js";
 import { formatFeedbackLedger } from "./feedback-ledger.js";
 import {
@@ -7,6 +13,7 @@ import {
   globalClaudePath,
   projectClaudePath,
   readInstructionFile,
+  instructionLinesFromOwnedBlocks,
   removeBlock,
   upsertBlock,
   writeInstructionFile,
@@ -23,6 +30,7 @@ import {
 } from "./instruction-correlator.js";
 import { severityFromState, severityWord } from "./legacy-state.js";
 import { projectKeyFromPath } from "./paths.js";
+import { buildRepoProfile, emptyRepoProfile, type RepoProfile } from "./repo-profile.js";
 import { latestProjectDecision, recentFeedbackOutcomes, readStore } from "./store.js";
 import type {
   DecisionConfidence,
@@ -100,6 +108,7 @@ export interface AuditInstructionSection {
   removalCandidates: InstructionCorrelation["removalCandidates"];
   followed: InstructionCorrelation["followed"];
   gaps: InstructionCorrelation["gaps"];
+  lessonCandidates: ContextualLessonCandidate[];
 }
 
 export interface AuditApplyResult {
@@ -158,15 +167,6 @@ const LIGHT_WORDS: Record<GaugeLight, string> = {
   gray: "gray"
 };
 
-// Generic, privacy-safe additions for a gap category (branch H7: generic phrasing only, never raw
-// commands/paths/prompts). One line per category.
-const GAP_INSTRUCTIONS: Record<CoarseCategory, string> = {
-  validation_retry: "Inspect the first failure before rerunning a failed check.",
-  unchecked_edits: "After changing code, run the smallest relevant check.",
-  redundant_reads: "Use existing context before rereading the same unchanged file.",
-  context_pressure: "Write a short handoff with open risks before compaction or stopping."
-};
-
 const MAX_ADDITIONS_PER_APPLY = 2;
 
 export async function runAuditReport(options: AuditReportOptions = {}): Promise<AuditReport> {
@@ -178,19 +178,19 @@ export async function runAuditReport(options: AuditReportOptions = {}): Promise<
       mode: "cleanup",
       session: emptySession(),
       patterns: toPatternsSection(await runDeepAdvisoryAudit(options)),
-      instructions: { windowSessions: 0, removalCandidates: [], followed: [], gaps: [] },
+      instructions: { windowSessions: 0, removalCandidates: [], followed: [], gaps: [], lessonCandidates: [] },
       applied
     };
   }
 
   const session = await buildSessionSection(options, now);
   const patterns = toPatternsSection(await runDeepAdvisoryAudit(options));
-  const { section: instructions, lines, window } = await buildInstructionSection(options);
+  const { section: instructions } = await buildInstructionSection(options);
 
   let diff: string | undefined;
   let applied: AuditApplyResult[] = [];
   if (options.apply) {
-    const writeResult = await applyInstructionAdditions(options, instructions, lines, window, now);
+    const writeResult = await applyInstructionAdditions(options, instructions, now);
     diff = writeResult.diff;
     applied = writeResult.applied;
   }
@@ -281,24 +281,34 @@ function formatAge(seconds: number): string {
 
 interface InstructionBuild {
   section: AuditInstructionSection;
-  lines: InstructionLine[];
-  window: InstructionWindow;
 }
 
 async function buildInstructionSection(options: AuditReportOptions): Promise<InstructionBuild> {
   const window = await buildInstructionWindow(options);
   const lines = await readInstructionLines(options);
   const correlation = correlateInstructions(lines, window);
+  const profile = await buildLessonRepoProfile(options);
+  const lessonCandidates = planContextualLessons({
+    profile,
+    gaps: correlation.gaps,
+    evidence: lessonEvidenceFromWindow(window)
+  });
   return {
     section: {
       windowSessions: window.sessionCount,
       removalCandidates: correlation.removalCandidates,
       followed: correlation.followed,
-      gaps: correlation.gaps
-    },
-    lines,
-    window
+      gaps: correlation.gaps,
+      lessonCandidates
+    }
   };
+}
+
+async function buildLessonRepoProfile(options: AuditReportOptions): Promise<RepoProfile> {
+  if (options.allProjects) {
+    return emptyRepoProfile();
+  }
+  return buildRepoProfile(options.projectDir || process.cwd());
 }
 
 async function buildInstructionWindow(options: AuditReportOptions): Promise<InstructionWindow> {
@@ -323,12 +333,41 @@ async function buildInstructionWindow(options: AuditReportOptions): Promise<Inst
     }
   }
   const categorySessions: Partial<Record<CoarseCategory, number>> = {};
+  const categoryFileHints: Partial<Record<CoarseCategory, string[]>> = {};
   for (const categories of bySession.values()) {
     for (const category of categories) {
       categorySessions[category] = (categorySessions[category] ?? 0) + 1;
     }
   }
-  return { sessionCount: bySession.size, categorySessions };
+  for (const decision of decisions) {
+    const sessionCategories = new Set<CoarseCategory>();
+    for (const finding of decision.findings ?? []) {
+      const coarse = coarseCategoryForFinding(finding.category);
+      if (!coarse || !finding.fileHint || sessionCategories.has(coarse)) {
+        continue;
+      }
+      sessionCategories.add(coarse);
+      categoryFileHints[coarse] = stablePush(categoryFileHints[coarse] ?? [], finding.fileHint);
+    }
+  }
+  return { sessionCount: bySession.size, categorySessions, categoryFileHints };
+}
+
+function lessonEvidenceFromWindow(window: InstructionWindow): Partial<Record<CoarseCategory, LessonEvidence>> {
+  const evidence: Partial<Record<CoarseCategory, LessonEvidence>> = {};
+  for (const [category, seen] of Object.entries(window.categorySessions) as Array<[CoarseCategory, number | undefined]>) {
+    if (seen !== undefined) {
+      evidence[category] = { category, seen, fileHints: window.categoryFileHints?.[category] ?? [] };
+    }
+  }
+  return evidence;
+}
+
+function stablePush(values: string[], value: string): string[] {
+  if (!values.includes(value)) {
+    values.push(value);
+  }
+  return values;
 }
 
 async function readInstructionLines(options: AuditReportOptions): Promise<InstructionLine[]> {
@@ -356,19 +395,18 @@ interface ApplyOutcome {
 async function applyInstructionAdditions(
   options: AuditReportOptions,
   instructions: AuditInstructionSection,
-  lines: InstructionLine[],
-  window: InstructionWindow,
   now: Date
 ): Promise<ApplyOutcome> {
   const target: AuditApplyResult["target"] = options.global || options.allProjects ? "global_claude" : "project_claude";
   const path = target === "global_claude" ? globalClaudePath(options.homeDir) : projectClaudePath(options.projectDir);
-  const additions = instructions.gaps.slice(0, MAX_ADDITIONS_PER_APPLY).map((gap) => GAP_INSTRUCTIONS[gap.category]);
+  const before = await readInstructionFile(path);
+  const additions = additionsForApply(instructions.lessonCandidates, before.text);
   if (additions.length === 0) {
     return { diff: undefined, applied: [] };
   }
 
-  const before = await readInstructionFile(path);
-  const block = buildInstructionBlock(additions);
+  const mergedInstructions = mergeOwnedInstructions(before.text, additions, instructions.lessonCandidates);
+  const block = buildInstructionBlock(mergedInstructions);
   const next = upsertBlock(before.text, block);
   const diff = renderDiff(target, additions, instructions.removalCandidates);
   if (next.text === before.text) {
@@ -387,6 +425,35 @@ async function applyInstructionAdditions(
     diff,
     applied: [{ target, changed: true, backupCreated, blockAction: next.action, added: additions }]
   };
+}
+
+function additionsForApply(candidates: readonly ContextualLessonCandidate[], existingText: string): string[] {
+  const existing = new Set(instructionLinesFromOwnedBlocks(existingText));
+  const additions: string[] = [];
+  for (const candidate of candidates) {
+    if (existing.has(candidate.text)) {
+      continue;
+    }
+    additions.push(candidate.text);
+    if (additions.length >= MAX_ADDITIONS_PER_APPLY) {
+      break;
+    }
+  }
+  return additions;
+}
+
+function mergeOwnedInstructions(
+  existingText: string,
+  additions: readonly string[],
+  candidates: readonly ContextualLessonCandidate[]
+): string[] {
+  const replacingCategories = new Set(
+    candidates.filter((candidate) => additions.includes(candidate.text)).map((candidate) => candidate.category)
+  );
+  const replacedFallbacks = new Set([...replacingCategories].map((category) => genericFallbackForCategory(category)));
+  return [...new Set([...instructionLinesFromOwnedBlocks(existingText).filter((line) => !replacedFallbacks.has(line)), ...additions])].sort(
+    (left, right) => left.localeCompare(right)
+  );
 }
 
 async function cleanupBlocks(options: AuditReportOptions): Promise<AuditApplyResult[]> {
@@ -409,12 +476,12 @@ async function cleanupBlocks(options: AuditReportOptions): Promise<AuditApplyRes
 function renderDiff(target: AuditApplyResult["target"], additions: string[], removals: InstructionCorrelation["removalCandidates"]): string {
   const label = target === "global_claude" ? "~/.claude/CLAUDE.md" : "./CLAUDE.md";
   const lines = [`--- a/${label}`, `+++ b/${label}`, "@@ bb-cc-lite block @@"];
-  lines.push("+<!-- bb-cc-lite improve:start -->");
+  lines.push("+<!-- bb-cc-lite audit:start -->");
   lines.push("+## bb-cc-lite lessons");
   for (const addition of [...additions].sort((a, b) => a.localeCompare(b))) {
     lines.push(`+- ${addition}`);
   }
-  lines.push("+<!-- bb-cc-lite improve:end -->");
+  lines.push("+<!-- bb-cc-lite audit:end -->");
   for (const removal of removals) {
     // Removal proposals are comments only; bb never deletes a user-authored line (branch H7).
     lines.push(`# proposed removal (not applied): ${removal.file}:${removal.lineNumber} ${removal.text}`);
@@ -548,6 +615,16 @@ function renderInstructionSection(report: AuditReport): string | undefined {
     const rows = ["Gaps:"];
     for (const gap of instructions.gaps) {
       rows.push(`  ${gap.label}: seen ${gap.seen}x with no addressing instruction line`);
+    }
+    subsections.push(rows.join("\n"));
+  }
+  if (instructions.lessonCandidates.length > 0) {
+    const rows = ["Lesson candidates:"];
+    for (const candidate of instructions.lessonCandidates) {
+      const source = candidate.source === "contextual" ? "contextual" : `fallback: ${candidate.fallbackReason ?? "generic"}`;
+      rows.push(
+        `  ${candidate.category} (${candidate.evidenceSessions} sessions, ${candidate.confidence}, ${source}): ${candidate.text}`
+      );
     }
     subsections.push(rows.join("\n"));
   }

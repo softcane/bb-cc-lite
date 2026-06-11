@@ -50,10 +50,10 @@ const FINDING_CATEGORY_TO_COARSE: Record<string, CoarseCategory> = {
 // Coarse keyword sets for instruction lines. Order matters only for readability; a line may match
 // several categories.
 const KEYWORDS: Record<CoarseCategory, readonly string[]> = {
-  validation_retry: ["test", "validate", "validation", "lint", "typecheck", "type-check", "build", "retry", "rerun", "re-run", "failing check", "checks pass"],
-  unchecked_edits: ["after chang", "after edit", "after a change", "run the smallest", "verify the change", "confirm the edit", "before committing", "after writing code", "after you edit"],
-  redundant_reads: ["reread", "re-read", "read the same", "rereading", "existing context", "already read", "same file"],
-  context_pressure: ["compact", "compaction", "handoff", "hand-off", "summarize progress", "restate", "open risk", "before continuing after"]
+  validation_retry: ["test", "validate", "validation", "validation failure", "inspect the first failure", "lint", "typecheck", "type-check", "build", "retry", "rerun", "re-run", "failing check", "checks pass"],
+  unchecked_edits: ["after chang", "after edit", "after a change", "changes, run", "run the smallest", "verify the change", "confirm the edit", "before committing", "after writing code", "after you edit"],
+  redundant_reads: ["reread", "re-read", "read the same", "rereading", "existing context", "source map", "test map", "unchanged files", "already read", "same file"],
+  context_pressure: ["compact", "compaction", "handoff", "hand-off", "summarize progress", "restate", "open risk", "open risks", "next check", "before continuing after"]
 };
 
 export function coarseCategoryForFinding(category: string): CoarseCategory | undefined {
@@ -111,6 +111,8 @@ export interface InstructionWindow {
   sessionCount: number;
   // Per coarse category: how many of those sessions exhibited it as a finding.
   categorySessions: Partial<Record<CoarseCategory, number>>;
+  // Optional basename-level hints from stored gauge findings. These are not raw paths.
+  categoryFileHints?: Partial<Record<CoarseCategory, string[]>>;
 }
 
 export interface RemovalCandidate {

@@ -2,13 +2,13 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-// Marked CLAUDE.md block machinery (PRD-02 branch H6). The same block convention, backup naming,
-// and scope routing the retired `improve --apply` flow used, so existing installs' blocks stay
-// recognizable and `audit --cleanup` keeps working. bb only ever owns the text between these
-// markers; user-authored lines outside the block are never modified or removed.
+// Marked CLAUDE.md block machinery. New writes use audit markers; cleanup still recognizes the
+// retired improve markers. bb only owns text between known markers.
 
-export const BLOCK_START = "<!-- bb-cc-lite improve:start -->";
-export const BLOCK_END = "<!-- bb-cc-lite improve:end -->";
+export const BLOCK_START = "<!-- bb-cc-lite audit:start -->";
+export const BLOCK_END = "<!-- bb-cc-lite audit:end -->";
+export const LEGACY_BLOCK_START = "<!-- bb-cc-lite improve:start -->";
+export const LEGACY_BLOCK_END = "<!-- bb-cc-lite improve:end -->";
 export const BLOCK_HEADING = "## bb-cc-lite lessons";
 
 export type BlockAction = "created" | "updated" | "removed" | "unchanged";
@@ -40,15 +40,9 @@ export function buildInstructionBlock(instructions: readonly string[]): string {
 }
 
 export function upsertBlock(existing: string, block: string): { text: string; action: "created" | "updated" } {
-  const start = existing.indexOf(BLOCK_START);
-  const end = existing.indexOf(BLOCK_END);
-  if (start >= 0 && end > start) {
-    const afterEnd = end + BLOCK_END.length;
-    const suffix = existing.slice(afterEnd).replace(/^\n/u, "");
-    return {
-      text: `${existing.slice(0, start)}${block}${suffix}`,
-      action: "updated"
-    };
+  const ranges = findBlockRanges(existing);
+  if (ranges.length > 0) {
+    return { text: replaceRangesWithBlock(existing, ranges, block), action: "updated" };
   }
   const separator = existing.length > 0 && !existing.endsWith("\n") ? "\n\n" : existing.length > 0 ? "\n" : "";
   return {
@@ -58,17 +52,104 @@ export function upsertBlock(existing: string, block: string): { text: string; ac
 }
 
 export function removeBlock(existing: string): { text: string; action: "removed" | "unchanged" } {
-  const start = existing.indexOf(BLOCK_START);
-  const end = existing.indexOf(BLOCK_END);
-  if (start < 0 || end <= start) {
+  const ranges = findBlockRanges(existing);
+  if (ranges.length === 0) {
     return { text: existing, action: "unchanged" };
   }
-  const afterEnd = end + BLOCK_END.length;
-  const suffix = existing.slice(afterEnd).replace(/^\n/u, "");
-  return {
-    text: `${existing.slice(0, start)}${suffix}`,
-    action: "removed"
-  };
+  return { text: removeRanges(existing, ranges), action: "removed" };
+}
+
+export function instructionLinesFromOwnedBlocks(existing: string): string[] {
+  const lines: string[] = [];
+  for (const range of findBlockRanges(existing)) {
+    const inner = existing.slice(range.contentStart, range.contentEnd);
+    for (const rawLine of inner.split(/\r?\n/u)) {
+      const trimmed = rawLine.trim();
+      if (trimmed.length === 0 || trimmed === BLOCK_HEADING || trimmed.startsWith("#")) {
+        continue;
+      }
+      const line = trimmed.replace(/^[-*+]\s+/u, "").trim();
+      if (line.length > 0) {
+        lines.push(line);
+      }
+    }
+  }
+  return [...new Set(lines)].sort((left, right) => left.localeCompare(right));
+}
+
+interface BlockRange {
+  start: number;
+  end: number;
+  contentStart: number;
+  contentEnd: number;
+}
+
+const BLOCK_MARKERS = [
+  { start: BLOCK_START, end: BLOCK_END },
+  { start: LEGACY_BLOCK_START, end: LEGACY_BLOCK_END }
+] as const;
+
+function findBlockRanges(existing: string): BlockRange[] {
+  const ranges: BlockRange[] = [];
+  for (const marker of BLOCK_MARKERS) {
+    let searchIndex = 0;
+    while (searchIndex < existing.length) {
+      const start = existing.indexOf(marker.start, searchIndex);
+      if (start < 0) {
+        break;
+      }
+      const endStart = existing.indexOf(marker.end, start + marker.start.length);
+      if (endStart < 0) {
+        break;
+      }
+      ranges.push({
+        start,
+        end: endStart + marker.end.length,
+        contentStart: start + marker.start.length,
+        contentEnd: endStart
+      });
+      searchIndex = endStart + marker.end.length;
+    }
+  }
+  return ranges.sort((left, right) => left.start - right.start).filter((range, index, sorted) => {
+    const previous = sorted[index - 1];
+    return !previous || range.start >= previous.end;
+  });
+}
+
+function replaceRangesWithBlock(existing: string, ranges: readonly BlockRange[], block: string): string {
+  let text = "";
+  let cursor = 0;
+  for (const [index, range] of ranges.entries()) {
+    text += existing.slice(cursor, range.start);
+    if (index === 0) {
+      text += block;
+    }
+    cursor = skipOneNewline(existing, range.end);
+  }
+  text += existing.slice(cursor);
+  return text;
+}
+
+function removeRanges(existing: string, ranges: readonly BlockRange[]): string {
+  let text = "";
+  let cursor = 0;
+  for (const range of ranges) {
+    text += existing.slice(cursor, range.start);
+    cursor = skipOneNewline(existing, range.end);
+  }
+  text += existing.slice(cursor);
+  return text;
+}
+
+function skipOneNewline(text: string, index: number): number {
+  if (text.slice(index, index + 2) === "\r\n") {
+    return index + 2;
+  }
+  if (text[index] === "\n") {
+    return index + 1;
+  }
+  return index;
 }
 
 export async function backupInstructionFile(path: string, text: string, now: Date): Promise<string> {

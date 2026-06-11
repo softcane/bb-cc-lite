@@ -161,10 +161,13 @@ describe("audit write behavior", () => {
     expect(report.applied).toEqual([
       expect.objectContaining({ target: "project_claude", changed: true, backupCreated: true, blockAction: "created" })
     ]);
+    expect(report.instructions.lessonCandidates).toEqual([
+      expect.objectContaining({ source: "generic_fallback", category: "validation_retry" })
+    ]);
     expect(text).toContain("Proposed CLAUDE.md diff:");
-    expect(text).toContain("+<!-- bb-cc-lite improve:start -->");
+    expect(text).toContain("+<!-- bb-cc-lite audit:start -->");
     expect(afterFirst).toContain("Keep this user line.");
-    expect(afterFirst).toContain("<!-- bb-cc-lite improve:start -->");
+    expect(afterFirst).toContain("<!-- bb-cc-lite audit:start -->");
     expect(afterFirst).toContain("- Inspect the first failure before rerunning a failed check.");
     expect(backups).toHaveLength(1);
 
@@ -191,12 +194,130 @@ describe("audit write behavior", () => {
     expect(text).toContain("# proposed removal (not applied): ./CLAUDE.md:1");
   });
 
-  it("--cleanup removes the marked block after a backup", async () => {
+  it("--apply writes contextual lessons when repo context is available", async () => {
+    const projectDir = join(tempDir, "contextual");
+    await writePackage(projectDir, { test: "vitest run", lint: "eslint .", typecheck: "tsc --noEmit", build: "tsc" });
+    await writeAgents(projectDir);
+    for (const sessionKey of ["c1", "c2", "c3"]) {
+      await seedDecision({ projectDir, sessionKey, reasonCode: "edit_drift", findings: [blueFinding("audit-report.ts")] });
+    }
+    const claudePath = join(projectDir, "CLAUDE.md");
+    await writeFileEnsured(claudePath, "# Project\n\nKeep this user line.\n");
+
+    const report = await runAuditReport({ projectDir, homeDir: tempDir, storePath, apply: true });
+    const text = renderAuditReport(report);
+    const after = await readFile(claudePath, "utf8");
+
+    expect(report.instructions.lessonCandidates).toEqual([
+      expect.objectContaining({
+        source: "contextual",
+        category: "unchecked_edits",
+        workArea: "audit/report",
+        evidenceSessions: 3
+      })
+    ]);
+    expect(text).toContain("Lesson candidates:");
+    expect(after).toContain("<!-- bb-cc-lite audit:start -->");
+    expect(after).toContain(
+      "- After changing code, run the smallest relevant check before the full gate. For example, for audit/report changes, run `npm test -- test/audit-report.test.ts test/instruction-correlator.test.ts` before `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build`."
+    );
+    expect(after).not.toContain("audit-report.ts");
+
+    const afterFirst = after;
+    await runAuditReport({ projectDir, homeDir: tempDir, storePath, apply: true });
+    expect(await readFile(claudePath, "utf8")).toBe(afterFirst);
+  });
+
+  it("--apply adds at most two lessons per run", async () => {
+    const projectDir = join(tempDir, "cap");
+    await writePackage(projectDir, { test: "vitest run", lint: "eslint .", typecheck: "tsc --noEmit", build: "tsc" });
+    await writeAgents(projectDir);
+    for (const sessionKey of ["v1", "v2", "v3"]) {
+      await seedDecision({
+        projectDir,
+        sessionKey,
+        reasonCode: "multiple",
+        findings: [redFinding("audit-report.ts"), blueFinding("audit-report.ts"), redundantReadFinding(), contextFinding()]
+      });
+    }
+
+    const report = await runAuditReport({ projectDir, homeDir: tempDir, storePath, apply: true });
+    const after = await readFile(join(projectDir, "CLAUDE.md"), "utf8");
+
+    expect(report.instructions.lessonCandidates).toHaveLength(4);
+    expect(report.applied[0]?.added).toHaveLength(2);
+    expect(after.match(/^- /gmu)).toHaveLength(2);
+  });
+
+  it("--apply routes contextual lessons to global CLAUDE.md with --global", async () => {
+    const projectDir = join(tempDir, "global-project");
+    const homeDir = join(tempDir, "home");
+    await writePackage(projectDir, { test: "vitest run" });
+    await writeAgents(projectDir);
+    for (const sessionKey of ["g1", "g2", "g3"]) {
+      await seedDecision({ projectDir, sessionKey, reasonCode: "edit_drift", findings: [blueFinding("audit-report.ts")] });
+    }
+
+    const report = await runAuditReport({ projectDir, homeDir, storePath, apply: true, global: true });
+    const globalText = await readFile(join(homeDir, ".claude", "CLAUDE.md"), "utf8");
+
+    expect(report.applied).toEqual([expect.objectContaining({ target: "global_claude", changed: true })]);
+    expect(globalText).toContain("For example, for audit/report changes");
+    await expect(pathExists(join(projectDir, "CLAUDE.md"))).resolves.toBe(false);
+  });
+
+  it("--apply keeps privacy sentinels out of written lessons", async () => {
+    const projectDir = join(tempDir, "privacy");
+    await writePackage(projectDir, { test: "vitest run" });
+    await writeAgents(projectDir);
+    await writeFileEnsured(
+      join(projectDir, ".bb-cc-lite.json"),
+      `${JSON.stringify({ validationCommands: { tests: ["BB_CC_LITE_RAW_COMMAND_SENTINEL --secret"] } })}\n`
+    );
+    for (const sessionKey of ["p1", "p2", "p3"]) {
+      await seedDecision({
+        projectDir,
+        sessionKey,
+        reasonCode: "blind_retry_loop",
+        findings: [
+          {
+            ...redFinding("audit-report.ts"),
+            evidence: "BB_CC_LITE_RAW_PROMPT_SENTINEL /tmp/bb-cc-lite/private/worktree/src/secret.ts"
+          }
+        ]
+      });
+    }
+
+    await runAuditReport({ projectDir, homeDir: tempDir, storePath, apply: true });
+    const after = await readFile(join(projectDir, "CLAUDE.md"), "utf8");
+
+    expect(after).toContain("For example, for audit/report validation failures");
+    for (const sentinel of ["BB_CC_LITE_RAW_PROMPT_SENTINEL", "BB_CC_LITE_RAW_COMMAND_SENTINEL", "/tmp/bb-cc-lite/private/worktree"]) {
+      expect(after).not.toContain(sentinel);
+    }
+  });
+
+  it("--cleanup removes audit and old improve blocks after a backup", async () => {
     const projectDir = join(tempDir, "cleanup");
     const claudePath = join(projectDir, "CLAUDE.md");
     await writeFileEnsured(
       claudePath,
-      ["# Project", "", "Keep me.", "", "<!-- bb-cc-lite improve:start -->", "## bb-cc-lite lessons", "- Old rule.", "<!-- bb-cc-lite improve:end -->", ""].join("\n")
+      [
+        "# Project",
+        "",
+        "Keep me.",
+        "",
+        "<!-- bb-cc-lite audit:start -->",
+        "## bb-cc-lite lessons",
+        "- New rule.",
+        "<!-- bb-cc-lite audit:end -->",
+        "",
+        "<!-- bb-cc-lite improve:start -->",
+        "## bb-cc-lite lessons",
+        "- Old rule.",
+        "<!-- bb-cc-lite improve:end -->",
+        ""
+      ].join("\n")
     );
 
     const report = await runAuditReport({ projectDir, homeDir: tempDir, storePath, cleanup: true, now: new Date("2026-06-10T02:00:00.000Z") });
@@ -206,6 +327,7 @@ describe("audit write behavior", () => {
       expect.objectContaining({ target: "project_claude", changed: true, backupCreated: true, blockAction: "removed" })
     ]);
     expect(after).toContain("Keep me.");
+    expect(after).not.toContain("bb-cc-lite audit:start");
     expect(after).not.toContain("bb-cc-lite improve:start");
   });
 });
@@ -330,6 +452,7 @@ describe("audit --json", () => {
     expect(parsed.session.hasHistory).toBe(true);
     expect(parsed.patterns.kind).toBe("deep-advisory");
     expect(parsed.instructions).toHaveProperty("windowSessions");
+    expect(parsed.instructions).toHaveProperty("lessonCandidates");
   });
 });
 
@@ -359,12 +482,20 @@ async function seedDecision(options: {
   await recordDecision(decision, storePath);
 }
 
-function redFinding(): Finding {
-  return { category: "blind_retry_loop", severity: "red", confidence: "high", evidence: "3 fails, no fix between runs" };
+function redFinding(fileHint?: string): Finding {
+  return { category: "blind_retry_loop", severity: "red", confidence: "high", evidence: "3 fails, no fix between runs", fileHint };
 }
 
-function blueFinding(): Finding {
-  return { category: "edit_drift", severity: "blue", confidence: "medium", evidence: "edits unchecked since last check" };
+function blueFinding(fileHint?: string): Finding {
+  return { category: "edit_drift", severity: "blue", confidence: "medium", evidence: "edits unchecked since last check", fileHint };
+}
+
+function redundantReadFinding(): Finding {
+  return { category: "redundant_read_loop", severity: "red", confidence: "high", evidence: "same file reread 3x", fileHint: "instruction-correlator.ts" };
+}
+
+function contextFinding(): Finding {
+  return { category: "context_critical", severity: "red", confidence: "high", evidence: "ctx 93%, nearly full" };
 }
 
 function feedbackOutcome(sessionKey: string): StoredFeedbackOutcome {
@@ -385,6 +516,41 @@ function feedbackOutcome(sessionKey: string): StoredFeedbackOutcome {
 async function writeFileEnsured(path: string, content: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, content, "utf8");
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && (error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function writePackage(projectDir: string, scripts: Record<string, string>): Promise<void> {
+  await writeFileEnsured(join(projectDir, "package.json"), `${JSON.stringify({ type: "module", scripts }, null, 2)}\n`);
+}
+
+async function writeAgents(projectDir: string): Promise<void> {
+  await writeFileEnsured(
+    join(projectDir, "AGENTS.md"),
+    [
+      "# Agent Map",
+      "",
+      "## Source Map",
+      "",
+      "- `src/audit-report.ts`: audit/report behavior.",
+      "- `src/instruction-correlator.ts`: instruction report matching.",
+      "",
+      "## Test Map",
+      "",
+      "- `test/audit-report.test.ts`: audit/report tests.",
+      "- `test/instruction-correlator.test.ts`: instruction report tests."
+    ].join("\n")
+  );
 }
 
 async function treeHash(roots: string[]): Promise<string> {
