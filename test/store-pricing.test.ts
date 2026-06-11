@@ -3,10 +3,31 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { estimateCostUsd, type PricingTable } from "../src/pricing.js";
+import { buildGauge } from "../src/gauge.js";
 import { hashValue } from "../src/paths.js";
-import { decide } from "../src/signals.js";
+import { sessionKeyFromId } from "../src/session.js";
 import { hookSummary, latestDecision, recordDecision } from "../src/store.js";
-import type { StatusLineInput, TranscriptSummary } from "../src/types.js";
+import type { Decision, StatusLineInput, TranscriptSummary } from "../src/types.js";
+
+// Mirrors statusline.ts: build the slim gauge-era stored record (no advisor fields) for store tests.
+function gaugeDecision(statusInput: StatusLineInput, transcriptSummary: TranscriptSummary): Decision {
+  const sessionKey = sessionKeyFromId(statusInput.sessionId);
+  const gauge = buildGauge(statusInput, transcriptSummary, { sessionKey });
+  return {
+    schemaVersion: 2,
+    sessionKey,
+    light: gauge.light,
+    activity: gauge.activity,
+    findings: gauge.findings,
+    ledger: transcriptSummary.ledger?.entries ?? [],
+    files: gauge.files,
+    costUsd: statusInput.costUsd,
+    costSource: statusInput.costSource,
+    contextPercent: statusInput.contextPercent,
+    rateLimitPercent: statusInput.rateLimitPercent,
+    createdAt: gauge.createdAt
+  };
+}
 
 function input(overrides: Partial<StatusLineInput> = {}): StatusLineInput {
   return {
@@ -91,7 +112,7 @@ describe("store and pricing", () => {
     const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-store-mode-"));
     try {
       const storePath = join(tempDir, "events.json");
-      await recordDecision(decide(input(), transcript()), storePath);
+      await recordDecision(gaugeDecision(input(), transcript()), storePath);
 
       expect((await stat(storePath)).mode & 0o777).toBe(0o600);
     } finally {
@@ -106,7 +127,7 @@ describe("store and pricing", () => {
       const rawPromptSentinel = "RAW_PROMPT_SENTINEL_DO_NOT_STORE";
       const rawToolOutputSentinel = "RAW_TOOL_OUTPUT_SENTINEL_DO_NOT_STORE";
       const rawSessionId = `session-${rawPromptSentinel}-${rawToolOutputSentinel}`;
-      const decision = decide(
+      const decision = gaugeDecision(
         input({
           sessionId: rawSessionId,
           transcriptPath: `/tmp/${rawPromptSentinel}.jsonl`,
@@ -148,7 +169,7 @@ describe("store and pricing", () => {
       const rawPath = `/tmp/RAW_PATH_SENTINEL/${rawFileContentSentinel}/transcript.jsonl`;
       const rawWorkspacePath = `/workspace/RAW_WORKSPACE_SENTINEL/${rawPromptSentinel}`;
       const rawSessionId = `session-${rawPromptSentinel}-${rawToolOutputSentinel}-${rawFileContentSentinel}`;
-      const decision = decide(
+      const decision = gaugeDecision(
         input({
           sessionId: rawSessionId,
           transcriptPath: rawPath,
@@ -163,10 +184,10 @@ describe("store and pricing", () => {
       await recordDecision(decision, storePath);
       const whyDecision = await latestDecision(decision.sessionKey, storePath);
 
-      expect(whyDecision).toMatchObject({
-        state: "Careful",
-        reasonCode: "cache_efficiency_regression",
-        primaryEvidence: "cache reuse dropped from 68% to 29%"
+      expect(whyDecision?.light).toBe("blue");
+      expect(whyDecision?.findings?.[0]).toMatchObject({
+        category: "cache_efficiency_regression",
+        evidence: "cache reuse dropped from 68% to 29%"
       });
       expect(whyDecision?.sessionKey).toBe(hashValue(rawSessionId));
 
@@ -191,7 +212,7 @@ describe("store and pricing", () => {
     try {
       const storePath = join(tempDir, "events.json");
       const rawPath = "/tmp/bb-cc-lite/private/worktree/src/secret.ts";
-      const decision = decide(
+      const decision = gaugeDecision(
         input({ sessionId: "session-alpha" }),
         transcript({
           toolCalls: 3,

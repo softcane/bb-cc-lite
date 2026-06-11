@@ -4,7 +4,7 @@ import { buildEditLedger, type LedgerEvent } from "./edit-ledger.js";
 import { extractFailureEpisodesFromTranscriptLines, summarizeBlindRetry } from "./failure-episodes.js";
 import { fileBasenameFromToolInput, fileIdentityFromToolInput, isFullFileReadInput } from "./file-identity.js";
 import { sessionKeyFromId } from "./session.js";
-import { classifyResultPurpose, classifyToolIdentity } from "./tool-metadata.js";
+import { classifyResultPurpose, classifyToolIdentity, isPermissionDeclineResult } from "./tool-metadata.js";
 import { readTranscriptTail, type ReadTranscriptTailOptions } from "./transcript-reader.js";
 import type { ProjectConfig } from "./project-config.js";
 import type {
@@ -38,6 +38,7 @@ interface ToolMeta {
 interface FileReadState {
   count: number;
   lastSeenToolCall: number;
+  basename?: string;
 }
 
 export async function parseTranscriptTail(
@@ -197,7 +198,10 @@ export function parseTranscriptLines(
         const existing = fullFileReadCounts.get(fileIdentity.fileIdentityHash);
         fullFileReadCounts.set(fileIdentity.fileIdentityHash, {
           count: (existing?.count || 0) + 1,
-          lastSeenToolCall: toolCalls
+          lastSeenToolCall: toolCalls,
+          // Basename is display-safe (privacy: never a path); it rides the redundant-read summary
+          // so the gauge can name the file at full width ("reread auth.ts 3x").
+          basename: existing?.basename || fileBasenameFromToolInput(identity.displayName, toolUse.input)
         });
         redundantRead = strongestActiveRedundantRead(fullFileReadCounts);
       }
@@ -223,6 +227,11 @@ export function parseTranscriptLines(
     for (const toolResult of toolResults) {
       toolResultsSincePreviousAssistantUsage += 1;
       toolResultStep += 1;
+      if (toolResult.declined) {
+        // A permission-gate decline is the user's choice, not a tool failure or success: it must
+        // not feed failure counts, validation checks, the edit-test loop, or recovery.
+        continue;
+      }
       const meta =
         (toolResult.toolUseId ? toolById.get(toolResult.toolUseId) : undefined) ||
         (toolResult.toolName
@@ -457,7 +466,8 @@ function strongestActiveRedundantRead(readCounts: Map<string, FileReadState>): R
       strongest = {
         fileIdentityHash,
         unchangedFullFileReadCount: state.count,
-        latestState: state.count >= 3 ? "Stop" : "Careful"
+        latestState: state.count >= 3 ? "Stop" : "Careful",
+        basename: state.basename
       };
       strongestLastSeen = state.lastSeenToolCall;
     }
@@ -539,15 +549,17 @@ function extractToolResults(entry: Record<string, unknown>): Array<{
   toolUseId?: string;
   toolName?: string;
   isError: boolean;
+  declined: boolean;
   purpose?: string;
 }> {
-  const result: Array<{ toolUseId?: string; toolName?: string; isError: boolean; purpose?: string }> = [];
+  const result: Array<{ toolUseId?: string; toolName?: string; isError: boolean; declined: boolean; purpose?: string }> = [];
   for (const part of contentParts(entry)) {
     if (part.type === "tool_result") {
       result.push({
         toolUseId: stringField(part.tool_use_id) || stringField(part.toolUseId),
         toolName: stringField(part.name) || stringField(part.tool_name),
         isError: truthyError(part),
+        declined: isPermissionDeclineResult(part),
         purpose: classifyResultPurpose(part)
       });
     }
@@ -558,6 +570,7 @@ function extractToolResults(entry: Record<string, unknown>): Array<{
       toolUseId: stringField(entry.tool_use_id) || stringField(entry.toolUseId),
       toolName: stringField(entry.name) || stringField(entry.tool_name) || stringField(entry.toolName),
       isError: truthyError(entry),
+      declined: isPermissionDeclineResult(entry),
       purpose: classifyResultPurpose(entry)
     });
   }

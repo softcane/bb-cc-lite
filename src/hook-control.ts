@@ -1,6 +1,7 @@
 import { expectedActionForFeedback, refreshFeedbackOutcomesForSession } from "./feedback-outcomes.js";
 import { decideFeedback, type CurrentHookTool, type FeedbackMode } from "./feedback-policy.js";
 import { fileIdentityFromToolInput, readKindFromInput } from "./file-identity.js";
+import { legacyDecisionView } from "./legacy-state.js";
 import { responseForFeedback, type HookResponse } from "./hook-response.js";
 import { parseHookPayload } from "./hook-payload.js";
 import { lessonContextForProject, recordLessonFromSummary } from "./memory-lessons.js";
@@ -110,7 +111,8 @@ export async function handleHook(raw: string, options: HandleHookOptions = {}): 
       : undefined;
   }
 
-  const decision = sessionKey ? await latestDecision(sessionKey, options.storePath) : undefined;
+  const storedDecision = sessionKey ? await latestDecision(sessionKey, options.storePath) : undefined;
+  const decision = legacyDecisionView(storedDecision);
   const recentFeedback = await recentFeedbackEvents(sessionKey, options.storePath);
   const feedback = decideFeedback({
     mode,

@@ -7,7 +7,6 @@ import { estimateCostUsd, loadPricing } from "./pricing.js";
 import { loadProjectConfig } from "./project-config.js";
 import { projectKeyFromPath } from "./paths.js";
 import { sessionKeyFromId } from "./session.js";
-import { decide } from "./signals.js";
 import { mergeUsage, parseStatusLineInput } from "./status-input.js";
 import { hookSummary, latestDecision, recordDecision } from "./store.js";
 import { parseTranscriptTail } from "./transcript.js";
@@ -59,22 +58,28 @@ export async function createStatusLine(
   const baselineSelection = await readBaselineForProject({ projectDir: input.cwd });
   const baseline = baselineSelection.baseline;
   const projectKey = input.cwd ? projectKeyFromPath(input.cwd) : undefined;
-  const decision = decide(input, transcript, { previous, baseline });
   const gauge = buildGauge(input, transcript, {
     baseline,
     previous: previous ? { costUsd: previous.costUsd } : undefined,
     sessionKey,
     projectKey
   });
+  // The gauge is the only engine now (grill F1). A newly stored decision carries the slim gauge-era
+  // key set — no advisor state/reasonCode/diagnosis/primaryEvidence/impact/action ever again.
   const record: Decision = {
-    ...decision,
     schemaVersion: 2,
     projectKey,
+    sessionKey,
     light: gauge.light,
     activity: gauge.activity,
     findings: gauge.findings,
     ledger: transcript.ledger?.entries ?? [],
-    files: gauge.files
+    files: gauge.files,
+    costUsd: input.costUsd,
+    costSource: input.costSource,
+    contextPercent: input.contextPercent,
+    rateLimitPercent: input.rateLimitPercent,
+    createdAt: gauge.createdAt
   };
   await recordDecision(record);
   await maybeTriggerBaselineRefresh({ ...options.baselineRefresh, baseline, projectDir: input.cwd, transcriptPath: input.transcriptPath });

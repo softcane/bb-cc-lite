@@ -2,9 +2,9 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { buildGauge } from "../src/gauge.js";
 import { mergeHookSummary, parseHookPayload } from "../src/hooks.js";
 import { hashValue } from "../src/paths.js";
-import { decide } from "../src/signals.js";
 import { hookSummary, readStore, recordHookEvent } from "../src/store.js";
 import type { StatusLineInput, TranscriptSummary } from "../src/types.js";
 
@@ -495,12 +495,9 @@ describe("optional Claude Code hooks", () => {
 
       const carefulSummary = await hookSummary(sessionKey, storePath);
       expectNoPrivacySentinels(await readFile(storePath, "utf8"));
-      const careful = decide(input({ sessionId }), mergeHookSummary(transcript(), carefulSummary));
-      expect(careful).toMatchObject({
-        state: "Careful",
-        reasonCode: "blind_retry",
-        primaryEvidence: "same test failed twice without a fix"
-      });
+      const careful = buildGauge(input({ sessionId }), mergeHookSummary(transcript(), carefulSummary));
+      expect(careful.light).toBe("blue");
+      expect(careful.findings[0]).toMatchObject({ category: "blind_retry", evidence: "2 fails, no fix between runs" });
 
       const thirdEvent = parseHookPayload(
         JSON.stringify({
@@ -518,12 +515,9 @@ describe("optional Claude Code hooks", () => {
       await recordHookEvent(thirdEvent, storePath);
 
       const stopSummary = await hookSummary(sessionKey, storePath);
-      const stop = decide(input({ sessionId }), mergeHookSummary(transcript(), stopSummary));
-      expect(stop).toMatchObject({
-        state: "Stop",
-        reasonCode: "blind_retry_loop",
-        primaryEvidence: "same test failed 3x without a fix"
-      });
+      const stop = buildGauge(input({ sessionId }), mergeHookSummary(transcript(), stopSummary));
+      expect(stop.light).toBe("red");
+      expect(stop.findings[0]).toMatchObject({ category: "blind_retry_loop", evidence: "3 fails, no fix between runs" });
       expect(await hookSummary(hashValue("other-session"), storePath)).toMatchObject({
         failedToolResults: 0,
         toolCalls: 0,
@@ -571,10 +565,7 @@ describe("optional Claude Code hooks", () => {
 
     expect(merged.repeatedFailures).toEqual([]);
     expect(merged.blindRetry).toBeUndefined();
-    expect(decide(input({ sessionId: "session-alpha" }), merged)).toMatchObject({
-      state: "Healthy",
-      reasonCode: "validation_recovered"
-    });
+    expect(buildGauge(input({ sessionId: "session-alpha" }), merged).light).toBe("green");
   });
 
   it("bounds open hook failure risk at SessionStart clear lifecycle boundaries", async () => {
@@ -620,10 +611,7 @@ describe("optional Claude Code hooks", () => {
         repeatedFailures: []
       });
       expect(summary.blindRetry).toBeUndefined();
-      expect(decide(input({ sessionId }), mergeHookSummary(transcript(), summary))).toMatchObject({
-        state: "Healthy",
-        reasonCode: "no_session_activity"
-      });
+      expect(buildGauge(input({ sessionId }), mergeHookSummary(transcript(), summary)).light).toBe("green");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -651,13 +639,9 @@ describe("optional Claude Code hooks", () => {
       }
 
       const carefulSummary = await hookSummary(sessionKey, storePath);
-      const careful = decide(input({ sessionId }), mergeHookSummary(transcript(), carefulSummary));
-      expect(careful).toMatchObject({
-        state: "Careful",
-        reasonCode: "blind_retry",
-        primaryEvidence: "same MCP tool failed twice without a fix",
-        action: "inspect first failure"
-      });
+      const careful = buildGauge(input({ sessionId }), mergeHookSummary(transcript(), carefulSummary));
+      expect(careful.light).toBe("blue");
+      expect(careful.findings[0]).toMatchObject({ category: "blind_retry", evidence: "2 fails, no fix between runs" });
 
       const thirdEvent = parseHookPayload(
         JSON.stringify({
@@ -672,13 +656,9 @@ describe("optional Claude Code hooks", () => {
       await recordHookEvent(thirdEvent, storePath);
 
       const stopSummary = await hookSummary(sessionKey, storePath);
-      const stop = decide(input({ sessionId }), mergeHookSummary(transcript(), stopSummary));
-      expect(stop).toMatchObject({
-        state: "Stop",
-        reasonCode: "blind_retry_loop",
-        primaryEvidence: "same MCP tool failed 3x without a fix",
-        action: "stop and inspect first failure"
-      });
+      const stop = buildGauge(input({ sessionId }), mergeHookSummary(transcript(), stopSummary));
+      expect(stop.light).toBe("red");
+      expect(stop.findings[0]).toMatchObject({ category: "blind_retry_loop", evidence: "3 fails, no fix between runs" });
 
       const storeText = await readFile(storePath, "utf8");
       expect(storeText).not.toContain(rawMcpName);
@@ -733,11 +713,9 @@ describe("optional Claude Code hooks", () => {
         ]
       });
       expect(JSON.stringify(carefulSummary)).not.toContain("secret.ts");
-      expect(decide(input({ sessionId }), mergeHookSummary(transcript(), carefulSummary))).toMatchObject({
-        state: "Careful",
-        reasonCode: "redundant_read",
-        primaryEvidence: "same file reread twice"
-      });
+      const redundantGauge = buildGauge(input({ sessionId }), mergeHookSummary(transcript(), carefulSummary));
+      expect(redundantGauge.light).toBe("blue");
+      expect(redundantGauge.findings[0]).toMatchObject({ category: "redundant_read", evidence: "same file reread twice" });
 
       const notebookEdit = parseHookPayload(
         JSON.stringify({
@@ -815,11 +793,8 @@ describe("optional Claude Code hooks", () => {
         toolCalls: 4,
         repeatedFailures: []
       });
-      const decision = decide(input({ sessionId, contextPercent: 42 }), mergeHookSummary(transcript(), summary));
-      expect(decision).toMatchObject({
-        state: "Healthy",
-        reasonCode: "validation_recovered"
-      });
+      const decision = buildGauge(input({ sessionId, contextPercent: 42 }), mergeHookSummary(transcript(), summary));
+      expect(decision.light).toBe("green");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -845,10 +820,7 @@ describe("optional Claude Code hooks", () => {
       compactionEvents: 1,
       postCompactionActivity: 1
     });
-    expect(decide(input(), summary)).toMatchObject({
-      state: "Healthy",
-      reasonCode: "healthy"
-    });
+    expect(buildGauge(input(), summary).light).toBe("green");
   });
 
   it("keeps a newer transcript compaction open despite older hook activity", () => {
@@ -874,10 +846,9 @@ describe("optional Claude Code hooks", () => {
       compactionEvents: 1,
       postCompactionActivity: 0
     });
-    expect(decide(input(), summary)).toMatchObject({
-      state: "Careful",
-      reasonCode: "compaction_goal_preservation"
-    });
+    const compactionGauge = buildGauge(input(), summary);
+    expect(compactionGauge.light).toBe("blue");
+    expect(compactionGauge.findings[0]).toMatchObject({ category: "compaction_goal_preservation" });
   });
 
   it("clears hook-derived compaction warning after later hook activity", async () => {
@@ -902,10 +873,9 @@ describe("optional Claude Code hooks", () => {
         compactionEvents: 1,
         postCompactionActivity: 0
       });
-      expect(decide(input({ sessionId }), mergeHookSummary(transcript(), openBoundarySummary))).toMatchObject({
-        state: "Careful",
-        reasonCode: "compaction_goal_preservation"
-      });
+      const openGauge = buildGauge(input({ sessionId }), mergeHookSummary(transcript(), openBoundarySummary));
+      expect(openGauge.light).toBe("blue");
+      expect(openGauge.findings[0]).toMatchObject({ category: "compaction_goal_preservation" });
 
       const success = parseHookPayload(
         JSON.stringify({
@@ -924,10 +894,7 @@ describe("optional Claude Code hooks", () => {
         compactionEvents: 1,
         postCompactionActivity: 1
       });
-      expect(decide(input({ sessionId }), mergeHookSummary(transcript(), completedSummary))).toMatchObject({
-        state: "Healthy",
-        reasonCode: "healthy"
-      });
+      expect(buildGauge(input({ sessionId }), mergeHookSummary(transcript(), completedSummary)).light).toBe("green");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -959,10 +926,9 @@ describe("optional Claude Code hooks", () => {
         postCompactionActivity: 0,
         latestCompactionTimestamp: "2026-06-03T10:00:00.000Z"
       });
-      expect(decide(input({ sessionId }), mergeHookSummary(transcript(), openBoundarySummary))).toMatchObject({
-        state: "Careful",
-        reasonCode: "compaction_goal_preservation"
-      });
+      const preCompactGauge = buildGauge(input({ sessionId }), mergeHookSummary(transcript(), openBoundarySummary));
+      expect(preCompactGauge.light).toBe("blue");
+      expect(preCompactGauge.findings[0]).toMatchObject({ category: "compaction_goal_preservation" });
       expectNoPrivacySentinels(openBoundarySummary, await readFile(storePath, "utf8"));
     } finally {
       await rm(tempDir, { recursive: true, force: true });

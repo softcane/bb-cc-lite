@@ -1,5 +1,5 @@
 import { asRecord, stringField } from "./status-input.js";
-import { classifyResultPurpose, classifyToolIdentity, isEditTool, isReadSearchTool } from "./tool-metadata.js";
+import { classifyResultPurpose, classifyToolIdentity, isEditTool, isPermissionDeclineResult, isReadSearchTool } from "./tool-metadata.js";
 import { categoryFailureSingular, type FailureRecoveryCategory } from "./recovery-stats.js";
 import type { ProjectConfig } from "./project-config.js";
 import type { BlindRetrySummary, FailureEpisodeSummary, StoredHookEvent } from "./types.js";
@@ -80,6 +80,11 @@ export function extractSafeToolResultEventsFromTranscriptLines(
     }
 
     for (const toolResult of extractToolResults(entry)) {
+      if (toolResult.declined) {
+        // Permission-gate declines are neither a failure nor a recovery; skip so they never form
+        // or break a blind-retry / repeated-failure episode.
+        continue;
+      }
       const meta = resolveMeta(toolResult, toolById);
       events.push(safeToolResultEvent(meta, toolResult.isError ? "failure" : "success"));
     }
@@ -305,15 +310,17 @@ function extractToolResults(entry: Record<string, unknown>): Array<{
   toolUseId?: string;
   toolName?: string;
   isError: boolean;
+  declined: boolean;
   purpose?: string;
 }> {
-  const result: Array<{ toolUseId?: string; toolName?: string; isError: boolean; purpose?: string }> = [];
+  const result: Array<{ toolUseId?: string; toolName?: string; isError: boolean; declined: boolean; purpose?: string }> = [];
   for (const part of contentParts(entry)) {
     if (part.type === "tool_result") {
       result.push({
         toolUseId: stringField(part.tool_use_id) || stringField(part.toolUseId),
         toolName: stringField(part.name) || stringField(part.tool_name),
         isError: truthyError(part),
+        declined: isPermissionDeclineResult(part),
         purpose: classifyResultPurpose(part)
       });
     }
@@ -323,6 +330,7 @@ function extractToolResults(entry: Record<string, unknown>): Array<{
       toolUseId: stringField(entry.tool_use_id) || stringField(entry.toolUseId),
       toolName: stringField(entry.name) || stringField(entry.tool_name) || stringField(entry.toolName),
       isError: truthyError(entry),
+      declined: isPermissionDeclineResult(entry),
       purpose: classifyResultPurpose(entry)
     });
   }

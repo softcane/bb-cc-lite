@@ -1,4 +1,5 @@
-import type { DecisionConfidence, ReadKind, StoredDecision, TranscriptSummary } from "./types.js";
+import type { LegacyDecisionView } from "./legacy-state.js";
+import type { DecisionConfidence, ReadKind, TranscriptSummary } from "./types.js";
 
 export type FeedbackMode = "observe" | "coach" | "guard";
 export type FeedbackDelivery = "additional_context" | "stop_block";
@@ -20,7 +21,9 @@ export interface CurrentHookTool {
 export interface FeedbackPolicyInput {
   mode: FeedbackMode;
   hookEventName: string;
-  decision?: Pick<StoredDecision, "state" | "reasonCode" | "primaryEvidence" | "confidence">;
+  // Read through the legacy-state mapping: gauge-era records lack advisor reasonCode/primaryEvidence,
+  // so those fields are optional here. The only place old vocabulary still enters this consumer.
+  decision?: LegacyDecisionView;
   summary: TranscriptSummary;
   currentTool?: CurrentHookTool;
   recentFeedback: RecentFeedback[];

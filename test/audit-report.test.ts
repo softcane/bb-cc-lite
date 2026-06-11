@@ -210,6 +210,114 @@ describe("audit write behavior", () => {
   });
 });
 
+describe("mixed-history tolerance (PRD-03 DoD #4)", () => {
+  it("audits a store with v1, 0.2-shape, and gauge-only records without error", async () => {
+    const projectDir = join(tempDir, "mixed");
+    await writeFile(
+      storePath,
+      `${JSON.stringify({
+        version: 1,
+        updatedAt: "2026-05-19T12:00:00.000Z",
+        decisions: [
+          { id: "v1", state: "Healthy", reasonCode: "healthy", primaryEvidence: "ctx 20%", evidence: [{ label: "ctx 20%" }], impact: "stable", action: "continue", createdAt: "2026-05-19T12:00:00.000Z" },
+          {
+            id: "v02",
+            state: "Stop",
+            reasonCode: "blind_retry_loop",
+            primaryEvidence: "same test failed 3x",
+            evidence: [{ label: "same test failed 3x" }],
+            impact: "loop",
+            action: "stop and inspect",
+            createdAt: "2026-06-01T00:00:00.000Z",
+            schemaVersion: 2,
+            projectKey: projectKeyFromPath(projectDir),
+            sessionKey: "v02",
+            light: "red",
+            activity: "retrying",
+            findings: [{ category: "blind_retry_loop", severity: "red", confidence: "high", evidence: "3 fails, no fix between runs" }],
+            ledger: [],
+            files: { edited: 0, unchecked: 0 }
+          },
+          {
+            id: "v04",
+            createdAt: "2026-06-11T00:00:00.000Z",
+            schemaVersion: 2,
+            projectKey: projectKeyFromPath(projectDir),
+            sessionKey: "v04",
+            light: "blue",
+            activity: "editing",
+            findings: [{ category: "edit_drift", severity: "blue", confidence: "medium", evidence: "edits unchecked since last check" }],
+            ledger: [],
+            files: { edited: 1, unchecked: 1 }
+          }
+        ],
+        hookEvents: [],
+        feedbackOutcomes: []
+      })}\n`,
+      "utf8"
+    );
+
+    const report = await runAuditReport({ projectDir, homeDir: join(tempDir, "home"), storePath });
+    const text = renderAuditReport(report);
+
+    // Section 1 surfaces the latest gauge-only record for this project; no advisor crash on history.
+    expect(report.session.hasHistory).toBe(true);
+    expect(report.session.light).toBe("blue");
+    expect(text).toContain("[1] Current session");
+    expect(report.instructions.windowSessions).toBeGreaterThan(0);
+  });
+});
+
+describe("audit vocabulary (grill H1)", () => {
+  it("never emits Healthy/Careful/Stop state words in any section, text or --json", async () => {
+    const projectDir = join(tempDir, "vocab");
+    await seedDecision({ projectDir, sessionKey: "v1", reasonCode: "blind_retry_loop", findings: [redFinding()] });
+    // A feedback outcome carrying advisor states must be scrubbed before it reaches an audit surface.
+    await recordFeedbackOutcome(
+      { ...feedbackOutcome("v1"), stateBefore: "Stop", stateAfter: "Healthy" },
+      storePath
+    );
+    // A failing transcript under the project's Claude history gives section 2 a real pattern finding.
+    const transcriptPath = join(
+      tempDir,
+      "home",
+      ".claude",
+      "projects",
+      resolve(projectDir).replaceAll(/[\\/]/gu, "-"),
+      "session.jsonl"
+    );
+    await writeFileEnsured(transcriptPath, repeatedFailedTestTranscript(3).join("\n"));
+
+    const report = await runAuditReport({ projectDir, homeDir: join(tempDir, "home"), storePath });
+    const text = renderAuditReport(report);
+    const json = JSON.stringify(report);
+
+    expect(report.patterns.findings.length).toBeGreaterThan(0);
+    for (const surface of [text, json]) {
+      for (const stateWord of ["Healthy", "Careful", "Stop"]) {
+        expect(surface).not.toContain(stateWord);
+      }
+    }
+    // Section 1 header is dot + light word + age, with no "(state)" parenthetical.
+    expect(text).toMatch(/■ red · \d+s ago/u);
+  });
+});
+
+function repeatedFailedTestTranscript(count: number): string[] {
+  return Array.from({ length: count }, (_value, index) => index + 1).flatMap((index) => [
+    JSON.stringify({
+      timestamp: `2026-05-19T00:00:0${index}.000Z`,
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "tool_use", id: `bash-test-${index}`, name: "Bash", input: { command: "npm test" } }] }
+    }),
+    JSON.stringify({
+      timestamp: `2026-05-19T00:00:1${index}.000Z`,
+      type: "user",
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: `bash-test-${index}`, is_error: true, content: "failed" }] }
+    })
+  ]);
+}
+
 describe("audit --json", () => {
   it("covers all three sections and round-trips through JSON.parse", async () => {
     const projectDir = join(tempDir, "json");

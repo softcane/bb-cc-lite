@@ -70,23 +70,19 @@ function sanitizeStoredDecision(value: unknown): StoredDecision | undefined {
     return undefined;
   }
   const id = stringField(record.id);
-  const state = decisionState(record.state);
-  const action = stringField(record.action);
-  if (!id || !state || !action) {
+  if (!id) {
     return undefined;
   }
-  return {
+  const state = decisionState(record.state);
+  const action = stringField(record.action);
+  const light = gaugeLight(record.light);
+  // Accept gauge-era records (light present, no advisor fields) and historical advisor records
+  // (state + action). Anything with neither shape is not a decision we can read.
+  if (!light && (!state || !action)) {
+    return undefined;
+  }
+  const decision: StoredDecision = {
     id,
-    state,
-    reasonCode: stringField(record.reasonCode) || "unknown",
-    diagnosisCode: stringField(record.diagnosisCode),
-    diagnosis: stringField(record.diagnosis),
-    confidence: confidence(record.confidence),
-    baselineNote: stringField(record.baselineNote),
-    primaryEvidence: stringField(record.primaryEvidence) || "stored decision",
-    evidence: sanitizeEvidence(record.evidence),
-    impact: stringField(record.impact) || "",
-    action,
     costUsd: numberField(record.costUsd),
     costSource: costSource(record.costSource),
     contextPercent: numberField(record.contextPercent),
@@ -95,12 +91,34 @@ function sanitizeStoredDecision(value: unknown): StoredDecision | undefined {
     createdAt: stringField(record.createdAt) || new Date(0).toISOString(),
     schemaVersion: record.schemaVersion === 2 ? 2 : undefined,
     projectKey: projectKey(record.projectKey),
-    light: gaugeLight(record.light),
+    light,
     activity: activityVerb(record.activity),
     findings: sanitizeFindings(record.findings),
     ledger: sanitizeLedger(record.ledger),
     files: sanitizeGaugeFiles(record.files)
   };
+  // Advisor fields are preserved ONLY when a historical record carries them; gauge-era records keep
+  // the slim key set (PRD-03 DoD: no state/reasonCode/diagnosis/primaryEvidence/impact/action).
+  assignDefined(decision, "state", state);
+  assignDefined(decision, "reasonCode", stringField(record.reasonCode));
+  assignDefined(decision, "diagnosisCode", stringField(record.diagnosisCode));
+  assignDefined(decision, "diagnosis", stringField(record.diagnosis));
+  assignDefined(decision, "confidence", confidence(record.confidence));
+  assignDefined(decision, "baselineNote", stringField(record.baselineNote));
+  assignDefined(decision, "primaryEvidence", stringField(record.primaryEvidence));
+  const evidence = sanitizeEvidence(record.evidence);
+  if (record.evidence !== undefined) {
+    decision.evidence = evidence;
+  }
+  assignDefined(decision, "impact", stringField(record.impact));
+  assignDefined(decision, "action", action);
+  return decision;
+}
+
+function assignDefined<K extends keyof StoredDecision>(target: StoredDecision, key: K, value: StoredDecision[K] | undefined): void {
+  if (value !== undefined) {
+    target[key] = value;
+  }
 }
 
 function projectKey(value: unknown): string | undefined {

@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { renderStatusLine } from "../src/renderer.js";
+import { buildGauge } from "../src/gauge.js";
+import { renderGauge } from "../src/gauge-renderer.js";
 import { sessionKeyFromId } from "../src/session.js";
-import { decide } from "../src/signals.js";
 import { TOOL_RESULT_EXPLOSION_THRESHOLD_TOKENS, parseTranscriptLines, parseTranscriptTail } from "../src/transcript.js";
 import type { StatusLineInput } from "../src/types.js";
 
@@ -28,11 +28,6 @@ function expectNoPrivacySentinels(value: unknown): void {
   for (const sentinel of privacySentinels) {
     expect(serialized).not.toContain(sentinel);
   }
-}
-
-function stripAnsi(value: string): string {
-  // eslint-disable-next-line no-control-regex
-  return value.replace(/\u001b\[[0-9;]*m/gu, "");
 }
 
 function input(overrides: Partial<StatusLineInput> = {}): StatusLineInput {
@@ -131,10 +126,11 @@ describe("parseTranscriptLines", () => {
     expect(summary.redundantRead).toMatchObject({
       fileIdentityHash: expect.stringMatching(/^[a-f0-9]{16}$/u),
       unchangedFullFileReadCount: 2,
-      latestState: "Careful"
+      latestState: "Careful",
+      // Basename is display-safe and now rides the summary so the gauge can name the file (grill I3).
+      basename: "secret.ts"
     });
     expect(JSON.stringify(summary)).not.toContain(rawPath);
-    expect(JSON.stringify(summary)).not.toContain("secret.ts");
     expectNoPrivacySentinels(summary);
   });
 
@@ -148,11 +144,30 @@ describe("parseTranscriptLines", () => {
 
     expect(summary.redundantRead).toMatchObject({
       unchangedFullFileReadCount: 3,
-      latestState: "Stop"
+      latestState: "Stop",
+      basename: "secret.ts"
     });
     expect(JSON.stringify(summary)).not.toContain(rawPath);
-    expect(JSON.stringify(summary)).not.toContain("secret.ts");
     expectNoPrivacySentinels(summary);
+  });
+
+  it("never counts permission-gate declines as tool failures", () => {
+    const summary = parseTranscriptLines([
+      ...deniedBashPair(1, "npm test"),
+      ...deniedBashPair(2, "npm test")
+    ]);
+
+    expect(summary.failedToolResults).toBe(0);
+    expect(summary.repeatedFailures).toEqual([]);
+    expect(summary.blindRetry).toBeUndefined();
+    expect(summary.editTestLoopFailures).toBe(0);
+  });
+
+  it("still counts genuine repeated failures (decline contrast)", () => {
+    const summary = parseTranscriptLines([...failedBashTestPair(1), ...failedBashTestPair(2)]);
+
+    expect(summary.failedToolResults).toBe(2);
+    expect(summary.repeatedFailures.some((failure) => failure.count >= 2)).toBe(true);
   });
 
   it.each(["Edit", "Write", "MultiEdit", "NotebookEdit"] as const)(
@@ -179,13 +194,10 @@ describe("parseTranscriptLines", () => {
       ...readToolPair("partial-2", rawPath, { limit: 50 }),
       ...readToolPair("partial-3", rawPath, { offset: 10, limit: 20 })
     ]);
-    const decision = decide(input({ contextPercent: 42 }), summary);
+    const gauge = buildGauge(input({ contextPercent: 42 }), summary);
 
     expect(summary.redundantRead).toBeUndefined();
-    expect(decision).toMatchObject({
-      state: "Healthy",
-      reasonCode: "healthy"
-    });
+    expect(gauge.light).toBe("green");
     expectNoPrivacySentinels(summary);
   });
 
@@ -633,21 +645,13 @@ describe("parseTranscriptLines", () => {
       userTextLine("2026-02-03T00:00:02.000Z"),
       assistantUsageLine(9_500, "2026-02-03T00:00:03.000Z")
     ]);
-    const decision = decide(input({ contextPercent: 42 }), summary);
-    const rendered = renderStatusLine(decision, 160);
-
     expect(summary.latestInputTokenJump).toMatchObject({
       inputTokenDelta: 9_000,
       toolResultCount: 0,
       crossedThreshold: true
     });
-    expect(decision).toMatchObject({
-      state: "Careful",
-      reasonCode: "tool_result_explosion",
-      primaryEvidence: "context jumped by ~9,000 tokens"
-    });
-    expect(rendered).not.toContain("single tool result");
-    expect(rendered).not.toContain("tool output");
+    // Token jumps are tracked in the summary but are not a gauge detector (grill F2): light stays green.
+    expect(buildGauge(input({ contextPercent: 42 }), summary).light).toBe("green");
   });
 
   it("skips assistant records with missing usage fields while keeping the next usage delta safe", () => {
@@ -859,15 +863,10 @@ describe("parseTranscriptLines", () => {
         })
       ])
     );
-    const decision = decide(input({ contextPercent: 42 }), summary);
-
     expect(summary.toolCalls).toBe(9);
     expect(summary.readToolCalls).toBe(9);
-    expect(decision).toMatchObject({
-      state: "Healthy",
-      reasonCode: "healthy"
-    });
-    expect(renderStatusLine(decision, 140)).not.toContain("no check or recovery seen");
+    // Read-dominant, no failures: the gauge stays green and reads as exploring.
+    expect(buildGauge(input({ contextPercent: 42 }), summary).light).toBe("green");
   });
 
   it("keeps compaction as an open boundary only until later activity appears", () => {
@@ -969,15 +968,12 @@ describe("parseTranscriptLines", () => {
       ...toolPair("private-1", rawUnknownToolName, true, { private_query: "BB_CC_LITE_RAW_PROMPT_SENTINEL" }),
       ...toolPair("private-2", rawUnknownToolName, true, { private_query: "BB_CC_LITE_RAW_PROMPT_SENTINEL" })
     ]);
-    const decision = decide(input({ contextPercent: 42 }), summary);
-    const rendered = renderStatusLine(decision, 180);
+    const gauge = buildGauge(input({ contextPercent: 42 }), summary);
+    const rendered = renderGauge(gauge, 180);
 
     expect(summary.repeatedFailures).toEqual([{ toolName: "tool", count: 2 }]);
-    expect(decision).toMatchObject({
-      state: "Careful",
-      reasonCode: "blind_retry",
-      primaryEvidence: "same tool failed twice without a fix"
-    });
+    expect(gauge.light).toBe("blue");
+    expect(gauge.findings[0]).toMatchObject({ category: "blind_retry", evidence: "2 fails, no fix between runs" });
     expect(JSON.stringify(summary)).not.toContain(rawUnknownToolName);
     expect(rendered).not.toContain(rawUnknownToolName);
     expectNoPrivacySentinels(summary);
@@ -991,28 +987,20 @@ describe("parseTranscriptLines", () => {
     expect(summary.failedToolResults).toBe(0);
     expect(summary.repeatedFailures).toEqual([]);
     expect(JSON.stringify(summary)).not.toContain(rawMcpName);
-    expect(decide(input({ contextPercent: 42 }), summary)).toMatchObject({
-      state: "Healthy",
-      reasonCode: "healthy"
-    });
+    expect(buildGauge(input({ contextPercent: 42 }), summary).light).toBe("green");
   });
 
   it("warns carefully after the same MCP tool fails twice without exposing the raw name", () => {
     const rawMcpName = "mcp__privateServer__failingLookup";
     const summary = parseTranscriptLines(mcpToolPairs(rawMcpName, [true, true]));
-    const decision = decide(input({ contextPercent: 42 }), summary);
-    const rendered = renderStatusLine(decision, 180);
+    const gauge = buildGauge(input({ contextPercent: 42 }), summary);
+    const rendered = renderGauge(gauge, 180);
 
     expect(summary.repeatedFailures).toEqual([
       { toolName: "MCP tool", category: "MCP", identityHash: expect.any(String), count: 2 }
     ]);
-    expect(decision).toMatchObject({
-      state: "Careful",
-      reasonCode: "blind_retry",
-      primaryEvidence: "same MCP tool failed twice without a fix",
-      action: "inspect first failure"
-    });
-    expect(stripAnsi(rendered)).toContain("bb: Careful | same MCP tool failed twice without a fix | inspect first failure");
+    expect(gauge.light).toBe("blue");
+    expect(gauge.findings[0]).toMatchObject({ category: "blind_retry", evidence: "2 fails, no fix between runs" });
     expect(rendered).not.toContain(rawMcpName);
     expectNoPrivacySentinels(summary);
   });
@@ -1029,19 +1017,12 @@ describe("parseTranscriptLines", () => {
 
   it("stops after the same MCP tool fails three times without exposing the raw name", () => {
     const rawMcpName = "mcp__privateServer__failingLookup";
-    const decision = decide(input({ contextPercent: 42 }), parseTranscriptLines(mcpToolPairs(rawMcpName, [true, true, true])));
-    const rendered = renderStatusLine(decision, 200);
+    const summary = parseTranscriptLines(mcpToolPairs(rawMcpName, [true, true, true]));
+    const gauge = buildGauge(input({ contextPercent: 42 }), summary);
+    const rendered = renderGauge(gauge, 200);
 
-    expect(decision).toMatchObject({
-      state: "Stop",
-      reasonCode: "blind_retry_loop",
-      primaryEvidence: "same MCP tool failed 3x without a fix",
-      impact: "Claude is repeating the same failure without a fix or passing check",
-      action: "stop and inspect first failure"
-    });
-    expect(stripAnsi(rendered)).toContain(
-      "bb: Stop | why: same failure retried 3x without a fix"
-    );
+    expect(gauge.light).toBe("red");
+    expect(gauge.findings[0]).toMatchObject({ category: "blind_retry_loop", evidence: "3 fails, no fix between runs" });
     expect(rendered).not.toContain(rawMcpName);
   });
 
@@ -1052,10 +1033,7 @@ describe("parseTranscriptLines", () => {
     expect(summary.failedToolResults).toBe(2);
     expect(summary.toolCalls).toBe(3);
     expect(summary.repeatedFailures).toEqual([]);
-    expect(decide(input({ contextPercent: 42 }), summary)).toMatchObject({
-      state: "Healthy",
-      reasonCode: "healthy"
-    });
+    expect(buildGauge(input({ contextPercent: 42 }), summary).light).toBe("green");
     expect(JSON.stringify(summary)).not.toContain(rawMcpName);
   });
 
@@ -1069,10 +1047,7 @@ describe("parseTranscriptLines", () => {
 
     expect(summary.failedToolResults).toBe(2);
     expect(summary.repeatedFailures).toEqual([]);
-    expect(decide(input({ contextPercent: 42 }), summary)).toMatchObject({
-      state: "Healthy",
-      reasonCode: "healthy"
-    });
+    expect(buildGauge(input({ contextPercent: 42 }), summary).light).toBe("green");
     expect(JSON.stringify(summary)).not.toContain(firstRawMcpName);
     expect(JSON.stringify(summary)).not.toContain(secondRawMcpName);
   });
@@ -1264,6 +1239,34 @@ function failedBashCommandPair(index: number, command: string): string[] {
             tool_use_id: `bash-test-${index}`,
             is_error: true,
             content: "tests failed"
+          }
+        ]
+      }
+    })
+  ];
+}
+
+// Mirrors Claude Code's permission-gate decline shape: is_error true with a harness-authored
+// "tool use was rejected" message. These are user decisions, not program errors.
+function deniedBashPair(index: number, command: string): string[] {
+  return [
+    JSON.stringify({
+      timestamp: `2026-02-03T00:00:0${index}.000Z`,
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "tool_use", id: `bash-deny-${index}`, name: "Bash", input: { command } }] }
+    }),
+    JSON.stringify({
+      timestamp: `2026-02-03T00:00:1${index}.000Z`,
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: `bash-deny-${index}`,
+            is_error: true,
+            content:
+              "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."
           }
         ]
       }

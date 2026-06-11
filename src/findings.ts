@@ -49,7 +49,10 @@ export function runDetectors(input: StatusLineInput, transcript: TranscriptSumma
   }
 
   if ((transcript.redundantRead?.unchangedFullFileReadCount || 0) >= 3) {
-    findings.push(red("redundant_read_loop", `same file reread ${transcript.redundantRead?.unchangedFullFileReadCount}x`));
+    findings.push({
+      ...red("redundant_read_loop", `same file reread ${transcript.redundantRead?.unchangedFullFileReadCount}x`),
+      fileHint: transcript.redundantRead?.basename
+    });
   }
 
   const budgetFailure = budgetWithRepeatedFailure(input, transcript, options);
@@ -67,7 +70,7 @@ export function runDetectors(input: StatusLineInput, transcript: TranscriptSumma
   }
 
   if ((transcript.redundantRead?.unchangedFullFileReadCount || 0) === 2) {
-    findings.push(blue("redundant_read", "same file reread twice"));
+    findings.push({ ...blue("redundant_read", "same file reread twice"), fileHint: transcript.redundantRead?.basename });
   }
 
   const regression = cacheEfficiencyRegression(input.usage, transcript);

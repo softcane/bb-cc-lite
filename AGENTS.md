@@ -5,8 +5,8 @@ This file governs the whole repository.
 ## Product Compass
 
 - `bb-cc-lite` is a small Claude Code statusline companion.
-- Core question: "Should I let this Claude Code session keep going?"
-- Output states are `Healthy`, `Careful`, and `Stop`.
+- Core question: "What is the agent doing right now, and does its behavior look healthy?"
+- The statusline is a behavioral gauge with four lights: `green` (progressing), `blue` (drifting), `red` (intervene), `gray` (bb cannot see). No imperatives on the line, ever.
 - The CLI must work without Envoy, Docker, Prometheus, a dashboard, a LiteLLM gateway, or extra credentials.
 - LiteLLM is pricing-data only in v1; do not add proxy/gateway/message-routing behavior.
 - The final confidence gate is real Claude Code behavior, not fixture tests alone.
@@ -30,13 +30,13 @@ This file governs the whole repository.
 - `src/failure-episodes.ts`: safe failure episode extraction and blind retry summaries.
 - `src/recovery-stats.ts`: aggregate recovery statistics, confidence gates, and plain-English insights.
 - `src/historical-replay.ts`: aggregate-only holdout replay for baseline QA.
-- `src/signals.ts`: state decision rules.
-- `src/renderer.ts`: width-aware one-line rendering and ANSI color.
+- `src/gauge.ts`, `src/findings.ts`, `src/gauge-renderer.ts`: the only decision engine — gauge build, finding detectors/resolver, and width-aware one-line rendering with ANSI color.
+- `src/signals.ts`: shared signal helpers the gauge consumes (budget thresholds, cost formatting, cache-efficiency regression, edit-validation lag). The legacy `decide()` waterfall was removed in 0.4.0.
+- `src/legacy-state.ts`: the one place the retired Healthy/Careful/Stop vocabulary may appear, mapping gauge light + finding category for coach/guard feedback and audit section 2 reading historical records.
 - `src/audit-report.ts`: `audit` orchestrator (current session, recent patterns, instruction report) plus the `--apply`/`--cleanup` write path.
 - `src/instruction-correlator.ts`: coarse keyword-to-finding-category matching for the instruction report (isolated, derived-only).
 - `src/instruction-block.ts`: marked CLAUDE.md block convention, backup, and scope routing.
 - `src/feedback-ledger.ts`: coach/guard feedback-outcome ledger rendering (audit section 1).
-- `src/why.ts`: pure formatters for the parallel `decide()` layer (the `why` command is retired).
 - `src/store.ts`: compatibility facade over event-store modules.
 - `src/event-store-*.ts`: local derived event persistence and lookup.
 - `src/hooks.ts`, `src/hook-*.ts`: optional Claude Code hook ingestion.
@@ -52,7 +52,7 @@ This file governs the whole repository.
 - `test/audit-report.test.ts`: audit sections, two-project isolation, zero-write, apply/cleanup, --json.
 - `test/instruction-correlator.test.ts`: keyword/category matching and the three instruction subsections.
 - `test/feedback-ledger.test.ts`: coach/guard feedback-outcome ledger rendering.
-- `test/signals-renderer.test.ts`: signal rules, width-aware rendering, colors.
+- `test/gauge.test.ts`: gauge build, finding detectors/resolver, width-aware rendering, file hints, ctx highlight, permission-gate declines.
 - `test/transcript.test.ts`: JSONL transcript parsing and failure detection.
 - `test/failure-episodes.test.ts`: safe failure episodes and blind retry behavior.
 - `test/recovery-stats.test.ts`: recovery aggregates, confidence gates, and insight wording.

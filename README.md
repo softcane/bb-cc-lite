@@ -302,7 +302,7 @@ LiteLLM is used only as public pricing data for cost estimates. `bb-cc-lite` doe
 ◐ exploring · cache reuse dropped from 68% to 29%
 ◐ idle · compaction boundary open
 ■ retrying tests · 3 fails, no fix between runs
-■ exploring · same file reread 3x
+■ exploring · reread config.ts 3x
 ■ exploring · ctx 93%, nearly full
 ○ no signal · transcript session mismatch
 ```

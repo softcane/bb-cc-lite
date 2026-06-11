@@ -21,9 +21,18 @@ import {
   type InstructionLine,
   type InstructionWindow
 } from "./instruction-correlator.js";
+import { severityFromState, severityWord } from "./legacy-state.js";
 import { projectKeyFromPath } from "./paths.js";
 import { latestProjectDecision, recentFeedbackOutcomes, readStore } from "./store.js";
-import type { Finding, GaugeLight, LedgerEntry, StoredDecision, StoredFeedbackOutcome } from "./types.js";
+import type {
+  DecisionConfidence,
+  Finding,
+  FindingSeverity,
+  GaugeLight,
+  LedgerEntry,
+  StoredDecision,
+  StoredFeedbackOutcome
+} from "./types.js";
 
 // Audit: "the line is now; audit is the story" (branch H1). One command, three sections in order:
 // (1) the current project's latest session, (2) recent behavioral patterns, (3) an instruction
@@ -51,13 +60,39 @@ export interface AuditSessionSection {
   projectScoped: boolean;
   projectKey?: string;
   light?: GaugeLight;
-  state?: StoredDecision["state"];
   ageSeconds?: number;
   ageLabel?: string;
   reasonCode?: string;
   findings: AuditSessionFinding[];
   ledger: LedgerEntry[];
-  feedbackOutcomes: StoredFeedbackOutcome[];
+  feedbackOutcomes: AuditFeedbackOutcome[];
+}
+
+// Feedback outcomes minus their advisor stateBefore/stateAfter words: no audit surface emits the
+// retired Healthy/Careful/Stop vocabulary (grill H1).
+export type AuditFeedbackOutcome = Omit<StoredFeedbackOutcome, "stateBefore" | "stateAfter">;
+
+// Section 2 patterns, relabeled into gauge vocabulary: severity color word + finding category, no
+// state words and no imperative action text. Built from the deep-advisory engine via the mapping.
+export interface AuditPatternFinding {
+  session: number;
+  severity: FindingSeverity;
+  severityWord: string;
+  confidence: DecisionConfidence;
+  reasonCode: string;
+  evidence: string;
+}
+
+export interface AuditPatternsSection {
+  kind: "deep-advisory";
+  scope: DeepAdvisoryReport["scope"];
+  recentLimit: number;
+  sessionsScanned: number;
+  unreadableTranscripts: number;
+  sessionsWithFindings: number;
+  reportConfidence: DecisionConfidence;
+  reportConfidenceReason: string;
+  findings: AuditPatternFinding[];
 }
 
 export interface AuditInstructionSection {
@@ -79,10 +114,34 @@ export interface AuditReport {
   kind: "audit";
   mode: "report" | "apply" | "cleanup";
   session: AuditSessionSection;
-  patterns: DeepAdvisoryReport;
+  patterns: AuditPatternsSection;
   instructions: AuditInstructionSection;
   diff?: string;
   applied: AuditApplyResult[];
+}
+
+function toPatternsSection(report: DeepAdvisoryReport): AuditPatternsSection {
+  return {
+    kind: report.kind,
+    scope: report.scope,
+    recentLimit: report.recentLimit,
+    sessionsScanned: report.sessionsScanned,
+    unreadableTranscripts: report.unreadableTranscripts,
+    sessionsWithFindings: report.sessionsWithFindings,
+    reportConfidence: report.reportConfidence,
+    reportConfidenceReason: report.reportConfidenceReason,
+    findings: report.findings.map((finding) => {
+      const severity = severityFromState(finding.state);
+      return {
+        session: finding.session,
+        severity,
+        severityWord: severityWord(severity),
+        confidence: finding.confidence,
+        reasonCode: finding.reasonCode,
+        evidence: finding.evidence
+      };
+    })
+  };
 }
 
 const LIGHT_SYMBOLS: Record<GaugeLight, string> = {
@@ -118,14 +177,14 @@ export async function runAuditReport(options: AuditReportOptions = {}): Promise<
       kind: "audit",
       mode: "cleanup",
       session: emptySession(),
-      patterns: await runDeepAdvisoryAudit(options),
+      patterns: toPatternsSection(await runDeepAdvisoryAudit(options)),
       instructions: { windowSessions: 0, removalCandidates: [], followed: [], gaps: [] },
       applied
     };
   }
 
   const session = await buildSessionSection(options, now);
-  const patterns = await runDeepAdvisoryAudit(options);
+  const patterns = toPatternsSection(await runDeepAdvisoryAudit(options));
   const { section: instructions, lines, window } = await buildInstructionSection(options);
 
   let diff: string | undefined;
@@ -161,17 +220,18 @@ async function buildSessionSection(options: AuditReportOptions, now: Date): Prom
   if (!decision) {
     return { ...emptySession(), projectKey };
   }
-  const feedbackOutcomes = decision.sessionKey ? await recentFeedbackOutcomes(decision.sessionKey, options.storePath) : [];
+  const feedbackOutcomes = (
+    decision.sessionKey ? await recentFeedbackOutcomes(decision.sessionKey, options.storePath) : []
+  ).map(stripFeedbackOutcomeState);
   const ageSeconds = decisionAgeSeconds(decision, now);
   return {
     hasHistory: true,
     projectScoped: true,
     projectKey,
     light: decision.light,
-    state: decision.state,
     ageSeconds,
     ageLabel: ageSeconds === undefined ? undefined : formatAge(ageSeconds),
-    reasonCode: decision.reasonCode,
+    reasonCode: decision.reasonCode ?? decision.findings?.[0]?.category,
     findings: (decision.findings ?? []).map((finding) => ({
       category: finding.category,
       severity: finding.severity,
@@ -187,6 +247,13 @@ async function buildSessionSection(options: AuditReportOptions, now: Date): Prom
 
 function emptySession(): AuditSessionSection {
   return { hasHistory: false, projectScoped: true, findings: [], ledger: [], feedbackOutcomes: [] };
+}
+
+function stripFeedbackOutcomeState(outcome: StoredFeedbackOutcome): AuditFeedbackOutcome {
+  const rest: AuditFeedbackOutcome = { ...outcome };
+  delete (rest as Partial<StoredFeedbackOutcome>).stateBefore;
+  delete (rest as Partial<StoredFeedbackOutcome>).stateAfter;
+  return rest;
 }
 
 function decisionAgeSeconds(decision: StoredDecision, now: Date): number | undefined {
@@ -393,7 +460,8 @@ function renderSessionSection(session: AuditSessionSection, color: boolean): str
     return lines.join("\n");
   }
   const light = session.light ?? "gray";
-  const header = `${colorLight(light, color)} ${LIGHT_WORDS[light]} (${session.state ?? "?"}) · ${session.ageLabel ?? "age unknown"}`;
+  // Section 1 header is dot + light word + age — gauge vocabulary only, no retired state word (grill H1).
+  const header = `${colorLight(light, color)} ${LIGHT_WORDS[light]} · ${session.ageLabel ?? "age unknown"}`;
   lines.push(header);
   if (session.findings.length === 0) {
     lines.push("Findings: none recorded for this decision.");
@@ -425,7 +493,7 @@ function renderLedger(ledger: LedgerEntry[]): string[] {
   return rows;
 }
 
-function renderPatternsSection(patterns: DeepAdvisoryReport): string {
+function renderPatternsSection(patterns: AuditPatternsSection): string {
   const lines = ["[2] Recent patterns"];
   const scopeLabel =
     patterns.scope === "project"
@@ -445,7 +513,10 @@ function renderPatternsSection(patterns: DeepAdvisoryReport): string {
   } else {
     lines.push("Patterns:");
     for (const finding of patterns.findings.slice(0, 20)) {
-      lines.push(`  ${finding.state.padEnd(7)} ${finding.confidence.padEnd(6)} session ${finding.session}: ${finding.evidence}`);
+      // Severity color word + finding category — never a Healthy/Careful/Stop state word (grill H1).
+      lines.push(
+        `  ${finding.severityWord.padEnd(5)} ${finding.confidence.padEnd(6)} session ${finding.session} ${finding.reasonCode}: ${finding.evidence}`
+      );
     }
     if (patterns.findings.length > 20) {
       lines.push(`  plus ${patterns.findings.length - 20} more derived findings`);

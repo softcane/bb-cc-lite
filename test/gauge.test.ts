@@ -8,6 +8,7 @@ import { runDetectors, resolveLight } from "../src/findings.js";
 import { buildGauge } from "../src/gauge.js";
 import { renderGauge } from "../src/gauge-renderer.js";
 import { latestProjectDecision, readStore, recordDecision } from "../src/store.js";
+import { parseTranscriptLines } from "../src/transcript.js";
 import type { Decision, EditLedger, StatusLineInput, TranscriptSummary } from "../src/types.js";
 
 function input(overrides: Partial<StatusLineInput> = {}): StatusLineInput {
@@ -207,6 +208,17 @@ describe("findings detectors and resolver", () => {
     expect(resolveLight(runDetectors(input(), transcript({ hasUnvalidatedEdits: true, unvalidatedEditToolSteps: 1 })))).toBe("green");
     expect(resolveLight(runDetectors(input(), transcript({ hasUnvalidatedEdits: true, unvalidatedEditToolSteps: 4 })))).toBe("blue");
   });
+
+  it("flags a cache-efficiency regression as blue with evidence", () => {
+    const findings = runDetectors(input({ contextPercent: 42 }), transcript({ cacheReadShare: cacheShare(0.68, 0.29) }));
+    const regression = findings.find((finding) => finding.category === "cache_efficiency_regression");
+    expect(regression).toMatchObject({ severity: "blue", evidence: "cache reuse dropped from 68% to 29%" });
+  });
+
+  it("does not flag a cache regression below the drop threshold", () => {
+    const findings = runDetectors(input({ contextPercent: 42 }), transcript({ cacheReadShare: cacheShare(0.68, 0.61) }));
+    expect(findings.some((finding) => finding.category === "cache_efficiency_regression")).toBe(false);
+  });
 });
 
 describe("activity classifier priority", () => {
@@ -316,6 +328,124 @@ describe("store schema v2", () => {
     }
   });
 
+  it("stores exactly the gauge-era key set with no advisor fields", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "bb-cc-lite-gauge-keys-"));
+    try {
+      const storePath = join(dir, "events.json");
+      const summary = blueDrift.transcript;
+      const gauge = buildGauge(blueDrift.input, summary, { sessionKey: "sk-1", projectKey: "a".repeat(64) });
+      // Mirrors statusline.ts exactly: the slim gauge-era record.
+      const record: Decision = {
+        schemaVersion: 2,
+        projectKey: "a".repeat(64),
+        sessionKey: "sk-1",
+        light: gauge.light,
+        activity: gauge.activity,
+        findings: gauge.findings,
+        ledger: summary.ledger?.entries ?? [],
+        files: gauge.files,
+        costUsd: 0.18,
+        costSource: "claude",
+        contextPercent: 42,
+        rateLimitPercent: 10,
+        createdAt: gauge.createdAt
+      };
+      await recordDecision(record, storePath);
+
+      const stored = (await readStore(storePath)).decisions.at(-1)!;
+      expect(Object.keys(stored).sort()).toEqual(
+        [
+          "activity",
+          "contextPercent",
+          "costSource",
+          "costUsd",
+          "createdAt",
+          "files",
+          "findings",
+          "id",
+          "ledger",
+          "light",
+          "projectKey",
+          "rateLimitPercent",
+          "schemaVersion",
+          "sessionKey"
+        ].sort()
+      );
+      for (const advisor of ["state", "reasonCode", "diagnosis", "diagnosisCode", "primaryEvidence", "evidence", "impact", "action"]) {
+        expect(stored).not.toHaveProperty(advisor);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("loads a mixed-history store (v1 + 0.2-shape + gauge-only) without error", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "bb-cc-lite-gauge-mixed-"));
+    try {
+      const storePath = join(dir, "events.json");
+      await writeFile(
+        storePath,
+        `${JSON.stringify({
+          version: 1,
+          updatedAt: "2026-05-19T12:00:00.000Z",
+          decisions: [
+            {
+              id: "v1",
+              state: "Healthy",
+              reasonCode: "healthy",
+              primaryEvidence: "ctx 20%",
+              evidence: [{ label: "ctx 20%" }],
+              impact: "session stable",
+              action: "continue normally",
+              createdAt: "2026-05-19T12:00:00.000Z"
+            },
+            {
+              id: "v02",
+              state: "Stop",
+              reasonCode: "blind_retry_loop",
+              primaryEvidence: "same test failed 3x",
+              evidence: [{ label: "same test failed 3x" }],
+              impact: "loop",
+              action: "stop and inspect",
+              createdAt: "2026-06-01T00:00:00.000Z",
+              schemaVersion: 2,
+              projectKey: "a".repeat(64),
+              light: "red",
+              activity: "retrying",
+              findings: [{ category: "blind_retry_loop", severity: "red", confidence: "high", evidence: "3 fails, no fix between runs" }],
+              ledger: [],
+              files: { edited: 0, unchecked: 0 }
+            },
+            {
+              id: "v04",
+              createdAt: "2026-06-11T00:00:00.000Z",
+              schemaVersion: 2,
+              projectKey: "b".repeat(64),
+              sessionKey: "sk",
+              light: "blue",
+              activity: "editing",
+              findings: [{ category: "edit_drift", severity: "blue", confidence: "medium", evidence: "edits unchecked since last check" }],
+              ledger: [],
+              files: { edited: 1, unchecked: 1 }
+            }
+          ],
+          hookEvents: [],
+          feedbackOutcomes: []
+        })}\n`,
+        "utf8"
+      );
+
+      const store = await readStore(storePath);
+      expect(store.decisions).toHaveLength(3);
+      expect(store.decisions.map((decision) => decision.id)).toEqual(["v1", "v02", "v04"]);
+      // The gauge-only record loads with no advisor fields; the historical ones keep theirs.
+      expect(store.decisions[2]).not.toHaveProperty("state");
+      expect(store.decisions[0].state).toBe("Healthy");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("loads a pre-existing v1 store without error and reports version 1 until first write", async () => {
     const dir = await mkdtemp(join(tmpdir(), "bb-cc-lite-gauge-v1-"));
     try {
@@ -387,6 +517,126 @@ describe("store schema v2", () => {
     }
   });
 });
+
+describe("file-hint chain (grill I3)", () => {
+  const reread3x = transcript({
+    readToolCalls: 3,
+    toolCalls: 3,
+    latestActivityKind: "read",
+    redundantRead: { fileIdentityHash: "h".repeat(16), unchangedFullFileReadCount: 3, latestState: "Stop", basename: "auth.ts" }
+  });
+
+  it("names the basename in evidence at full width only", () => {
+    expect(render(input(), reread3x, 120)).toContain("reread auth.ts 3x");
+  });
+
+  it("omits the basename in compact and minimal tiers", () => {
+    expect(render(input(), reread3x, 40)).not.toContain("auth.ts");
+    expect(render(input(), reread3x, 20)).not.toContain("auth.ts");
+  });
+
+  it("sets a basename-only file hint on the finding, never a path", () => {
+    const gauge = buildGauge(input(), reread3x);
+    const hint = gauge.findings.find((finding) => finding.category === "redundant_read_loop")?.fileHint;
+    expect(hint).toBe("auth.ts");
+    expect(hint).not.toMatch(/[\\/]/u);
+  });
+});
+
+describe("ctx highlight (grill B5)", () => {
+  it("highlights 80-91% while leaving the dot green", () => {
+    const previous = process.env.BB_CC_LITE_COLOR;
+    process.env.BB_CC_LITE_COLOR = "0";
+    try {
+      for (const percent of [80, 85, 91]) {
+        const line = render(input({ contextPercent: percent }), transcript());
+        expect(line).toContain(`ctx ${percent}%!`);
+        expect(line.startsWith("●")).toBe(true);
+      }
+      expect(render(input({ contextPercent: 79 }), transcript())).toContain("ctx 79%");
+      expect(render(input({ contextPercent: 79 }), transcript())).not.toContain("ctx 79%!");
+    } finally {
+      restoreEnv("BB_CC_LITE_COLOR", previous);
+    }
+  });
+
+  it("flips to a red dot at 92% with no highlight marker", () => {
+    const previous = process.env.BB_CC_LITE_COLOR;
+    process.env.BB_CC_LITE_COLOR = "0";
+    try {
+      const line = render(input({ contextPercent: 92 }), transcript());
+      expect(line.startsWith("■")).toBe(true);
+      expect(line).not.toContain("ctx 92%!");
+    } finally {
+      restoreEnv("BB_CC_LITE_COLOR", previous);
+    }
+  });
+
+  it("emits an ANSI-colored ctx segment when color is on, dot still green", () => {
+    const previousNoColor = process.env.NO_COLOR;
+    const previousFlag = process.env.BB_CC_LITE_COLOR;
+    delete process.env.NO_COLOR;
+    delete process.env.BB_CC_LITE_COLOR;
+    try {
+      const raw = renderGauge(buildGauge(input({ contextPercent: 85 }), transcript()), 120);
+      expect(stripAnsi(raw)).toContain("ctx 85%");
+      // The ctx segment carries its own color sequence (separate from the green dot).
+      const highlightCode = `${String.fromCharCode(27)}[33m`;
+      expect(raw).toContain(highlightCode);
+      expect(stripAnsi(raw).startsWith("●")).toBe(true);
+    } finally {
+      restoreEnv("NO_COLOR", previousNoColor);
+      restoreEnv("BB_CC_LITE_COLOR", previousFlag);
+    }
+  });
+});
+
+describe("permission-gate declines (PRD-03 gap 7)", () => {
+  function deniedExecLines(index: number): string[] {
+    return [
+      JSON.stringify({
+        timestamp: `2026-02-03T00:00:0${index}.000Z`,
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "tool_use", id: `deny-${index}`, name: "Bash", input: { command: "npm test" } }] }
+      }),
+      JSON.stringify({
+        timestamp: `2026-02-03T00:00:1${index}.000Z`,
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: `deny-${index}`,
+              is_error: true,
+              content: "Permission for this tool use was denied. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). Try a different approach or report the limitation to complete your task."
+            }
+          ]
+        }
+      })
+    ];
+  }
+
+  it("renders a green dot with no failure findings and no retrying verb", () => {
+    const summary = parseTranscriptLines([...deniedExecLines(1), ...deniedExecLines(2)]);
+    const gauge = buildGauge(input({ contextPercent: 42 }), summary);
+    expect(gauge.light).toBe("green");
+    expect(gauge.activity).not.toBe("retrying");
+    expect(gauge.findings.some((finding) => finding.severity === "red" || finding.severity === "blue")).toBe(false);
+    expect(render(input({ contextPercent: 42 }), summary).startsWith("●")).toBe(true);
+  });
+});
+
+function cacheShare(peakRatio: number, currentRatio: number): NonNullable<TranscriptSummary["cacheReadShare"]> {
+  const point = (ratio: number) => {
+    const totalInputTokens = 1_000;
+    const cacheReadInputTokens = Math.round(ratio * totalInputTokens);
+    return { ratio, totalInputTokens, inputTokens: totalInputTokens - cacheReadInputTokens, cacheCreationInputTokens: 0, cacheReadInputTokens };
+  };
+  const peak = point(peakRatio);
+  const current = point(currentRatio);
+  return { peak, current, dropPercentagePoints: Math.max(0, (peak.ratio - current.ratio) * 100) };
+}
 
 function restoreEnv(name: string, previous: string | undefined): void {
   if (previous === undefined) {

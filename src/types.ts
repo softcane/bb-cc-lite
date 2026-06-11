@@ -57,6 +57,7 @@ export interface RedundantReadSummary {
   fileIdentityHash: string;
   unchangedFullFileReadCount: number;
   latestState: Extract<DecisionState, "Careful" | "Stop">;
+  basename?: string;
 }
 
 export type ReadKind = "full" | "partial";
@@ -423,16 +424,19 @@ export interface Gauge {
 }
 
 export interface Decision {
-  state: DecisionState;
-  reasonCode: string;
+  // Advisor fields (decide() era). Optional since PRD-03: newly stored gauge decisions omit every
+  // one of them. Historical v1/0.2/0.3 records still carry them and must keep loading. The
+  // legacy-state mapping is the only place these are read back into the old vocabulary.
+  state?: DecisionState;
+  reasonCode?: string;
   diagnosisCode?: string;
   diagnosis?: string;
   confidence?: DecisionConfidence;
   baselineNote?: string;
-  primaryEvidence: string;
-  evidence: DecisionEvidence[];
-  impact: string;
-  action: string;
+  primaryEvidence?: string;
+  evidence?: DecisionEvidence[];
+  impact?: string;
+  action?: string;
   costUsd?: number;
   costSource?: "claude" | "estimated";
   contextPercent?: number;

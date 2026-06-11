@@ -3,94 +3,61 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { toDecisionPresentation } from "../src/decision-presentation.js";
-import { renderStatusLine } from "../src/renderer.js";
-import { decide } from "../src/signals.js";
+import { buildGauge } from "../src/gauge.js";
+import { renderGauge } from "../src/gauge-renderer.js";
 import { parseStatusLineInput } from "../src/status-input.js";
 import { createStatusLine } from "../src/statusline.js";
 import { readStore } from "../src/store.js";
 import { parseTranscriptTail } from "../src/transcript.js";
-import type { DecisionState } from "../src/types.js";
-import { formatWhy, formatWhyJson } from "../src/why.js";
+import type { GaugeLight } from "../src/types.js";
 import { setIsolatedEnv } from "./helpers/temp.js";
 
 // Fixture envelopes are informed by public Claude Code transcript descriptions
 // and examples; fixture contents remain deliberately fake and privacy-sentinel based.
+// The gauge is the only engine now: each fixture replays into a light (and, where the dot moves,
+// a top finding). Budget/busy/token-jump/context-high are facts under the gauge, never findings.
 interface ReplayCase {
   fixture: string;
   contextPercent?: number;
   expected: {
-    state: DecisionState;
-    reasonCode: string;
-    primaryEvidence: string;
-    action: string;
+    light: GaugeLight;
+    category?: string;
+    evidence?: string;
   };
 }
 
 const REPLAY_CASES: ReplayCase[] = [
   {
     fixture: "healthy-validation-recovered.jsonl",
-    expected: {
-      state: "Healthy",
-      reasonCode: "validation_recovered",
-      primaryEvidence: "validation recovered",
-      action: "continue"
-    }
+    expected: { light: "green" }
   },
   {
+    // A single fresh unchecked edit is normal (green); only drift (steps >= 3 or lag) turns blue.
     fixture: "careful-unvalidated-edits.jsonl",
-    expected: {
-      state: "Careful",
-      reasonCode: "edit_without_validation",
-      primaryEvidence: "edits have not been checked",
-      action: "ask Claude to run the smallest relevant check"
-    }
+    expected: { light: "green" }
   },
   {
     fixture: "careful-same-test-failed-twice.jsonl",
-    expected: {
-      state: "Careful",
-      reasonCode: "blind_retry",
-      primaryEvidence: "same test failed twice without a fix",
-      action: "inspect first failure"
-    }
+    expected: { light: "blue", category: "blind_retry", evidence: "2 fails, no fix between runs" }
   },
   {
     fixture: "stop-same-test-failed-3x.jsonl",
-    expected: {
-      state: "Stop",
-      reasonCode: "blind_retry_loop",
-      primaryEvidence: "same test failed 3x without a fix",
-      action: "stop and inspect first failure"
-    }
+    expected: { light: "red", category: "blind_retry_loop", evidence: "3 fails, no fix between runs" }
   },
   {
     fixture: "stop-blind-retry-loop.jsonl",
-    expected: {
-      state: "Stop",
-      reasonCode: "blind_retry_loop",
-      primaryEvidence: "same tool failed 3x without a fix",
-      action: "stop and inspect first failure"
-    }
+    expected: { light: "red", category: "blind_retry_loop", evidence: "3 fails, no fix between runs" }
   },
   {
+    // ctx 80-91% highlights the segment but leaves the dot green (grill B5).
     fixture: "careful-context-high.jsonl",
     contextPercent: 80,
-    expected: {
-      state: "Careful",
-      reasonCode: "context_high",
-      primaryEvidence: "ctx 80%",
-      action: "ask Claude for a 6-bullet handoff before more work"
-    }
+    expected: { light: "green" }
   },
   {
+    // "busy, no observed progress" was a decide()-only detector; the gauge treats it as green.
     fixture: "careful-busy-no-progress.jsonl",
-    expected: {
-      state: "Careful",
-      reasonCode: "busy_no_observed_progress",
-      primaryEvidence: "8 tool calls, no check or recovery seen",
-      action: "pause and ask Claude what changed"
-    }
+    expected: { light: "green" }
   }
 ];
 
@@ -109,7 +76,7 @@ const PRIVACY_SENTINELS = [
 ];
 
 describe("real-shape sanitized JSONL replay fixtures", () => {
-  it.each(REPLAY_CASES)("replays $fixture into the expected raw decision", async (testCase) => {
+  it.each(REPLAY_CASES)("replays $fixture into the expected gauge", async (testCase) => {
     const path = fixturePath(testCase.fixture);
     const raw = await readFile(path, "utf8");
     const entries = parseJsonlFixture(raw);
@@ -117,18 +84,16 @@ describe("real-shape sanitized JSONL replay fixtures", () => {
 
     const input = parseStatusLineInput(statusLineInput(path, testCase, fixtureSessionId(entries)));
     const transcript = await parseTranscriptTail(input.transcriptPath, { maxBytes: Buffer.byteLength(raw) });
-    const decision = decide(input, transcript);
+    const gauge = buildGauge(input, transcript);
 
-    expect(decision).toMatchObject(testCase.expected);
+    expect(gauge.light).toBe(testCase.expected.light);
+    if (testCase.expected.category) {
+      expect(gauge.findings[0]).toMatchObject({ category: testCase.expected.category, evidence: testCase.expected.evidence });
+    }
     expect(transcript.pathReadable).toBe(true);
     expect(transcript.linesRead).toBe(entries.length);
     expectNoPrivacySentinels(transcript);
-    const derivedOutputs = [
-      decision,
-      renderStatusLine(toDecisionPresentation(decision), 220),
-      formatWhy(decision),
-      formatWhyJson(decision)
-    ];
+    const derivedOutputs = [gauge, renderGauge(gauge, 220)];
     expectNoPrivacySentinels(...derivedOutputs);
     expectNoForbiddenValues(derivedOutputs, [path]);
   });
@@ -178,7 +143,12 @@ describe("real-shape sanitized JSONL replay fixtures", () => {
       const store = await readStore(storePath);
       expect(store.decisions).toHaveLength(REPLAY_CASES.length);
       for (const [index, testCase] of REPLAY_CASES.entries()) {
-        expect(store.decisions[index]).toMatchObject(testCase.expected);
+        const stored = store.decisions[index];
+        expect(stored.light).toBe(testCase.expected.light);
+        // Newly stored decisions carry only the gauge-era key set — no advisor fields ever again.
+        expect(stored.state).toBeUndefined();
+        expect(stored.action).toBeUndefined();
+        expect(stored.reasonCode).toBeUndefined();
       }
       expectNoPrivacySentinels(storeText, store);
       expectNoForbiddenValues(

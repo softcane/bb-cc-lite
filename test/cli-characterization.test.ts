@@ -610,11 +610,10 @@ describe("CLI behavior characterization", () => {
 
       const audit = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir, "--json"], { env });
       expect(audit.exitCode).toBe(0);
-      const parsed = JSON.parse(audit.stdout) as { session: { hasHistory: boolean; state: string; reasonCode: string } };
+      const parsed = JSON.parse(audit.stdout) as { session: { hasHistory: boolean; light: string } };
       expect(parsed.session).toMatchObject({
         hasHistory: true,
-        state: "Healthy",
-        reasonCode: "healthy"
+        light: "green"
       });
 
       const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
@@ -776,8 +775,10 @@ describe("CLI behavior characterization", () => {
       expect(durationStatusline.exitCode).toBe(0);
       expect(costStatusline.stdout).toContain("●");
       expect(durationStatusline.stdout).toContain("●");
-      expect(JSON.parse(costAudit.stdout).session).toMatchObject({ reasonCode: "cost_budget" });
-      expect(JSON.parse(durationAudit.stdout).session).toMatchObject({ reasonCode: "duration_budget" });
+      // Budget is a fact, never a finding under the gauge (grill F2): high cost/duration alone keeps
+      // the light green. The combined budget+failure red detector is the only place budget matters.
+      expect(JSON.parse(costAudit.stdout).session).toMatchObject({ light: "green" });
+      expect(JSON.parse(durationAudit.stdout).session).toMatchObject({ light: "green" });
       expectNoPrivacySentinels(costStatusline.stdout, durationStatusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
@@ -999,8 +1000,8 @@ describe("CLI behavior characterization", () => {
       expect(statusline.stdout).toContain("tests failed twice");
 
       const audit = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir, "--json"], { env });
-      const parsed = JSON.parse(audit.stdout) as { session: { state: string; light: string } };
-      expect(parsed.session).toMatchObject({ state: "Careful", light: "blue" });
+      const parsed = JSON.parse(audit.stdout) as { session: { light: string } };
+      expect(parsed.session).toMatchObject({ light: "blue" });
       expectNoPrivacySentinels(statusline.stdout, audit.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
@@ -1208,12 +1209,11 @@ describe("CLI behavior characterization", () => {
       expect(latest.stdout).toContain("●");
 
       const auditLatest = await runCli(["audit", "--project", latestProject, "--home", workspace.homeDir, "--json"], { env });
-      expect(JSON.parse(auditLatest.stdout).session).toMatchObject({ state: "Healthy" });
+      expect(JSON.parse(auditLatest.stdout).session).toMatchObject({ light: "green" });
 
       const auditStop = await runCli(["audit", "--project", stopProject, "--home", workspace.homeDir, "--json"], { env });
-      const stopSession = JSON.parse(auditStop.stdout).session as { state: string; reasonCode: string; findings: Array<{ category: string; evidence: string }> };
-      expect(stopSession.state).toBe("Stop");
-      expect(stopSession.reasonCode).toBe("blind_retry_loop");
+      const stopSession = JSON.parse(auditStop.stdout).session as { light: string; findings: Array<{ category: string; evidence: string }> };
+      expect(stopSession.light).toBe("red");
       expect(stopSession.findings[0]).toMatchObject({ category: "blind_retry_loop", evidence: "3 fails, no fix between runs" });
 
       const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
@@ -1249,10 +1249,8 @@ describe("CLI behavior characterization", () => {
       const audit = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir], { env });
       const auditJson = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir, "--json"], { env });
       expect(auditJson.exitCode).toBe(0);
-      expect(JSON.parse(auditJson.stdout).session).toMatchObject({
-        state: "Stop",
-        reasonCode: "blind_retry_loop"
-      });
+      expect(JSON.parse(auditJson.stdout).session).toMatchObject({ light: "red" });
+      expect(JSON.parse(auditJson.stdout).session.findings[0]).toMatchObject({ category: "blind_retry_loop" });
 
       const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
       for (const output of [statusline.stdout, audit.stdout, auditJson.stdout, storeText]) {
@@ -1303,13 +1301,10 @@ describe("CLI behavior characterization", () => {
       const audit = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir], { env });
       const auditJson = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir, "--json"], { env });
       expect(auditJson.exitCode).toBe(0);
-      expect(JSON.parse(auditJson.stdout).session).toMatchObject({
-        state: "Careful",
-        reasonCode: "tool_result_explosion"
-      });
+      // Tool-result token jumps are not a gauge detector (grill F2): the session stays green.
+      expect(JSON.parse(auditJson.stdout).session).toMatchObject({ light: "green" });
 
       const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
-      expect(storeText).toContain("tool_result_explosion");
       expectNoPrivacySentinels(wide.stdout, narrow.stdout, audit.stdout, auditJson.stdout, storeText);
       for (const rawPath of [workspace.root, workspace.projectDir, workspace.homeDir, workspace.appHome, transcriptPath]) {
         expect([wide.stdout, narrow.stdout, audit.stdout, auditJson.stdout, storeText].join("\n")).not.toContain(rawPath);
@@ -1353,9 +1348,7 @@ describe("CLI behavior characterization", () => {
       const auditJson = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir, "--transcript", transcriptPath, "--json"], { env });
       expect(why.exitCode).toBe(0);
       expect(auditJson.exitCode).toBe(0);
-      expect(JSON.parse(auditJson.stdout).session).toMatchObject({
-        state: "Stop"
-      });
+      expect(JSON.parse(auditJson.stdout).session).toMatchObject({ light: "red" });
 
       const refresh = await runCli(["baseline-refresh", "--quiet", "--home", workspace.homeDir], { env: refreshEnv });
       expect(refresh.exitCode).toBe(0);
@@ -1466,7 +1459,7 @@ describe("CLI behavior characterization", () => {
           terminal_width: 180
         },
         transcript: redundantReadTranscript(3),
-        expected: ["■", "same file reread 3x"]
+        expected: ["■", "reread secret.ts 3x"]
       },
       {
         name: "high context",

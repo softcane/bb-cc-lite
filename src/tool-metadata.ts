@@ -99,6 +99,36 @@ export function classifyResultPurpose(part: Record<string, unknown>): string | u
   return undefined;
 }
 
+// Claude Code's permission gate / user-decline shape (PRD-03, gap 7). When the user declines a
+// tool call, the harness injects a tool_result whose text says the tool use was rejected — it is a
+// user decision, not a program error. These results must not feed failure or retry detection, so
+// the gauge never reads the user's own caution as agent churn. Shapes observed in real transcripts:
+//   "The user doesn't want to proceed with this tool use. The tool use was rejected ..."
+//   "Permission for this tool use was denied. The tool use was rejected ..."
+// often paired with toolUseResult "User rejected tool use".
+const PERMISSION_DECLINE_RE =
+  /\btool use was rejected\b|\bpermission for this tool use was denied\b|\bthe user doesn't want to proceed with this tool use\b/iu;
+
+export function isPermissionDeclineResult(part: Record<string, unknown>): boolean {
+  return PERMISSION_DECLINE_RE.test(toolResultText(part));
+}
+
+function toolResultText(part: Record<string, unknown>): string {
+  const content = part.content;
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((entry) => {
+        const record = asRecord(entry);
+        return record ? stringField(record.text) || "" : typeof entry === "string" ? entry : "";
+      })
+      .join(" ");
+  }
+  return "";
+}
+
 export function isEditTool(toolName: string, options: SafeToolNameOptions = {}): boolean {
   return /^(Edit|MultiEdit|Write|NotebookEdit)$/u.test(safeToolName(toolName, options));
 }
