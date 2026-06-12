@@ -1,6 +1,6 @@
 {
   "name": "bb-cc-lite",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Black Box Claude Code Lite: a small Claude Code status line that says when to continue, slow down, or stop.",
   "type": "module",
   "author": "Softcane",
