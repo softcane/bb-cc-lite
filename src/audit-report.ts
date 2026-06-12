@@ -475,15 +475,15 @@ async function cleanupBlocks(options: AuditReportOptions): Promise<AuditApplyRes
 
 function renderDiff(target: AuditApplyResult["target"], additions: string[], removals: InstructionCorrelation["removalCandidates"]): string {
   const label = target === "global_claude" ? "~/.claude/CLAUDE.md" : "./CLAUDE.md";
-  const lines = [`--- a/${label}`, `+++ b/${label}`, "@@ bb-cc-lite block @@"];
-  lines.push("+<!-- bb-cc-lite audit:start -->");
-  lines.push("+## bb-cc-lite lessons");
+  const lines = [`--- a/${label}`, `+++ b/${label}`, "@@ ccverdict block @@"];
+  lines.push("+<!-- ccverdict audit:start -->");
+  lines.push("+## ccverdict lessons");
   for (const addition of [...additions].sort((a, b) => a.localeCompare(b))) {
     lines.push(`+- ${addition}`);
   }
-  lines.push("+<!-- bb-cc-lite audit:end -->");
+  lines.push("+<!-- ccverdict audit:end -->");
   for (const removal of removals) {
-    // Removal proposals are comments only; bb never deletes a user-authored line (branch H7).
+    // Removal proposals are comments only; ccverdict never deletes a user-authored line (branch H7).
     lines.push(`# proposed removal (not applied): ${removal.file}:${removal.lineNumber} ${removal.text}`);
   }
   return lines.join("\n");
@@ -515,7 +515,7 @@ export function renderAuditReport(report: AuditReport, options: FormatAuditOptio
     blocks.push(instructionBlock);
   }
   blocks.push(
-    "Privacy: bb stores derived metadata only. Instruction lines above are read locally and shown with line numbers; their content is never written into bb's store."
+    "Privacy: ccverdict stores derived metadata only. Instruction lines above are read locally and shown with line numbers; their content is never written into ccverdict's store."
   );
   return blocks.join("\n\n");
 }
@@ -523,7 +523,7 @@ export function renderAuditReport(report: AuditReport, options: FormatAuditOptio
 function renderSessionSection(session: AuditSessionSection, color: boolean): string {
   const lines = [bold("[1] Current session", color)];
   if (!session.hasHistory) {
-    lines.push("No bb history for this project.");
+    lines.push("No ccverdict history for this project.");
     return lines.join("\n");
   }
   const light = session.light ?? "gray";

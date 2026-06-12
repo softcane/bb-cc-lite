@@ -65,7 +65,7 @@ export async function handleHook(raw: string, options: HandleHookOptions = {}): 
   const hookEventName = stringField(root.hook_event_name) || stringField(root.event) || options.fallbackEventName || "unknown";
   const sessionKey = hashValue(stringField(root.session_id) || stringField(root.sessionId));
   const mode = options.mode || "coach";
-  const learn = options.learn !== false && process.env.BB_CC_LITE_LESSON_MEMORY !== "0";
+  const learn = options.learn !== false && process.env.CCVERDICT_LESSON_MEMORY !== "0";
   const projectConfig = await loadProjectConfig(cwdFromHook(root));
   const event = parseHookPayload(raw, hookEventName, { projectConfig });
 

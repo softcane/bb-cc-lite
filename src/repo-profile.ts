@@ -2,7 +2,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { loadProjectConfig, type ProjectConfig, type ValidationCommandCategory } from "./project-config.js";
 
-export type ValidationCommandSource = "bb-config" | "package-script";
+export type ValidationCommandSource = "ccverdict-config" | "package-script";
 
 export interface ValidationCommand {
   category: ValidationCommandCategory;
@@ -209,7 +209,7 @@ function validationCommandsFromConfig(config: ProjectConfig): ValidationCommand[
   for (const category of VALIDATION_ORDER) {
     for (const command of config.validationCommands[category] || []) {
       if (isSafeLessonCommand(command)) {
-        commands.push({ category, command, source: "bb-config" });
+        commands.push({ category, command, source: "ccverdict-config" });
       }
     }
   }
@@ -372,7 +372,7 @@ function contextSourceLabels(
     labels.push("package.json scripts");
   }
   if (Object.values(config.validationCommands).some((commands) => (commands || []).length > 0)) {
-    labels.push(".bb-cc-lite.json validation commands");
+    labels.push(".ccverdict.json validation commands");
   }
   if (agentsEntries.some((entry) => entry.section === "source")) {
     labels.push("AGENTS.md Source Map");

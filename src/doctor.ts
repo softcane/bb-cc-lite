@@ -10,8 +10,8 @@ import { refreshPricing } from "./pricing.js";
 import { readStore } from "./store.js";
 import {
   describeSettingsTarget,
-  hasBbHooks,
-  isBbStatusLine,
+  hasCcverdictHooks,
+  isCcverdictStatusLine,
   readHooks,
   readStatusLine,
   resolveSettingsTarget,
@@ -50,8 +50,8 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorChec
   const targetLabel = describeSettingsTarget(target);
   try {
     const statusLine = await readStatusLine(target.scope, target.projectDir, target.homeDir);
-    if (statusLine && isBbStatusLine(statusLine)) {
-      checks.push({ level: "OK", name: "settings", message: `bb-cc-lite statusLine is installed in ${targetLabel}` });
+    if (statusLine && isCcverdictStatusLine(statusLine)) {
+      checks.push({ level: "OK", name: "settings", message: `ccverdict statusLine is installed in ${targetLabel}` });
     } else if (statusLine) {
       checks.push({ level: "WARN", name: "settings", message: `custom statusLine is configured in ${targetLabel}` });
     } else {
@@ -67,10 +67,10 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<DoctorChec
 
   try {
     const hooks = await readHooks(target.scope, target.projectDir, target.homeDir);
-    if (hasBbHooks(hooks, target.homeDir)) {
-      checks.push({ level: "OK", name: "hooks", message: `optional bb-cc-lite hooks are installed in ${targetLabel}` });
+    if (hasCcverdictHooks(hooks, target.homeDir)) {
+      checks.push({ level: "OK", name: "hooks", message: `optional ccverdict hooks are installed in ${targetLabel}` });
     } else {
-      checks.push({ level: "WARN", name: "hooks", message: "optional bb-cc-lite hooks are not installed; run install --hooks to enable faster telemetry" });
+      checks.push({ level: "WARN", name: "hooks", message: "optional ccverdict hooks are not installed; run install --hooks to enable faster telemetry" });
     }
   } catch (error) {
     checks.push({
@@ -123,7 +123,7 @@ function checkNodeVersion(): DoctorCheck {
   if (Number.isFinite(major) && major >= 20) {
     return { level: "OK", name: "node", message: `Node ${process.versions.node}` };
   }
-  return { level: "FAIL", name: "node", message: `Node ${process.versions.node}; bb-cc-lite requires Node >=20` };
+  return { level: "FAIL", name: "node", message: `Node ${process.versions.node}; ccverdict requires Node >=20` };
 }
 
 async function addClearBaselineCheck(checks: DoctorCheck[], options: DoctorOptions): Promise<void> {
@@ -243,10 +243,10 @@ export async function clearPersonalBaseline(
 function formatBuiltBaselineMessage(value: unknown): string {
   const sessionsSeen = sessionsSeenFrom(value);
   if (sessionsSeen === 0) {
-    return "No local session history yet — bb will calibrate to your habits as you work.";
+    return "No local session history yet — ccverdict will calibrate to your habits as you work.";
   }
   const sessionWord = sessionsSeen === 1 ? "session" : "sessions";
-  return `Baseline calibrated from ${sessionsSeen} past ${sessionWord} — bb now knows what your normal pace and recovery look like.`;
+  return `Baseline calibrated from ${sessionsSeen} past ${sessionWord} — ccverdict now knows what your normal pace and recovery look like.`;
 }
 
 function formatBaselineSummaryMessage(value: unknown, summary?: unknown): string {

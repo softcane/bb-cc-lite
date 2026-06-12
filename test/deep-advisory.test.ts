@@ -10,21 +10,21 @@ import {
 import { parseTranscriptLines } from "../src/transcript.js";
 
 const privacySentinels = [
-  "BB_CC_LITE_RAW_PROMPT_SENTINEL",
-  "BB_CC_LITE_ASSISTANT_TEXT_SENTINEL",
-  "BB_CC_LITE_TOOL_OUTPUT_SENTINEL",
-  "BB_CC_LITE_SHELL_OUTPUT_SENTINEL",
-  "BB_CC_LITE_RAW_COMMAND_SENTINEL",
-  "BB_CC_LITE_FILE_CONTENT_SENTINEL",
-  "BB_CC_LITE_RAW_SESSION_SENTINEL",
+  "CCVERDICT_RAW_PROMPT_SENTINEL",
+  "CCVERDICT_ASSISTANT_TEXT_SENTINEL",
+  "CCVERDICT_TOOL_OUTPUT_SENTINEL",
+  "CCVERDICT_SHELL_OUTPUT_SENTINEL",
+  "CCVERDICT_RAW_COMMAND_SENTINEL",
+  "CCVERDICT_FILE_CONTENT_SENTINEL",
+  "CCVERDICT_RAW_SESSION_SENTINEL",
   "mcp__privateServer__rawPrivacyTool",
-  "/tmp/bb-cc-lite/private/workspace/src/secret.ts",
+  "/tmp/ccverdict/private/workspace/src/secret.ts",
   "secret.ts"
 ];
 
 describe("deep advisory", () => {
   it("reports multiple safe advisory paths for one Claude transcript", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-deep-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-deep-"));
     try {
       const transcriptPath = join(tempDir, "session.jsonl");
       await writeTranscript(transcriptPath, riskyTranscript());
@@ -59,7 +59,7 @@ describe("deep advisory", () => {
         confidence: "high",
         reasonCode: "blind_validation_retry"
       });
-      expect(formatted).toContain("bb deep advisory audit");
+      expect(formatted).toContain("ccverdict deep advisory audit");
       expect(formatted).toContain("same test failed 3x without a code change");
       expect(formatted).toContain("3 changed file identities had no later check");
       expect(formatted).toContain("session stopped or ended while risk was still open");
@@ -89,7 +89,7 @@ describe("deep advisory", () => {
   });
 
   it("marks unsupported direct JSONL without pretending it was Claude Code", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-deep-unsupported-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-deep-unsupported-"));
     try {
       const transcriptPath = join(tempDir, "codex.jsonl");
       await writeTranscript(transcriptPath, [
@@ -120,13 +120,13 @@ describe("deep advisory", () => {
   });
 
   it("uses project validation config without leaking configured commands", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-deep-config-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-deep-config-"));
     try {
       const homeDir = join(tempDir, "home");
       const projectDir = join(tempDir, "project");
       await mkdir(projectDir, { recursive: true });
       await writeFile(
-        join(projectDir, ".bb-cc-lite.json"),
+        join(projectDir, ".ccverdict.json"),
         `${JSON.stringify({ validationCommands: { tests: ["make private-check"] } })}\n`,
         "utf8"
       );
@@ -156,10 +156,10 @@ describe("deep advisory", () => {
   });
 
   it("scans all projects without exposing project directory names", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-deep-all-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-deep-all-"));
     try {
       const homeDir = join(tempDir, "home");
-      const privateProjectName = "BB_CC_LITE_RAW_PROJECT_NAME_SENTINEL";
+      const privateProjectName = "CCVERDICT_RAW_PROJECT_NAME_SENTINEL";
       await writeTranscript(
         join(homeDir, ".claude", "projects", privateProjectName, "session.jsonl"),
         riskyTranscript()
@@ -184,7 +184,7 @@ describe("deep advisory", () => {
   });
 
   it("treats generic assistant text as unsupported low-confidence source", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-deep-generic-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-deep-generic-"));
     try {
       const transcriptPath = join(tempDir, "generic.jsonl");
       await writeTranscript(transcriptPath, [
@@ -210,7 +210,7 @@ describe("deep advisory", () => {
   });
 
   it("handles malformed JSONL softly", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-deep-malformed-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-deep-malformed-"));
     try {
       const transcriptPath = join(tempDir, "malformed.jsonl");
       await writeTranscript(transcriptPath, [`{"type":"assistant","message":${privacySentinels[0]}`]);

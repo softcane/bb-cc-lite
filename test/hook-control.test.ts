@@ -7,19 +7,19 @@ import { parseHookPayload } from "../src/hook-payload.js";
 import { readStore, recentFeedbackOutcomes, recordHookEvent } from "../src/store.js";
 
 const privacySentinels = [
-  "BB_CC_LITE_RAW_PROMPT_SENTINEL",
-  "BB_CC_LITE_RAW_COMMAND_SENTINEL",
-  "BB_CC_LITE_TOOL_OUTPUT_SENTINEL",
-  "BB_CC_LITE_FILE_CONTENT_SENTINEL",
-  "BB_CC_LITE_RAW_SESSION_SENTINEL",
+  "CCVERDICT_RAW_PROMPT_SENTINEL",
+  "CCVERDICT_RAW_COMMAND_SENTINEL",
+  "CCVERDICT_TOOL_OUTPUT_SENTINEL",
+  "CCVERDICT_FILE_CONTENT_SENTINEL",
+  "CCVERDICT_RAW_SESSION_SENTINEL",
   "mcp__privateServer__rawPrivacyTool",
-  "/tmp/bb-cc-lite/private/workspace/src/secret.ts",
-  "BB_CC_LITE_ASSISTANT_TEXT_SENTINEL"
+  "/tmp/ccverdict/private/workspace/src/secret.ts",
+  "CCVERDICT_ASSISTANT_TEXT_SENTINEL"
 ];
 
 describe("hook control", () => {
   it("records safe SessionStart lifecycle telemetry in observe-only/no-learn mode", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-sessionstart-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hook-control-sessionstart-"));
     try {
       const storePath = join(tempDir, "events.json");
       const rawSessionId = `session-alpha-${privacySentinels[4]}`;
@@ -61,7 +61,7 @@ describe("hook control", () => {
   });
 
   it("returns additionalContext for repeated PostToolUseFailure feedback", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hook-control-"));
     try {
       const storePath = join(tempDir, "events.json");
 
@@ -92,7 +92,7 @@ describe("hook control", () => {
   });
 
   it("returns fallback PostCompact goal-restatement guidance without raw payload data", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-postcompact-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hook-control-postcompact-"));
     try {
       const storePath = join(tempDir, "events.json");
 
@@ -128,7 +128,7 @@ describe("hook control", () => {
   });
 
   it("does not emit direct PreCompact additionalContext before compatibility is proven", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-precompact-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hook-control-precompact-"));
     try {
       const storePath = join(tempDir, "events.json");
       await handleHook(successfulEditHook("session-alpha"), {
@@ -153,7 +153,7 @@ describe("hook control", () => {
   });
 
   it("creates a pending feedback outcome when coach feedback is emitted", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-outcome-pending-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hook-control-outcome-pending-"));
     try {
       const storePath = join(tempDir, "events.json");
 
@@ -181,7 +181,7 @@ describe("hook control", () => {
   });
 
   it("marks edit_without_validation feedback resolved after a recognized validation success", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-outcome-resolved-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hook-control-outcome-resolved-"));
     try {
       const storePath = join(tempDir, "events.json");
 
@@ -213,7 +213,7 @@ describe("hook control", () => {
   });
 
   it("marks repeated validation feedback ignored when Claude retries without intervention", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-outcome-ignored-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hook-control-outcome-ignored-"));
     try {
       const storePath = join(tempDir, "events.json");
 
@@ -236,7 +236,7 @@ describe("hook control", () => {
   });
 
   it("dedupes PostToolBatch feedback after a coach note was already emitted", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-batch-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hook-control-batch-"));
     try {
       const storePath = join(tempDir, "events.json");
       await handleHook(failedTestHook("session-alpha"), { fallbackEventName: "PostToolUseFailure", mode: "coach", learn: false, storePath });
@@ -265,7 +265,7 @@ describe("hook control", () => {
   });
 
   it("returns a stronger coach note before the next validation retry after prior feedback", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-pretool-coach-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hook-control-pretool-coach-"));
     try {
       const storePath = join(tempDir, "events.json");
       await handleHook(failedTestHook("session-alpha"), { fallbackEventName: "PostToolUseFailure", mode: "coach", learn: false, storePath });
@@ -291,7 +291,7 @@ describe("hook control", () => {
   });
 
   it("denies PreToolUse only in guard mode for repeated validation retries", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-guard-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hook-control-guard-"));
     try {
       const storePath = join(tempDir, "events.json");
       await seedFailedTests(storePath, "session-alpha", 3);
@@ -343,7 +343,7 @@ describe("hook control", () => {
   });
 
   it("returns coach additionalContext before an unchanged repeated full-file Read", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-read-coach-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hook-control-read-coach-"));
     try {
       const storePath = join(tempDir, "events.json");
       await handleHook(successfulReadHook("session-alpha"), {
@@ -374,7 +374,7 @@ describe("hook control", () => {
   });
 
   it("denies unchanged repeated full-file Reads in guard mode and allows partial Reads", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-read-guard-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hook-control-read-guard-"));
     try {
       const storePath = join(tempDir, "events.json");
       await handleHook(successfulReadHook("session-alpha"), {
@@ -412,7 +412,7 @@ describe("hook control", () => {
   });
 
   it("keeps observe-only Read feedback telemetry-only", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-read-observe-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hook-control-read-observe-"));
     try {
       const storePath = join(tempDir, "events.json");
       await handleHook(successfulReadHook("session-alpha"), {
@@ -437,7 +437,7 @@ describe("hook control", () => {
   });
 
   it("does not deny a full-file Read immediately after compaction clears hook freshness", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-read-compact-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hook-control-read-compact-"));
     try {
       const storePath = join(tempDir, "events.json");
       await handleHook(successfulReadHook("session-alpha"), {
@@ -468,7 +468,7 @@ describe("hook control", () => {
   });
 
   it("blocks Stop once and avoids active stop-hook loops", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hook-control-stop-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hook-control-stop-"));
     try {
       const storePath = join(tempDir, "events.json");
       await seedFailedTests(storePath, "session-alpha", 3);

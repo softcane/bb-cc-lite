@@ -4,9 +4,9 @@ import { describe, expect, it } from "vitest";
 import { parseStatusLineInput } from "../src/status-input.js";
 
 const privacySentinels = [
-  "BB_CC_LITE_RAW_PROMPT_SENTINEL",
-  "BB_CC_LITE_TOOL_OUTPUT_SENTINEL",
-  "BB_CC_LITE_API_KEY_SENTINEL"
+  "CCVERDICT_RAW_PROMPT_SENTINEL",
+  "CCVERDICT_TOOL_OUTPUT_SENTINEL",
+  "CCVERDICT_API_KEY_SENTINEL"
 ];
 
 function fixturePath(name: string): string {
@@ -33,8 +33,8 @@ describe("parseStatusLineInput", () => {
     expect(input).toMatchObject({
       rawValid: true,
       sessionId: "session-fixture-001",
-      transcriptPath: "/tmp/bb-cc-lite/transcripts/session.jsonl",
-      cwd: "/tmp/bb-cc-lite/workspace",
+      transcriptPath: "/tmp/ccverdict/transcripts/session.jsonl",
+      cwd: "/tmp/ccverdict/workspace",
       model: {
         id: "claude-sonnet-4-5",
         displayName: "Claude Sonnet 4.5"

@@ -16,7 +16,7 @@ import { buildBaseline } from "../src/baseline-builder.js";
 
 describe("personal baseline storage", () => {
   it("writes and reads a valid baseline with private file permissions", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-"));
     try {
       const targetPath = join(tempDir, "baseline.json");
       const baseline = sampleBaseline();
@@ -32,31 +32,31 @@ describe("personal baseline storage", () => {
   });
 
   it("resolves the baseline path inside the app home", () => {
-    const previous = process.env.BB_CC_LITE_HOME;
-    delete process.env.BB_CC_LITE_HOME;
+    const previous = process.env.CCVERDICT_HOME;
+    delete process.env.CCVERDICT_HOME;
     try {
-      expect(baselinePath("/tmp/bb-home")).toBe("/tmp/bb-home/.claude/bb-cc-lite/baseline.json");
+      expect(baselinePath("/tmp/ccverdict-home")).toBe("/tmp/ccverdict-home/.claude/ccverdict/baseline.json");
     } finally {
       if (previous === undefined) {
-        delete process.env.BB_CC_LITE_HOME;
+        delete process.env.CCVERDICT_HOME;
       } else {
-        process.env.BB_CC_LITE_HOME = previous;
+        process.env.CCVERDICT_HOME = previous;
       }
     }
   });
 
   it("ignores a baseline that contains forbidden raw-data fields", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-private-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-private-"));
     try {
       const targetPath = join(tempDir, "baseline.json");
       await writeFile(
         targetPath,
         `${JSON.stringify({
           ...sampleBaseline(),
-          rawPrompt: "BB_CC_LITE_RAW_PROMPT_SENTINEL",
-          raw_prompt: "BB_CC_LITE_RAW_PROMPT_SENTINEL",
-          cwd: "/private/path/BB_CC_LITE_RAW_PATH_SENTINEL",
-          transcriptPath: "/private/path/BB_CC_LITE_RAW_PATH_SENTINEL.jsonl"
+          rawPrompt: "CCVERDICT_RAW_PROMPT_SENTINEL",
+          raw_prompt: "CCVERDICT_RAW_PROMPT_SENTINEL",
+          cwd: "/private/path/CCVERDICT_RAW_PATH_SENTINEL",
+          transcriptPath: "/private/path/CCVERDICT_RAW_PATH_SENTINEL.jsonl"
         })}\n`,
         "utf8"
       );
@@ -67,7 +67,7 @@ describe("personal baseline storage", () => {
         targetPath,
         `${JSON.stringify({
           ...sampleBaseline(),
-          updatedAt: "/private/path/BB_CC_LITE_RAW_PATH_SENTINEL"
+          updatedAt: "/private/path/CCVERDICT_RAW_PATH_SENTINEL"
         })}\n`,
         "utf8"
       );
@@ -79,7 +79,7 @@ describe("personal baseline storage", () => {
   });
 
   it("reads an extended v1 baseline with only approved aggregate sections", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-extended-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-extended-"));
     try {
       const targetPath = join(tempDir, "baseline.json");
       const baseline = {
@@ -146,7 +146,7 @@ describe("personal baseline storage", () => {
   });
 
   it("ignores extended v1 baselines with unsafe aggregate keys or raw-data-like fields", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-unsafe-extended-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-unsafe-extended-"));
     try {
       const targetPath = join(tempDir, "baseline.json");
       await writeFile(
@@ -180,7 +180,7 @@ describe("personal baseline storage", () => {
           validation: {
             tests: {
               ...validationAggregate(),
-              filePath: "/private/path/BB_CC_LITE_RAW_PATH_SENTINEL.ts"
+              filePath: "/private/path/CCVERDICT_RAW_PATH_SENTINEL.ts"
             }
           }
         })}\n`,
@@ -207,7 +207,7 @@ describe("personal baseline storage", () => {
           blindRetry: {
             tests: {
               ...blindRetryAggregate(),
-              rawCommand: "npm test -- BB_CC_LITE_RAW_COMMAND_SENTINEL"
+              rawCommand: "npm test -- CCVERDICT_RAW_COMMAND_SENTINEL"
             }
           }
         })}\n`,
@@ -282,7 +282,7 @@ describe("personal baseline storage", () => {
   });
 
   it("ignores corrupt, old, and oversized baseline files and clears only the baseline file", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-invalid-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-invalid-"));
     try {
       const targetPath = join(tempDir, "baseline.json");
 
@@ -322,7 +322,7 @@ describe("personal baseline storage", () => {
 
 describe("project baseline storage", () => {
   it("stores project baselines under app home using only a hashed project key", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-project-baseline-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-project-baseline-"));
     try {
       const rawProjectPath = join(tempDir, "private-client-worktree");
       const appHomePath = join(tempDir, "app-home");
@@ -374,7 +374,7 @@ describe("project baseline storage", () => {
   });
 
   it("prefers a strong project baseline and falls back for sparse or corrupt project data", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-project-baseline-select-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-project-baseline-select-"));
     try {
       const rawProjectPath = join(tempDir, "private-client-worktree");
       const appHomePath = join(tempDir, "app-home");
@@ -439,7 +439,7 @@ describe("project baseline storage", () => {
 
 describe("personal baseline builder", () => {
   it("handles empty history and malformed JSONL without crashing", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-empty-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-empty-"));
     try {
       const claudeProjectsDir = join(tempDir, ".claude", "projects");
       const projectDir = join(claudeProjectsDir, "project");
@@ -499,7 +499,7 @@ describe("personal baseline builder", () => {
   });
 
   it("prefers newer JSONL transcripts before applying maxFiles", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-newest-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-newest-"));
     try {
       const claudeProjectsDir = join(tempDir, ".claude", "projects");
       const projectDir = join(claudeProjectsDir, "project");
@@ -548,7 +548,7 @@ describe("personal baseline builder", () => {
   });
 
   it("aggregates representative transcript counters across bounded parallel batches", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-parallel-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-parallel-"));
     try {
       const claudeProjectsDir = join(tempDir, ".claude", "projects");
       const projectDir = join(claudeProjectsDir, "project");
@@ -624,7 +624,7 @@ describe("personal baseline builder", () => {
       return;
     }
 
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-unreadable-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-unreadable-"));
     const unreadablePath = join(tempDir, ".claude", "projects", "project", "unreadable.jsonl");
     try {
       const claudeProjectsDir = join(tempDir, ".claude", "projects");
@@ -650,7 +650,7 @@ describe("personal baseline builder", () => {
   });
 
   it("recognizes direct tool rows when deriving edit-without-validation outcomes", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-direct-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-direct-"));
     try {
       const claudeProjectsDir = join(tempDir, ".claude", "projects");
       const projectDir = join(claudeProjectsDir, "project");
@@ -662,8 +662,8 @@ describe("personal baseline builder", () => {
             id: "direct-edit",
             name: "Edit",
             input: {
-              file_path: "/private/BB_CC_LITE_RAW_PATH_SENTINEL.ts",
-              new_string: "BB_CC_LITE_RAW_FILE_CONTENT_SENTINEL"
+              file_path: "/private/CCVERDICT_RAW_PATH_SENTINEL.ts",
+              new_string: "CCVERDICT_RAW_FILE_CONTENT_SENTINEL"
             }
           }
         },
@@ -671,7 +671,7 @@ describe("personal baseline builder", () => {
           type: "tool_result",
           tool_use_id: "direct-edit",
           is_error: false,
-          content: "BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL"
+          content: "CCVERDICT_RAW_TOOL_OUTPUT_SENTINEL"
         }
       ]);
 
@@ -682,14 +682,14 @@ describe("personal baseline builder", () => {
       });
 
       expect(result.baseline.outcomes.carefulLike.editWithoutValidation).toBe(1);
-      expect(JSON.stringify(result.baseline)).not.toContain("BB_CC_LITE_RAW");
+      expect(JSON.stringify(result.baseline)).not.toContain("CCVERDICT_RAW");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
 
   it("builds extended validation, recovery, edit-lag, and safe tool-category aggregates", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-rich-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-rich-"));
     try {
       const claudeProjectsDir = join(tempDir, ".claude", "projects");
       const projectDir = join(claudeProjectsDir, "project");
@@ -822,7 +822,7 @@ describe("personal baseline builder", () => {
   });
 
   it("records scan-budget metadata and stops before broad reads when the budget is exhausted", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-budget-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-budget-"));
     try {
       const claudeProjectsDir = join(tempDir, ".claude", "projects");
       const projectDir = join(claudeProjectsDir, "project");
@@ -853,7 +853,7 @@ describe("personal baseline builder", () => {
   });
 
   it("builds safe activity and budget aggregates for project-baseline consumers", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-activity-budget-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-activity-budget-"));
     try {
       const claudeProjectsDir = join(tempDir, ".claude", "projects");
       const projectDir = join(claudeProjectsDir, "project");
@@ -863,12 +863,12 @@ describe("personal baseline builder", () => {
         statusMetrics(0.12, 300000),
         ...readHeavySession("busy-read-1"),
         ...readHeavySession("busy-read-2"),
-        userText("BB_CC_LITE_RAW_PROMPT_SENTINEL")
+        userText("CCVERDICT_RAW_PROMPT_SENTINEL")
       ]);
       await writeJsonl(join(projectDir, "progress.jsonl"), [
         statusMetrics(0.45, 900000),
         ...validationRecoveredSession("progress"),
-        userText("/tmp/bb-cc-lite/private/worktree/src/secret.ts")
+        userText("/tmp/ccverdict/private/worktree/src/secret.ts")
       ]);
 
       const result = await buildBaseline({
@@ -893,15 +893,15 @@ describe("personal baseline builder", () => {
         p90DurationMs: 900000,
         confidence: "low"
       });
-      expect(JSON.stringify(result.baseline)).not.toContain("BB_CC_LITE_RAW");
-      expect(JSON.stringify(result.baseline)).not.toContain("/tmp/bb-cc-lite/private/worktree");
+      expect(JSON.stringify(result.baseline)).not.toContain("CCVERDICT_RAW");
+      expect(JSON.stringify(result.baseline)).not.toContain("/tmp/ccverdict/private/worktree");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
 
   it("writes a project baseline under app home when a project directory is supplied", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-project-build-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-project-build-"));
     try {
       const rawProjectPath = join(tempDir, "private-client-worktree");
       const claudeProjectsDir = join(tempDir, ".claude", "projects");
@@ -942,7 +942,7 @@ describe("personal baseline builder", () => {
   });
 
   it("does not build a project baseline from an unrelated single transcript project", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-project-unmatched-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-project-unmatched-"));
     try {
       const rawProjectPath = join(tempDir, "current-worktree-with-no-history");
       const claudeProjectsDir = join(tempDir, ".claude", "projects");
@@ -988,7 +988,7 @@ describe("personal baseline builder", () => {
   });
 
   it("builds the project baseline from only that project's transcript directory", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-project-specific-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-project-specific-"));
     try {
       const rawProjectPath = join(tempDir, "private-client-worktree");
       const claudeProjectsDir = join(tempDir, ".claude", "projects");
@@ -1026,7 +1026,7 @@ describe("personal baseline builder", () => {
   });
 
   it("builds aggregate MCP tool category counts without storing raw MCP names", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-mcp-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-mcp-"));
     try {
       const claudeProjectsDir = join(tempDir, ".claude", "projects");
       const projectDir = join(claudeProjectsDir, "project");
@@ -1078,7 +1078,7 @@ describe("personal baseline builder", () => {
   });
 
   it("does not count MCP results with validation-like titles as Bash validation baseline data", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-mcp-purpose-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-mcp-purpose-"));
     try {
       const claudeProjectsDir = join(tempDir, ".claude", "projects");
       const projectDir = join(claudeProjectsDir, "project");
@@ -1117,19 +1117,19 @@ describe("personal baseline builder", () => {
   });
 
   it("learns weak outcome aggregates without storing raw private transcript data", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-baseline-builder-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-baseline-builder-"));
     try {
       const claudeProjectsDir = join(tempDir, ".claude", "projects");
       const projectDir = join(claudeProjectsDir, "private-project-path-sentinel");
       const appHomePath = join(tempDir, "app-home");
       await mkdir(projectDir, { recursive: true });
 
-      const rawPromptSentinel = "BB_CC_LITE_RAW_PROMPT_SENTINEL";
-      const rawCommandSentinel = "BB_CC_LITE_RAW_COMMAND_SENTINEL";
-      const rawToolOutputSentinel = "BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL";
-      const rawPathSentinel = "BB_CC_LITE_RAW_PATH_SENTINEL";
-      const rawFileSentinel = "BB_CC_LITE_RAW_FILE_CONTENT_SENTINEL";
-      const rawSessionSentinel = "BB_CC_LITE_RAW_SESSION_SENTINEL";
+      const rawPromptSentinel = "CCVERDICT_RAW_PROMPT_SENTINEL";
+      const rawCommandSentinel = "CCVERDICT_RAW_COMMAND_SENTINEL";
+      const rawToolOutputSentinel = "CCVERDICT_RAW_TOOL_OUTPUT_SENTINEL";
+      const rawPathSentinel = "CCVERDICT_RAW_PATH_SENTINEL";
+      const rawFileSentinel = "CCVERDICT_RAW_FILE_CONTENT_SENTINEL";
+      const rawSessionSentinel = "CCVERDICT_RAW_SESSION_SENTINEL";
 
       await writeJsonl(join(projectDir, `${rawPathSentinel}-healthy.jsonl`), [
         userText(rawPromptSentinel),
@@ -1218,7 +1218,7 @@ describe("personal baseline builder", () => {
 
 function sampleBaseline(): PersonalBaseline {
   return {
-    schema: "bb-cc-lite.baseline.v1",
+    schema: "ccverdict.baseline.v1",
     version: 1,
     createdAt: "2026-05-19T00:00:00.000Z",
     updatedAt: "2026-05-19T00:00:00.000Z",

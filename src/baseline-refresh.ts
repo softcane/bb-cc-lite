@@ -8,7 +8,7 @@ import { appHome, cliPath } from "./paths.js";
 export const BASELINE_REFRESH_LOCK_FILE = "baseline-refresh.lock";
 export const DEFAULT_BASELINE_REFRESH_INTERVAL_HOURS = 24;
 export const DEFAULT_BASELINE_REFRESH_LOCK_STALE_MS = 120_000;
-export const BASELINE_REFRESH_LOCK_HELD_ENV = "BB_CC_LITE_BASELINE_REFRESH_LOCK_HELD";
+export const BASELINE_REFRESH_LOCK_HELD_ENV = "CCVERDICT_BASELINE_REFRESH_LOCK_HELD";
 
 export interface BaselineRefreshLockMetadata {
   startedAt: string;
@@ -72,11 +72,11 @@ interface AcquireRefreshLockOptions extends LockPathOptions {
 }
 
 export function shouldAutoRefresh(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.BB_CC_LITE_AUTO_LEARN !== "0";
+  return env.CCVERDICT_AUTO_LEARN !== "0";
 }
 
 export function refreshIntervalHoursFromEnv(env: NodeJS.ProcessEnv = process.env): number {
-  const value = env.BB_CC_LITE_BASELINE_REFRESH_INTERVAL_HOURS;
+  const value = env.CCVERDICT_BASELINE_REFRESH_INTERVAL_HOURS;
   if (value === undefined || value.trim() === "") {
     return DEFAULT_BASELINE_REFRESH_INTERVAL_HOURS;
   }
@@ -172,7 +172,7 @@ export async function maybeTriggerBaselineRefresh(
         [BASELINE_REFRESH_LOCK_HELD_ENV]: "1"
       };
       if (options.appHomePath) {
-        childEnv.BB_CC_LITE_HOME = options.appHomePath;
+        childEnv.CCVERDICT_HOME = options.appHomePath;
       }
       if (options.homeDir) {
         childEnv.HOME = options.homeDir;

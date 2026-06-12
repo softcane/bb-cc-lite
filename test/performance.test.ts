@@ -10,7 +10,7 @@ import { pathExists, setIsolatedEnv } from "./helpers/temp.js";
 
 describe("large transcript performance", () => {
   it("parses only the bounded transcript tail under the hard budget", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-perf-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-perf-"));
     try {
       const transcriptPath = join(tempDir, "large.jsonl");
       const line = JSON.stringify({
@@ -44,7 +44,7 @@ describe("large transcript performance", () => {
   });
 
   it("keeps direct deep advisory bounded on large JSONL input", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-deep-perf-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-deep-perf-"));
     try {
       const transcriptPath = join(tempDir, "large-deep.jsonl");
       const filler = JSON.stringify({
@@ -52,7 +52,7 @@ describe("large transcript performance", () => {
         type: "assistant",
         message: {
           role: "assistant",
-          content: [{ type: "text", text: "BB_CC_LITE_RAW_PROMPT_SENTINEL" }]
+          content: [{ type: "text", text: "CCVERDICT_RAW_PROMPT_SENTINEL" }]
         }
       });
       const repeat = Math.ceil((10 * 1024 * 1024) / (filler.length + 1));
@@ -76,12 +76,12 @@ describe("large transcript performance", () => {
   });
 
   it("keeps statusline rendering fast when a stale baseline only triggers background refresh", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-statusline-refresh-perf-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-statusline-refresh-perf-"));
     const restoreEnv = setIsolatedEnv({
-      BB_CC_LITE_HOME: join(tempDir, "app-home"),
-      BB_CC_LITE_STORE: join(tempDir, "app-home", "events.json"),
-      BB_CC_LITE_COLOR: "0",
-      BB_CC_LITE_AUTO_LEARN: undefined
+      CCVERDICT_HOME: join(tempDir, "app-home"),
+      CCVERDICT_STORE: join(tempDir, "app-home", "events.json"),
+      CCVERDICT_COLOR: "0",
+      CCVERDICT_AUTO_LEARN: undefined
     });
     try {
       const appHome = join(tempDir, "app-home");
@@ -111,17 +111,17 @@ describe("large transcript performance", () => {
   });
 
   it("does not scan local Claude history synchronously while rendering statusline", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-statusline-no-scan-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-statusline-no-scan-"));
     const appHome = join(tempDir, "app-home");
     const homeDir = join(tempDir, "home");
     const projectDir = join(tempDir, "project");
     const storePath = join(appHome, "events.json");
     const restoreEnv = setIsolatedEnv({
       HOME: homeDir,
-      BB_CC_LITE_HOME: appHome,
-      BB_CC_LITE_STORE: storePath,
-      BB_CC_LITE_COLOR: "0",
-      BB_CC_LITE_AUTO_LEARN: "0"
+      CCVERDICT_HOME: appHome,
+      CCVERDICT_STORE: storePath,
+      CCVERDICT_COLOR: "0",
+      CCVERDICT_AUTO_LEARN: "0"
     });
     try {
       await mkdir(join(homeDir, ".claude", "projects", "private-project"), { recursive: true });
@@ -153,14 +153,14 @@ describe("large transcript performance", () => {
   });
 
   it("keeps statusline fast and private with a large raw-data-heavy transcript", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-statusline-private-perf-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-statusline-private-perf-"));
     const appHome = join(tempDir, "app-home");
     const storePath = join(appHome, "events.json");
     const restoreEnv = setIsolatedEnv({
-      BB_CC_LITE_HOME: appHome,
-      BB_CC_LITE_STORE: storePath,
-      BB_CC_LITE_COLOR: "0",
-      BB_CC_LITE_AUTO_LEARN: "0"
+      CCVERDICT_HOME: appHome,
+      CCVERDICT_STORE: storePath,
+      CCVERDICT_COLOR: "0",
+      CCVERDICT_AUTO_LEARN: "0"
     });
     try {
       const transcriptPath = join(tempDir, "large-private.jsonl");
@@ -169,7 +169,7 @@ describe("large transcript performance", () => {
         type: "assistant",
         message: {
           role: "assistant",
-          content: [{ type: "text", text: "BB_CC_LITE_RAW_PROMPT_SENTINEL" }]
+          content: [{ type: "text", text: "CCVERDICT_RAW_PROMPT_SENTINEL" }]
         }
       });
       const repeat = Math.ceil((10 * 1024 * 1024) / (filler.length + 1));
@@ -182,7 +182,7 @@ describe("large transcript performance", () => {
       const startedAt = performance.now();
       const rendered = await createStatusLine(
         statusInput({
-          session_id: "session-BB_CC_LITE_RAW_SESSION_SENTINEL",
+          session_id: "session-CCVERDICT_RAW_SESSION_SENTINEL",
           transcript_path: transcriptPath,
           terminal_width: 220
         }),
@@ -226,9 +226,9 @@ function privacyFailureTail(): string[] {
             id: `private-fail-${index}`,
             name: "Bash",
             input: {
-              command: "npm test -- BB_CC_LITE_RAW_COMMAND_SENTINEL /tmp/bb-cc-lite/private/worktree/src/secret.ts",
-              file_path: "/tmp/bb-cc-lite/private/worktree/src/secret.ts",
-              query: "BB_CC_LITE_RAW_PROMPT_SENTINEL"
+              command: "npm test -- CCVERDICT_RAW_COMMAND_SENTINEL /tmp/ccverdict/private/worktree/src/secret.ts",
+              file_path: "/tmp/ccverdict/private/worktree/src/secret.ts",
+              query: "CCVERDICT_RAW_PROMPT_SENTINEL"
             }
           }
         ]
@@ -244,7 +244,7 @@ function privacyFailureTail(): string[] {
             type: "tool_result",
             tool_use_id: `private-fail-${index}`,
             is_error: true,
-            content: "BB_CC_LITE_TOOL_OUTPUT_SENTINEL BB_CC_LITE_FILE_CONTENT_SENTINEL"
+            content: "CCVERDICT_TOOL_OUTPUT_SENTINEL CCVERDICT_FILE_CONTENT_SENTINEL"
           }
         ]
       }
@@ -262,7 +262,7 @@ function privacyFailureTail(): string[] {
             id: "private-mcp-fail",
             name: "mcp__privateServer__rawPrivacyTool",
             input: {
-              query: "BB_CC_LITE_RAW_PROMPT_SENTINEL"
+              query: "CCVERDICT_RAW_PROMPT_SENTINEL"
             }
           }
         ]
@@ -278,7 +278,7 @@ function privacyFailureTail(): string[] {
             type: "tool_result",
             tool_use_id: "private-mcp-fail",
             is_error: true,
-            content: "BB_CC_LITE_TOOL_OUTPUT_SENTINEL"
+            content: "CCVERDICT_TOOL_OUTPUT_SENTINEL"
           }
         ]
       }
@@ -290,12 +290,12 @@ function privacyFailureTail(): string[] {
 function expectNoPrivacySentinels(...values: unknown[]): void {
   const serialized = values.map((value) => (typeof value === "string" ? value : JSON.stringify(value))).join("\n");
   for (const sentinel of [
-    "BB_CC_LITE_RAW_PROMPT_SENTINEL",
-    "BB_CC_LITE_TOOL_OUTPUT_SENTINEL",
-    "BB_CC_LITE_FILE_CONTENT_SENTINEL",
-    "/tmp/bb-cc-lite/private/worktree/src/secret.ts",
-    "BB_CC_LITE_RAW_COMMAND_SENTINEL",
-    "BB_CC_LITE_RAW_SESSION_SENTINEL",
+    "CCVERDICT_RAW_PROMPT_SENTINEL",
+    "CCVERDICT_TOOL_OUTPUT_SENTINEL",
+    "CCVERDICT_FILE_CONTENT_SENTINEL",
+    "/tmp/ccverdict/private/worktree/src/secret.ts",
+    "CCVERDICT_RAW_COMMAND_SENTINEL",
+    "CCVERDICT_RAW_SESSION_SENTINEL",
     "mcp__privateServer__rawPrivacyTool"
   ]) {
     expect(serialized).not.toContain(sentinel);
@@ -304,7 +304,7 @@ function expectNoPrivacySentinels(...values: unknown[]): void {
 
 function staleBaseline(): Record<string, unknown> {
   return {
-    schema: "bb-cc-lite.baseline.v1",
+    schema: "ccverdict.baseline.v1",
     version: 1,
     createdAt: "2000-01-01T00:00:00.000Z",
     updatedAt: "2000-01-01T00:00:00.000Z",

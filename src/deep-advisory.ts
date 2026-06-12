@@ -159,7 +159,7 @@ export function formatDeepAdvisoryReport(report: DeepAdvisoryReport, options: Fo
       : report.scope === "all-projects"
         ? `all local project transcripts, newest ${report.recentLimit}`
         : "provided transcript";
-  lines.push("bb deep advisory audit");
+  lines.push("ccverdict deep advisory audit");
   lines.push(`Scope: ${scopeLabel}`);
   lines.push(`Scanned: ${formatCount(report.sessionsScanned, "Claude Code session")}`);
   if (report.unreadableTranscripts > 0) {
@@ -201,7 +201,7 @@ export function assertAdvisoryPrivacy(value: unknown): void {
     return;
   }
   const disallowed = [
-    /BB_CC_LITE_[A-Z0-9_]*SENTINEL/u,
+    /CCVERDICT_[A-Z0-9_]*SENTINEL/u,
     /\bmcp__[\w-]+__[\w-]+\b/u,
     /\bsk-[A-Za-z0-9_-]{10,}\b/u,
     /(?:^|[\s"'])\/(?:Users|home|tmp|var|private)\/[^\s"']+/u,
@@ -573,7 +573,7 @@ function formatCount(count: number, noun: string): string {
 
 function colorizeDeepOutput(value: string): string {
   return value
-    .replace(/^bb deep advisory audit/u, "\u001b[1mbb deep advisory audit\u001b[0m")
+    .replace(/^ccverdict deep advisory audit/u, "\u001b[1mccverdict deep advisory audit\u001b[0m")
     .replace(/\bStop\b/gu, "\u001b[1;31mStop\u001b[0m")
     .replace(/\bCareful\b/gu, "\u001b[33mCareful\u001b[0m")
     .replace(/\bHealthy\b/gu, "\u001b[32mHealthy\u001b[0m");

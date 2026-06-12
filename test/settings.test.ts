@@ -22,7 +22,7 @@ describe("settings install and uninstall", () => {
   beforeEach(async () => {
     workspace = await createTempWorkspace();
     restoreEnv = setIsolatedEnv({
-      BB_CC_LITE_HOME: workspace.appHome
+      CCVERDICT_HOME: workspace.appHome
     });
   });
 
@@ -64,10 +64,10 @@ describe("settings install and uninstall", () => {
       padding: 0
     });
     expect(launcher).toBe(
-      `#!/bin/sh\nexport BB_CC_LITE_HOME=${quoteShell(dirs.appHome)}\nexec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} statusline "$@"\n`
+      `#!/bin/sh\nexport CCVERDICT_HOME=${quoteShell(dirs.appHome)}\nexec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} statusline "$@"\n`
     );
     expect(launcher).not.toContain(cliFilePath);
-    expect(copiedRuntime).toContain("fake bb-cc-lite runtime");
+    expect(copiedRuntime).toContain("fake ccverdict runtime");
   });
 
   it("installs optional safe hooks without enabling prompt-capture hooks", async () => {
@@ -102,7 +102,7 @@ describe("settings install and uninstall", () => {
             {
               type: "command",
               command: hookLauncherPath,
-              args: ["--bb-cc-lite-hook", eventName, "--bb-cc-lite-mode", "observe", "--bb-cc-lite-learn", "1"],
+              args: ["--ccverdict-hook", eventName, "--ccverdict-mode", "observe", "--ccverdict-learn", "1"],
               async: true,
               timeout: 1
             }
@@ -111,7 +111,7 @@ describe("settings install and uninstall", () => {
       ]);
     }
     expect(hookLauncher).toBe(
-      `#!/bin/sh\nexport BB_CC_LITE_HOME=${quoteShell(dirs.appHome)}\nexec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} hook "$@"\n`
+      `#!/bin/sh\nexport CCVERDICT_HOME=${quoteShell(dirs.appHome)}\nexec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} hook "$@"\n`
     );
   });
 
@@ -149,7 +149,7 @@ describe("settings install and uninstall", () => {
     expect(settings.hooks.PreCompact[0].hooks[0].timeout).toBe(1);
     expect(settings.hooks.PostCompact[0].hooks[0].async).toBeUndefined();
     expect(settings.hooks.PostCompact[0].hooks[0].timeout).toBe(2);
-    expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("--bb-cc-lite-mode");
+    expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("--ccverdict-mode");
     expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("coach");
     expect(settings.hooks.PostToolUseFailure[0].hooks[0].async).toBeUndefined();
   });
@@ -218,9 +218,9 @@ describe("settings install and uninstall", () => {
       hooks: Record<string, Array<{ hooks: Array<{ args: string[] }> }>>;
     }>(target.settingsPath);
 
-    expect(statuslineLauncher).toContain("export BB_CC_LITE_AUTO_LEARN=0");
-    expect(hookLauncher).toContain("export BB_CC_LITE_LESSON_MEMORY=0");
-    expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("--bb-cc-lite-learn");
+    expect(statuslineLauncher).toContain("export CCVERDICT_AUTO_LEARN=0");
+    expect(hookLauncher).toContain("export CCVERDICT_LESSON_MEMORY=0");
+    expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("--ccverdict-learn");
     expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("0");
   });
 
@@ -231,7 +231,7 @@ describe("settings install and uninstall", () => {
       cleanupPeriodDays: 7,
       statusLine: {
         type: "command",
-        command: "custom-bb-cc-lite-wrapper"
+        command: "custom-ccverdict-wrapper"
       }
     };
     await writeJson(target.settingsPath, existing);
@@ -256,7 +256,7 @@ describe("settings install and uninstall", () => {
       cleanupPeriodDays: 7,
       statusLine: {
         type: "command",
-        command: "custom-bb-cc-lite-wrapper"
+        command: "custom-ccverdict-wrapper"
       }
     };
     await writeJson(target.settingsPath, existing);
@@ -278,7 +278,7 @@ describe("settings install and uninstall", () => {
     expect(manifest.before).toMatchObject({
       hadStatusLine: true,
       statusLine: {
-        command: "custom-bb-cc-lite-wrapper"
+        command: "custom-ccverdict-wrapper"
       }
     });
     expect(settings.cleanupPeriodDays).toBe(7);
@@ -291,7 +291,7 @@ describe("settings install and uninstall", () => {
     await writeJson(target.settingsPath, {
       statusLine: {
         type: "command",
-        command: "custom-bb-cc-lite-wrapper"
+        command: "custom-ccverdict-wrapper"
       }
     });
 
@@ -307,7 +307,7 @@ describe("settings install and uninstall", () => {
     await expect(pathExists(join(dirs.appHome, "bin", "hook"))).resolves.toBe(true);
   });
 
-  it("reinstall with hooks repairs partial bb hook settings", async () => {
+  it("reinstall with hooks repairs partial ccverdict hook settings", async () => {
     const dirs = mustHaveWorkspace(workspace);
     const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
     const cliFilePath = await createFakeRuntime(dirs.root);
@@ -421,7 +421,7 @@ describe("settings install and uninstall", () => {
     await expect(pathExists(target.settingsPath)).resolves.toBe(false);
   });
 
-  it("semantic uninstall removes bb hooks while preserving unrelated current settings", async () => {
+  it("semantic uninstall removes ccverdict hooks while preserving unrelated current settings", async () => {
     const dirs = mustHaveWorkspace(workspace);
     const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
     const customHooks = {
@@ -431,7 +431,7 @@ describe("settings install and uninstall", () => {
           hooks: [
             {
               type: "command",
-              command: "custom-bb-cc-lite-wrapper-hook"
+              command: "custom-ccverdict-wrapper-hook"
             }
           ]
         }
@@ -472,7 +472,7 @@ describe("settings install and uninstall", () => {
     expect(restored.theme).toBe("dark");
   });
 
-  it("uninstall preserves unrelated hooks added after bb hook install", async () => {
+  it("uninstall preserves unrelated hooks added after ccverdict hook install", async () => {
     const dirs = mustHaveWorkspace(workspace);
     const target = resolveSettingsTarget({ projectDir: dirs.projectDir, homeDir: dirs.homeDir });
     await installStatusLine({
@@ -489,7 +489,7 @@ describe("settings install and uninstall", () => {
       hooks: [
         {
           type: "command",
-          command: "custom-bb-cc-lite-wrapper-hook"
+          command: "custom-ccverdict-wrapper-hook"
         }
       ]
     });
@@ -512,7 +512,7 @@ describe("settings install and uninstall", () => {
             hooks: [
               {
                 type: "command",
-                command: "custom-bb-cc-lite-wrapper-hook"
+                command: "custom-ccverdict-wrapper-hook"
               }
             ]
           }
@@ -610,7 +610,7 @@ async function packageVersion(): Promise<string> {
 async function createFakeRuntime(root: string): Promise<string> {
   const distDir = join(root, `dist-${randomUUID()}`);
   await mkdir(distDir, { recursive: true });
-  await writeFile(join(distDir, "cli.js"), "console.log('fake bb-cc-lite runtime');\n", "utf8");
+  await writeFile(join(distDir, "cli.js"), "console.log('fake ccverdict runtime');\n", "utf8");
   await writeFile(join(distDir, "helper.js"), "export const ok = true;\n", "utf8");
   return join(distDir, "cli.js");
 }

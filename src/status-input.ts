@@ -79,7 +79,7 @@ export function parseStatusLineInput(raw: string): StatusLineInput {
     terminalWidth:
       numberField(root.terminal_width) ??
       numberField(root.terminalWidth) ??
-      numberFromString(process.env.BB_CC_LITE_WIDTH) ??
+      numberFromString(process.env.CCVERDICT_WIDTH) ??
       numberFromString(process.env.COLUMNS)
   };
 }

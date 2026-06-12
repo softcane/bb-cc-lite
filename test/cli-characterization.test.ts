@@ -14,13 +14,13 @@ const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 const tscPath = fileURLToPath(new URL("../node_modules/typescript/bin/tsc", import.meta.url));
 
 const privacySentinels = [
-  "BB_CC_LITE_RAW_PROMPT_SENTINEL",
-  "BB_CC_LITE_TOOL_OUTPUT_SENTINEL",
-  "BB_CC_LITE_API_KEY_SENTINEL",
-  "BB_CC_LITE_FILE_CONTENT_SENTINEL",
-  "/tmp/bb-cc-lite/private/worktree/src/secret.ts",
-  "BB_CC_LITE_RAW_COMMAND_SENTINEL",
-  "BB_CC_LITE_RAW_SESSION_SENTINEL",
+  "CCVERDICT_RAW_PROMPT_SENTINEL",
+  "CCVERDICT_TOOL_OUTPUT_SENTINEL",
+  "CCVERDICT_API_KEY_SENTINEL",
+  "CCVERDICT_FILE_CONTENT_SENTINEL",
+  "/tmp/ccverdict/private/worktree/src/secret.ts",
+  "CCVERDICT_RAW_COMMAND_SENTINEL",
+  "CCVERDICT_RAW_SESSION_SENTINEL",
   "mcp__privateServer__rawPrivacyTool"
 ];
 
@@ -40,7 +40,7 @@ let compiledRoot: string | undefined;
 let cliPath: string | undefined;
 
 beforeAll(async () => {
-  compiledRoot = await mkdtemp(join(tmpdir(), "bb-cc-lite-cli-build-"));
+  compiledRoot = await mkdtemp(join(tmpdir(), "ccverdict-cli-build-"));
   const repoPackage = JSON.parse(await readFile(join(repoRoot, "package.json"), "utf8")) as { version?: string };
   await writeFile(
     join(compiledRoot, "package.json"),
@@ -75,17 +75,17 @@ describe("CLI behavior characterization", () => {
     const invalidCleanup = await runCli(["audit", "--cleanup", "--transcript", join(tmpdir(), "private.jsonl")]);
 
     expect(version.exitCode).toBe(0);
-    expect(version.stdout.trim()).toBe(`bb-cc-lite ${repoPackage.version}`);
+    expect(version.stdout.trim()).toBe(`ccverdict ${repoPackage.version}`);
     expect(versionCommand.exitCode).toBe(0);
-    expect(versionCommand.stdout.trim()).toBe(`bb-cc-lite ${repoPackage.version}`);
+    expect(versionCommand.stdout.trim()).toBe(`ccverdict ${repoPackage.version}`);
     expect(improveHelp.exitCode).toBe(0);
     expect(improveHelp.stderr).toBe("");
-    expect(improveHelp.stdout).toContain("bb-cc-lite improve");
-    expect(improveHelp.stdout).toContain("folded into: bb-cc-lite audit");
-    expect(helpImprove.stdout).toContain("bb-cc-lite improve");
+    expect(improveHelp.stdout).toContain("ccverdict improve");
+    expect(improveHelp.stdout).toContain("folded into: ccverdict audit");
+    expect(helpImprove.stdout).toContain("ccverdict improve");
     expect(learnHelp.exitCode).toBe(0);
-    expect(learnHelp.stdout).toContain("bb-cc-lite learn");
-    expect(auditShortHelp.stdout).toContain("bb-cc-lite audit");
+    expect(learnHelp.stdout).toContain("ccverdict learn");
+    expect(auditShortHelp.stdout).toContain("ccverdict audit");
     expect(invalidCleanup.exitCode).toBe(1);
     expect(invalidCleanup.stderr).toContain("--cleanup cannot be combined with --transcript");
   });
@@ -98,7 +98,7 @@ describe("CLI behavior characterization", () => {
     expect(welcome.stderr).toBe("");
     expect(welcome.stdout).toContain("a behavioral gauge for Claude Code");
     expect(welcome.stdout).toContain("retrying tests · 3 fails, no fix between runs");
-    expect(welcome.stdout).toContain("npx bb-cc-lite install --scope local");
+    expect(welcome.stdout).toContain("npx ccverdict install --scope local");
     expect(demo.exitCode).toBe(0);
     expect(demo.stderr).toBe("");
     expect(demo.stdout).toContain("Dot legend:");
@@ -122,11 +122,11 @@ describe("CLI behavior characterization", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
-      expect(result.stdout).toContain("Installed bb-cc-lite statusLine");
+      expect(result.stdout).toContain("Installed ccverdict statusLine");
       expect(result.stdout).toContain("Personal baseline skipped (--no-learn).");
-      expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("--bb-cc-lite-learn");
+      expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("--ccverdict-learn");
       expect(settings.hooks.SessionStart[0].hooks[0].args).toContain("0");
-      expect(launcher).toContain("BB_CC_LITE_AUTO_LEARN=0");
+      expect(launcher).toContain("CCVERDICT_AUTO_LEARN=0");
       await expect(pathExists(join(workspace.appHome, "baseline.json"))).resolves.toBe(false);
     } finally {
       await removeTempWorkspace(workspace);
@@ -144,7 +144,7 @@ describe("CLI behavior characterization", () => {
       };
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Installed bb-cc-lite statusLine and coach hooks");
+      expect(result.stdout).toContain("Installed ccverdict statusLine and coach hooks");
       expect(Object.keys(settings.hooks).sort()).toEqual([
         "PostCompact",
         "PostToolBatch",
@@ -224,7 +224,7 @@ describe("CLI behavior characterization", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
-      expect(result.stdout).toContain("Installed bb-cc-lite statusLine");
+      expect(result.stdout).toContain("Installed ccverdict statusLine");
       expect(result.stdout).toContain("Baseline calibrated from 1 past session");
       expect(result.stdout).not.toContain("It reads local Claude JSONL once.");
       expect(result.stdout).not.toContain("No prompts, assistant text");
@@ -246,7 +246,7 @@ describe("CLI behavior characterization", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
-      expect(result.stdout).toContain("Installed bb-cc-lite statusLine");
+      expect(result.stdout).toContain("Installed ccverdict statusLine");
       expect(result.stdout).toContain("No local session history yet");
 
       const baselineText = await readFile(join(workspace.appHome, "baseline.json"), "utf8");
@@ -287,11 +287,11 @@ describe("CLI behavior characterization", () => {
     expect(learn.exitCode).toBe(0);
     expect(learn.stdout).toContain("deprecated");
     expect(why.exitCode).toBe(0);
-    expect(why.stdout).toContain("folded into: bb-cc-lite audit");
+    expect(why.stdout).toContain("folded into: ccverdict audit");
     expect(improve.exitCode).toBe(0);
-    expect(improve.stdout).toContain("folded into: bb-cc-lite audit");
+    expect(improve.stdout).toContain("folded into: ccverdict audit");
     expect(unlearn.exitCode).toBe(0);
-    expect(unlearn.stdout).toContain("folded into: bb-cc-lite uninstall --purge");
+    expect(unlearn.stdout).toContain("folded into: ccverdict uninstall --purge");
     for (const result of [learn, why, improve, unlearn]) {
       expect(result.stdout.trim().split("\n")).toHaveLength(1);
     }
@@ -316,7 +316,7 @@ describe("CLI behavior characterization", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain("[1] Current session");
-      expect(result.stdout).toContain("No bb history for this project.");
+      expect(result.stdout).toContain("No ccverdict history for this project.");
       expect(result.stdout).toContain("[2] Recent patterns");
       expect(result.stdout).toContain("same test failed 3x without a code change");
       expect(result.stdout).toContain("Report confidence: high");
@@ -330,7 +330,7 @@ describe("CLI behavior characterization", () => {
   it("audit --all-projects scans wider local history without project names", async () => {
     const workspace = await createTempWorkspace();
     try {
-      const privateProjectName = "BB_CC_LITE_RAW_PROJECT_NAME_SENTINEL";
+      const privateProjectName = "CCVERDICT_RAW_PROJECT_NAME_SENTINEL";
       await writeTranscript(
         join(workspace.homeDir, ".claude", "projects", privateProjectName, "session.jsonl"),
         repeatedFailedTestTranscript(3)
@@ -425,7 +425,7 @@ describe("CLI behavior characterization", () => {
       expect(result.stdout).toContain("Proposed CLAUDE.md diff:");
       expect(result.stdout).toContain("Applied:");
       expect(claudeText).toContain("Keep this user line.");
-      expect(claudeText).toContain("<!-- bb-cc-lite audit:start -->");
+      expect(claudeText).toContain("<!-- ccverdict audit:start -->");
       expect(claudeText).toContain("- Inspect the first failure before rerunning a failed check.");
       expectNoPrivacySentinels(result.stdout, claudeText);
     } finally {
@@ -489,7 +489,7 @@ describe("CLI behavior characterization", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
-      expect(result.stdout).toContain("Replaced existing Claude statusLine with bb-cc-lite");
+      expect(result.stdout).toContain("Replaced existing Claude statusLine with ccverdict");
       expect(result.stdout).toContain("Previous settings were backed up.");
       expect(result.stdout).toContain("Baseline calibrated from 1 past session");
       const settings = JSON.parse(await readFile(settingsPath, "utf8")) as { statusLine?: { command?: string } };
@@ -510,9 +510,9 @@ describe("CLI behavior characterization", () => {
       const projectBaselineFile = projectBaselinePath({ appHomePath: workspace.appHome, projectKey });
       const lessonFile = lessonMemoryPath({ appHomePath: workspace.appHome, projectKey });
       const storeFile = join(workspace.appHome, "events.json");
-      await writeFile(baselinePath, '{"schema":"bb-cc-lite.baseline.v1"}\n', "utf8");
-      await writeJson(projectBaselineFile, { schema: "bb-cc-lite.baseline.v1" });
-      await writeJson(lessonFile, { schema: "bb-cc-lite.lesson-memory.v1" });
+      await writeFile(baselinePath, '{"schema":"ccverdict.baseline.v1"}\n', "utf8");
+      await writeJson(projectBaselineFile, { schema: "ccverdict.baseline.v1" });
+      await writeJson(lessonFile, { schema: "ccverdict.lesson-memory.v1" });
       await writeJson(storeFile, { version: 2, updatedAt: "2026-06-10T00:00:00.000Z", decisions: [], hookEvents: [], feedbackOutcomes: [] });
 
       const result = await runCli(["uninstall", "--purge", "--project", workspace.projectDir, "--home", workspace.homeDir], {
@@ -635,7 +635,7 @@ describe("CLI behavior characterization", () => {
         light: "green"
       });
 
-      const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
+      const storeText = await readFile(env.CCVERDICT_STORE as string, "utf8");
       expectNoPrivacySentinels(statusline.stdout, audit.stdout, storeText);
     } finally {
       await removeTempWorkspace(workspace);
@@ -663,7 +663,7 @@ describe("CLI behavior characterization", () => {
       expect(statusline.stderr).toBe("");
       expect(statusline.stdout).toContain("●");
       expect(statusline.stdout).toContain("exploring");
-      expectNoPrivacySentinels(statusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+      expectNoPrivacySentinels(statusline.stdout, await readFile(env.CCVERDICT_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -718,7 +718,7 @@ describe("CLI behavior characterization", () => {
       expect(statusline.stdout).not.toContain("cost is above");
       expect(statusline.stdout).not.toContain("session ran");
       expect(statusline.stdout).not.toContain(workspace.projectDir);
-      expectNoPrivacySentinels(statusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+      expectNoPrivacySentinels(statusline.stdout, await readFile(env.CCVERDICT_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -745,7 +745,7 @@ describe("CLI behavior characterization", () => {
       expect(statusline.stderr).toBe("");
       expect(statusline.stdout).toContain("●");
       expect(statusline.stdout).not.toContain("test loop");
-      expectNoPrivacySentinels(statusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+      expectNoPrivacySentinels(statusline.stdout, await readFile(env.CCVERDICT_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -756,8 +756,8 @@ describe("CLI behavior characterization", () => {
     try {
       const env = {
         ...cliEnv(workspace),
-        BB_CC_LITE_BUDGET_COST_USD: "0.10",
-        BB_CC_LITE_BUDGET_DURATION_MS: "10000"
+        CCVERDICT_BUDGET_COST_USD: "0.10",
+        CCVERDICT_BUDGET_DURATION_MS: "10000"
       };
 
       const costProject = workspace.projectDir;
@@ -798,7 +798,7 @@ describe("CLI behavior characterization", () => {
       // the light green. The combined budget+failure red detector is the only place budget matters.
       expect(JSON.parse(costAudit.stdout).session).toMatchObject({ light: "green" });
       expect(JSON.parse(durationAudit.stdout).session).toMatchObject({ light: "green" });
-      expectNoPrivacySentinels(costStatusline.stdout, durationStatusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+      expectNoPrivacySentinels(costStatusline.stdout, durationStatusline.stdout, await readFile(env.CCVERDICT_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -989,7 +989,7 @@ describe("CLI behavior characterization", () => {
       expect(sparse.stdout).toContain("◐");
       expect(sparse.stdout).toContain("tests failed twice");
       expect(sparse.stdout).not.toContain("usually passes");
-      expectNoPrivacySentinels(corrupt.stdout, sparse.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+      expectNoPrivacySentinels(corrupt.stdout, sparse.stdout, await readFile(env.CCVERDICT_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -1021,7 +1021,7 @@ describe("CLI behavior characterization", () => {
       const audit = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir, "--json"], { env });
       const parsed = JSON.parse(audit.stdout) as { session: { light: string } };
       expect(parsed.session).toMatchObject({ light: "blue" });
-      expectNoPrivacySentinels(statusline.stdout, audit.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+      expectNoPrivacySentinels(statusline.stdout, audit.stdout, await readFile(env.CCVERDICT_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -1054,7 +1054,7 @@ describe("CLI behavior characterization", () => {
       const audit = await runCli(["audit", "--project", workspace.projectDir, "--home", workspace.homeDir, "--json"], { env });
       const parsed = JSON.parse(audit.stdout) as { session: { hasHistory: boolean; light: string } };
       expect(parsed.session).toMatchObject({ hasHistory: true, light: "green" });
-      expectNoPrivacySentinels(statusline.stdout, audit.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+      expectNoPrivacySentinels(statusline.stdout, audit.stdout, await readFile(env.CCVERDICT_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -1065,7 +1065,7 @@ describe("CLI behavior characterization", () => {
     try {
       const env = cliEnv(workspace);
       const sessionId = `session-feedback-${privacySentinels[6]}`;
-      const editHook = await runCli(["hook", "--bb-cc-lite-hook", "PostToolUse"], {
+      const editHook = await runCli(["hook", "--ccverdict-hook", "PostToolUse"], {
         env,
         input: hookInput({
           session_id: sessionId,
@@ -1078,7 +1078,7 @@ describe("CLI behavior characterization", () => {
           }
         })
       });
-      const validationHook = await runCli(["hook", "--bb-cc-lite-hook", "PostToolUse"], {
+      const validationHook = await runCli(["hook", "--ccverdict-hook", "PostToolUse"], {
         env,
         input: hookInput({
           session_id: sessionId,
@@ -1110,7 +1110,7 @@ describe("CLI behavior characterization", () => {
       expect(statusline.exitCode).toBe(0);
       expect(statusline.stdout).toContain("●");
       expect(statusline.stdout).toContain("testing");
-      expect(audit.stdout).toContain("Recent bb loop:");
+      expect(audit.stdout).toContain("Recent ccverdict loop:");
       expect(audit.stdout).toContain("Coach feedback: edits needed validation.");
       expect(audit.stdout).toContain("Claude ran tests.");
       expect(audit.stdout).toContain("Tests passed.");
@@ -1122,7 +1122,7 @@ describe("CLI behavior characterization", () => {
         })
       ]);
       expect(auditJson.stdout).not.toContain("\u001b[");
-      expectNoPrivacySentinels(editHook.stdout, validationHook.stdout, statusline.stdout, audit.stdout, auditJson.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+      expectNoPrivacySentinels(editHook.stdout, validationHook.stdout, statusline.stdout, audit.stdout, auditJson.stdout, await readFile(env.CCVERDICT_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -1157,7 +1157,7 @@ describe("CLI behavior characterization", () => {
       const parsed = JSON.parse(audit.stdout) as { session: { light: string; findings: Array<{ category: string }> } };
       expect(parsed.session.light).toBe("blue");
       expect(parsed.session.findings.map((finding) => finding.category)).toContain("edit_drift");
-      expectNoPrivacySentinels(statusline.stdout, audit.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+      expectNoPrivacySentinels(statusline.stdout, audit.stdout, await readFile(env.CCVERDICT_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -1183,7 +1183,7 @@ describe("CLI behavior characterization", () => {
       expect(visibleLength(rendered)).toBeLessThanOrEqual(55);
       expect(rendered).toContain("●");
       expect(rendered).toContain("82%");
-      expectNoPrivacySentinels(rendered, await readFile(cliEnv(workspace).BB_CC_LITE_STORE as string, "utf8"));
+      expectNoPrivacySentinels(rendered, await readFile(cliEnv(workspace).CCVERDICT_STORE as string, "utf8"));
     } finally {
       await removeTempWorkspace(workspace);
     }
@@ -1235,7 +1235,7 @@ describe("CLI behavior characterization", () => {
       expect(stopSession.light).toBe("red");
       expect(stopSession.findings[0]).toMatchObject({ category: "blind_retry_loop", evidence: "3 fails, no fix between runs" });
 
-      const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
+      const storeText = await readFile(env.CCVERDICT_STORE as string, "utf8");
       expectNoPrivacySentinels(stop.stdout, latest.stdout, auditLatest.stdout, auditStop.stdout, storeText);
     } finally {
       await removeTempWorkspace(workspace);
@@ -1271,7 +1271,7 @@ describe("CLI behavior characterization", () => {
       expect(JSON.parse(auditJson.stdout).session).toMatchObject({ light: "red" });
       expect(JSON.parse(auditJson.stdout).session.findings[0]).toMatchObject({ category: "blind_retry_loop" });
 
-      const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
+      const storeText = await readFile(env.CCVERDICT_STORE as string, "utf8");
       for (const output of [statusline.stdout, audit.stdout, auditJson.stdout, storeText]) {
         expect(output).not.toContain(rawMcpName);
         expect(output).not.toContain("mcp__");
@@ -1323,7 +1323,7 @@ describe("CLI behavior characterization", () => {
       // Tool-result token jumps are not a gauge detector (grill F2): the session stays green.
       expect(JSON.parse(auditJson.stdout).session).toMatchObject({ light: "green" });
 
-      const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
+      const storeText = await readFile(env.CCVERDICT_STORE as string, "utf8");
       expectNoPrivacySentinels(wide.stdout, narrow.stdout, audit.stdout, auditJson.stdout, storeText);
       for (const rawPath of [workspace.root, workspace.projectDir, workspace.homeDir, workspace.appHome, transcriptPath]) {
         expect([wide.stdout, narrow.stdout, audit.stdout, auditJson.stdout, storeText].join("\n")).not.toContain(rawPath);
@@ -1338,11 +1338,11 @@ describe("CLI behavior characterization", () => {
     try {
       const env = {
         ...cliEnv(workspace),
-        BB_CC_LITE_PRICING_CACHE: join(workspace.appHome, "pricing.json")
+        CCVERDICT_PRICING_CACHE: join(workspace.appHome, "pricing.json")
       };
       const refreshEnv = {
         ...cliEnv(workspace, { autoLearn: true }),
-        BB_CC_LITE_PRICING_CACHE: join(workspace.appHome, "pricing.json")
+        CCVERDICT_PRICING_CACHE: join(workspace.appHome, "pricing.json")
       };
       const rawSessionId = `session-${privacySentinels[6]}`;
       const transcriptPath = join(workspace.root, "transcripts", "privacy-surfaces.jsonl");
@@ -1394,7 +1394,7 @@ describe("CLI behavior characterization", () => {
       expect(doctor.stdout).toContain("derived aggregate data only");
       expect(doctor.stdout).toContain("baseline-replay:");
 
-      const storeText = await readFile(env.BB_CC_LITE_STORE as string, "utf8");
+      const storeText = await readFile(env.CCVERDICT_STORE as string, "utf8");
       const baselineText = await readFile(join(workspace.appHome, "baseline.json"), "utf8");
       const serializedSurfaces = [
         statusline.stdout,
@@ -1535,7 +1535,7 @@ describe("CLI behavior characterization", () => {
         name: "missing transcript",
         input: {
           session_id: "fixture-missing",
-          transcript_path: "/tmp/bb-cc-lite/missing/transcript.jsonl",
+          transcript_path: "/tmp/ccverdict/missing/transcript.jsonl",
           terminal_width: 180
         },
         expected: ["○", "no signal", "transcript unavailable"]
@@ -1564,7 +1564,7 @@ describe("CLI behavior characterization", () => {
         for (const expected of testCase.expected) {
           expect(statusline.stdout, testCase.name).toContain(expected);
         }
-        expectNoPrivacySentinels(statusline.stdout, await readFile(env.BB_CC_LITE_STORE as string, "utf8"));
+        expectNoPrivacySentinels(statusline.stdout, await readFile(env.CCVERDICT_STORE as string, "utf8"));
       } finally {
         await removeTempWorkspace(workspace);
       }
@@ -1576,14 +1576,14 @@ function cliEnv(workspace: TempWorkspace, options: { autoLearn?: boolean } = {})
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: workspace.homeDir,
-    BB_CC_LITE_COLOR: "0",
-    BB_CC_LITE_HOME: workspace.appHome,
-    BB_CC_LITE_STORE: join(workspace.appHome, "events.json")
+    CCVERDICT_COLOR: "0",
+    CCVERDICT_HOME: workspace.appHome,
+    CCVERDICT_STORE: join(workspace.appHome, "events.json")
   };
   if (options.autoLearn) {
-    delete env.BB_CC_LITE_AUTO_LEARN;
+    delete env.CCVERDICT_AUTO_LEARN;
   } else {
-    env.BB_CC_LITE_AUTO_LEARN = "0";
+    env.CCVERDICT_AUTO_LEARN = "0";
   }
   return env;
 }
@@ -2121,7 +2121,7 @@ function readHeavyTranscript(): string[] {
 
 function readHeavyBaseline(): Record<string, unknown> {
   return {
-    schema: "bb-cc-lite.baseline.v1",
+    schema: "ccverdict.baseline.v1",
     version: 1,
     createdAt: "2026-05-19T00:00:00.000Z",
     updatedAt: "2026-05-19T00:00:00.000Z",

@@ -109,7 +109,7 @@ describe("store and pricing", () => {
   });
 
   it("writes event stores with private file permissions", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-store-mode-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-store-mode-"));
     try {
       const storePath = join(tempDir, "events.json");
       await recordDecision(gaugeDecision(input(), transcript()), storePath);
@@ -121,7 +121,7 @@ describe("store and pricing", () => {
   });
 
   it("keeps the why-store free of raw prompt and tool-output sentinels", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-store-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-store-"));
     try {
       const storePath = join(tempDir, "events.json");
       const rawPromptSentinel = "RAW_PROMPT_SENTINEL_DO_NOT_STORE";
@@ -160,7 +160,7 @@ describe("store and pricing", () => {
   });
 
   it("persists cache efficiency regression decisions without raw prompt, output, file content, paths, or session ids", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-store-cache-regression-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-store-cache-regression-"));
     try {
       const storePath = join(tempDir, "events.json");
       const rawPromptSentinel = "RAW_PROMPT_SENTINEL_DO_NOT_STORE";
@@ -208,10 +208,10 @@ describe("store and pricing", () => {
   });
 
   it("persists redundant-read decisions without raw full file paths", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-store-redundant-read-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-store-redundant-read-"));
     try {
       const storePath = join(tempDir, "events.json");
-      const rawPath = "/tmp/bb-cc-lite/private/worktree/src/secret.ts";
+      const rawPath = "/tmp/ccverdict/private/worktree/src/secret.ts";
       const decision = gaugeDecision(
         input({ sessionId: "session-alpha" }),
         transcript({
@@ -237,7 +237,7 @@ describe("store and pricing", () => {
   });
 
   it("drops malformed legacy decisions with raw-data fields before why can print them", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-store-legacy-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-store-legacy-"));
     try {
       const storePath = join(tempDir, "events.json");
       const rawPromptSentinel = "RAW_PROMPT_SENTINEL_DO_NOT_PRINT";
@@ -283,7 +283,7 @@ describe("store and pricing", () => {
   });
 
   it("drops legacy hook events that contain raw MCP tool names", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-store-mcp-legacy-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-store-mcp-legacy-"));
     try {
       const storePath = join(tempDir, "events.json");
       const rawMcpName = "mcp__privateServer__failingLookup";

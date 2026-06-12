@@ -3,15 +3,15 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const APP_DIR_NAME = "bb-cc-lite";
+export const APP_DIR_NAME = "ccverdict";
 export const PROJECT_BASELINE_DIR_NAME = "project-baselines";
 
 export function appHome(homeDir = homedir()): string {
-  return process.env.BB_CC_LITE_HOME || join(homeDir, ".claude", APP_DIR_NAME);
+  return process.env.CCVERDICT_HOME || join(homeDir, ".claude", APP_DIR_NAME);
 }
 
 export function eventStorePath(): string {
-  return process.env.BB_CC_LITE_STORE || join(appHome(), "events.json");
+  return process.env.CCVERDICT_STORE || join(appHome(), "events.json");
 }
 
 export function baselinePath(homeDir?: string): string {
@@ -34,7 +34,7 @@ export function backupDir(homeDir?: string): string {
 }
 
 export function pricingCachePath(): string {
-  return process.env.BB_CC_LITE_PRICING_CACHE || join(appHome(), "litellm-pricing.json");
+  return process.env.CCVERDICT_PRICING_CACHE || join(appHome(), "litellm-pricing.json");
 }
 
 export function cliPath(): string {

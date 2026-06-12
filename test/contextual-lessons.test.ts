@@ -8,7 +8,7 @@ import { buildRepoProfile, emptyRepoProfile } from "../src/repo-profile.js";
 let tempDir: string;
 
 beforeEach(async () => {
-  tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-lessons-"));
+  tempDir = await mkdtemp(join(tmpdir(), "ccverdict-lessons-"));
 });
 
 afterEach(async () => {
@@ -41,12 +41,12 @@ describe("repo profile", () => {
     );
   });
 
-  it("profiles safe .bb-cc-lite.json validation commands before package scripts", async () => {
+  it("profiles safe .ccverdict.json validation commands before package scripts", async () => {
     const projectDir = join(tempDir, "config");
     await mkdir(projectDir, { recursive: true });
     await writePackage(projectDir, { test: "vitest run", typecheck: "tsc --noEmit" });
     await writeFile(
-      join(projectDir, ".bb-cc-lite.json"),
+      join(projectDir, ".ccverdict.json"),
       `${JSON.stringify({ validationCommands: { tests: ["make test"], typecheck: ["make typecheck"] } })}\n`,
       "utf8"
     );
@@ -58,7 +58,7 @@ describe("repo profile", () => {
       evidence: { unchecked_edits: { category: "unchecked_edits", seen: 3, fileHints: [] } }
     })[0];
 
-    expect(profile.contextSources).toContain(".bb-cc-lite.json validation commands");
+    expect(profile.contextSources).toContain(".ccverdict.json validation commands");
     expect(candidate?.text).toContain("`make test`");
     expect(candidate?.text).toContain("`make typecheck`");
   });
@@ -119,8 +119,8 @@ describe("contextual lesson planner", () => {
     await writePackage(projectDir, { test: "vitest run" });
     await writeAgents(projectDir);
     await writeFile(
-      join(projectDir, ".bb-cc-lite.json"),
-      `${JSON.stringify({ validationCommands: { tests: ["BB_CC_LITE_RAW_COMMAND_SENTINEL --secret"] } })}\n`,
+      join(projectDir, ".ccverdict.json"),
+      `${JSON.stringify({ validationCommands: { tests: ["CCVERDICT_RAW_COMMAND_SENTINEL --secret"] } })}\n`,
       "utf8"
     );
     const profile = await buildRepoProfile(projectDir);
@@ -132,14 +132,14 @@ describe("contextual lesson planner", () => {
         validation_retry: {
           category: "validation_retry",
           seen: 3,
-          fileHints: ["/tmp/bb-cc-lite/private/worktree/src/secret.ts", "audit-report.ts"]
+          fileHints: ["/tmp/ccverdict/private/worktree/src/secret.ts", "audit-report.ts"]
         }
       }
     })[0];
 
     expect(candidate?.text).toContain("`npm test -- test/audit-report.test.ts test/instruction-correlator.test.ts`");
-    expect(candidate?.text).not.toContain("BB_CC_LITE_RAW_COMMAND_SENTINEL");
-    expect(candidate?.text).not.toContain("/tmp/bb-cc-lite/private/worktree");
+    expect(candidate?.text).not.toContain("CCVERDICT_RAW_COMMAND_SENTINEL");
+    expect(candidate?.text).not.toContain("/tmp/ccverdict/private/worktree");
     expect(candidate?.text).not.toContain("secret.ts");
   });
 });

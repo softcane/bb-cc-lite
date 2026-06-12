@@ -3,13 +3,13 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 // Marked CLAUDE.md block machinery. New writes use audit markers; cleanup still recognizes the
-// retired improve markers. bb only owns text between known markers.
+// retired improve markers. ccverdict only owns text between known markers.
 
-export const BLOCK_START = "<!-- bb-cc-lite audit:start -->";
-export const BLOCK_END = "<!-- bb-cc-lite audit:end -->";
-export const LEGACY_BLOCK_START = "<!-- bb-cc-lite improve:start -->";
-export const LEGACY_BLOCK_END = "<!-- bb-cc-lite improve:end -->";
-export const BLOCK_HEADING = "## bb-cc-lite lessons";
+export const BLOCK_START = "<!-- ccverdict audit:start -->";
+export const BLOCK_END = "<!-- ccverdict audit:end -->";
+export const LEGACY_BLOCK_START = "<!-- ccverdict improve:start -->";
+export const LEGACY_BLOCK_END = "<!-- ccverdict improve:end -->";
+export const BLOCK_HEADING = "## ccverdict lessons";
 
 export type BlockAction = "created" | "updated" | "removed" | "unchanged";
 
@@ -153,7 +153,7 @@ function skipOneNewline(text: string, index: number): number {
 }
 
 export async function backupInstructionFile(path: string, text: string, now: Date): Promise<string> {
-  const backupPath = `${path}.bb-cc-lite-backup-${now.toISOString().replaceAll(/[:.]/gu, "-")}`;
+  const backupPath = `${path}.ccverdict-backup-${now.toISOString().replaceAll(/[:.]/gu, "-")}`;
   await mkdir(dirname(path), { recursive: true });
   await writeFile(backupPath, text, "utf8");
   return backupPath;

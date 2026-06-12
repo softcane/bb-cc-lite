@@ -4,7 +4,7 @@ import type { Finding, Gauge, GaugeLight } from "./types.js";
 
 // Gauge renderer (PRD-01, branch C). Grammar: <dot> <verb> · <evidence> · <files> · <ctx> · <cost>.
 // Three width tiers; the dot survives at every width. ANSI color on the dot only, with a distinct
-// shape per state so the gauge reads correctly under NO_COLOR / BB_CC_LITE_COLOR=0.
+// shape per state so the gauge reads correctly under NO_COLOR / CCVERDICT_COLOR=0.
 
 const DEFAULT_WIDTH = 120;
 const SEP = " · ";
@@ -159,7 +159,7 @@ function dot(light: GaugeLight): string {
 }
 
 // Ctx 80-91% highlights the segment (grill B5) without touching the dot. Color emphasis when color
-// is on; a distinct trailing "!" marker under NO_COLOR / BB_CC_LITE_COLOR=0 so the early warning is
+// is on; a distinct trailing "!" marker under NO_COLOR / CCVERDICT_COLOR=0 so the early warning is
 // never color-only information.
 function highlight(text: string): string {
   return colorEnabled() ? `${HIGHLIGHT}${text}${RESET}` : `${text}!`;
@@ -170,7 +170,7 @@ function colorize(value: string, color: string): string {
 }
 
 function colorEnabled(): boolean {
-  return !process.env.NO_COLOR && process.env.BB_CC_LITE_COLOR !== "0";
+  return !process.env.NO_COLOR && process.env.CCVERDICT_COLOR !== "0";
 }
 
 function visibleLength(value: string): number {

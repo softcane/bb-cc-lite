@@ -145,7 +145,7 @@ function commandPlan(profile: RepoProfile, workArea: Pick<WorkAreaProfile, "test
 }
 
 function focusedValidation(profile: RepoProfile, workArea: Pick<WorkAreaProfile, "testFiles">): string | undefined {
-  const configuredTest = firstCommand(profile.validationCommands, "tests", "bb-config");
+  const configuredTest = firstCommand(profile.validationCommands, "tests", "ccverdict-config");
   if (configuredTest) {
     return configuredTest.command;
   }
@@ -163,7 +163,7 @@ function focusedValidation(profile: RepoProfile, workArea: Pick<WorkAreaProfile,
 function broadValidation(profile: RepoProfile): string[] {
   const commands: string[] = [];
   for (const category of ["typecheck", "lint", "tests", "build"] as const) {
-    const configured = firstCommand(profile.validationCommands, category, "bb-config");
+    const configured = firstCommand(profile.validationCommands, category, "ccverdict-config");
     const packageScript = firstCommand(profile.validationCommands, category, "package-script");
     const command = configured?.command ?? packageScript?.command;
     if (command) {

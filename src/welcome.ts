@@ -29,7 +29,7 @@ export const DOT_LEGEND: ReadonlyArray<{ light: GaugeLight; label: string; meani
   { light: "green", label: "progressing", meaning: "behavior looks healthy" },
   { light: "blue", label: "drifting", meaning: "check the session when you have a moment" },
   { light: "red", label: "intervene", meaning: "retry loop, repeated failure, or critical context pressure" },
-  { light: "gray", label: "no signal", meaning: "bb cannot read the evidence" }
+  { light: "gray", label: "no signal", meaning: "ccverdict cannot read the evidence" }
 ];
 
 interface DemoState {
@@ -110,7 +110,7 @@ function demoStates(): DemoState[] {
           { category: "no-signal", severity: "info", confidence: "high", evidence: "transcript unreadable" }
         ]
       }),
-      caption: "bb cannot see the evidence right now"
+      caption: "ccverdict cannot see the evidence right now"
     }
   ];
 }
@@ -122,19 +122,19 @@ export interface ScreenOptions {
 export function renderWelcome(version: string, options: ScreenOptions): string {
   const c = palette(options.color);
   const lines: string[] = [];
-  lines.push(`${c.bold(`bb-cc-lite ${version}`)} — a behavioral gauge for Claude Code`);
+  lines.push(`${c.bold(`ccverdict ${version}`)} — a behavioral gauge for Claude Code`);
   lines.push("");
   lines.push("Most statuslines show facts: model, branch, tokens.");
-  lines.push("bb watches how the agent behaves and shows a verdict:");
+  lines.push("ccverdict watches how the agent behaves and shows a verdict:");
   lines.push("");
   lines.push(...demoLines(options, "  "));
   lines.push("");
   lines.push(c.bold("Get started:"));
   lines.push(...commandList(c, [
-    ["npx bb-cc-lite install --scope local", "set up the statusline for this repo"],
-    ["npx bb-cc-lite audit --project .", "try it on your history first — installs nothing"],
-    ["npx bb-cc-lite demo", "replay these example states with explanations"],
-    ["npx bb-cc-lite help", "full usage"]
+    ["npx ccverdict install --scope local", "set up the statusline for this repo"],
+    ["npx ccverdict audit --project .", "try it on your history first — installs nothing"],
+    ["npx ccverdict demo", "replay these example states with explanations"],
+    ["npx ccverdict help", "full usage"]
   ]));
   return lines.join("\n");
 }
@@ -142,7 +142,7 @@ export function renderWelcome(version: string, options: ScreenOptions): string {
 export function renderDemo(options: ScreenOptions): string {
   const c = palette(options.color);
   const lines: string[] = [];
-  lines.push(c.bold("bb-cc-lite demo — the states the gauge moves through"));
+  lines.push(c.bold("ccverdict demo — the states the gauge moves through"));
   lines.push("");
   for (const state of demoStates()) {
     lines.push(`  ${renderDemoGauge(state.gauge, options)}`);
@@ -164,13 +164,13 @@ export interface InstallBannerOptions extends ScreenOptions {
 export function renderInstallBanner(options: InstallBannerOptions): string {
   const c = palette(options.color);
   const modeLine: Record<InstallBannerOptions["mode"], string> = {
-    observe: "Observe mode: bb stays silent toward Claude — gauge and local history only.",
-    coach: "Coach mode: when behavior drifts, bb sends Claude a short corrective note.",
-    guard: "Guard mode: coach notes, plus bb denies high-confidence blind validation retries."
+    observe: "Observe mode: ccverdict stays silent toward Claude — gauge and local history only.",
+    coach: "Coach mode: when behavior drifts, ccverdict sends Claude a short corrective note.",
+    guard: "Guard mode: coach notes, plus ccverdict denies high-confidence blind validation retries."
   };
   const lines: string[] = [];
   lines.push("");
-  lines.push(c.bold(`${check(options)} bb-cc-lite is watching this project (${options.mode} mode)`));
+  lines.push(c.bold(`${check(options)} ccverdict is watching this project (${options.mode} mode)`));
   if (options.baselineLine) {
     lines.push(`  ${options.baselineLine}`);
   }
@@ -184,7 +184,7 @@ export function renderInstallBanner(options: InstallBannerOptions): string {
   lines.push(`  ${modeLine[options.mode]}`);
   lines.push("");
   lines.push(`  ${c.bold("Next:")} restart Claude Code in this project — the gauge appears at the bottom.`);
-  lines.push(`  ${c.bold("Try:")}  npx bb-cc-lite audit --project .   ${c.dim("(what bb would have flagged already)")}`);
+  lines.push(`  ${c.bold("Try:")}  npx ccverdict audit --project .   ${c.dim("(what ccverdict would have flagged already)")}`);
   return lines.join("\n");
 }
 
@@ -219,15 +219,15 @@ function renderDemoGauge(gauge: Gauge, options: ScreenOptions): string {
   if (options.color) {
     return renderGauge(gauge, 120);
   }
-  const previous = process.env.BB_CC_LITE_COLOR;
-  process.env.BB_CC_LITE_COLOR = "0";
+  const previous = process.env.CCVERDICT_COLOR;
+  process.env.CCVERDICT_COLOR = "0";
   try {
     return renderGauge(gauge, 120);
   } finally {
     if (previous === undefined) {
-      delete process.env.BB_CC_LITE_COLOR;
+      delete process.env.CCVERDICT_COLOR;
     } else {
-      process.env.BB_CC_LITE_COLOR = previous;
+      process.env.CCVERDICT_COLOR = previous;
     }
   }
 }

@@ -17,16 +17,16 @@ import { projectBaselinePath, projectKeyFromPath } from "../src/paths.js";
 import { pathExists } from "./helpers/temp.js";
 
 const privacySentinels = [
-  "BB_CC_LITE_RAW_PROMPT_SENTINEL",
-  "BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL",
-  "/tmp/bb-cc-lite/private/worktree/src/secret.ts",
-  "npm test -- BB_CC_LITE_RAW_COMMAND_SENTINEL",
+  "CCVERDICT_RAW_PROMPT_SENTINEL",
+  "CCVERDICT_RAW_TOOL_OUTPUT_SENTINEL",
+  "/tmp/ccverdict/private/worktree/src/secret.ts",
+  "npm test -- CCVERDICT_RAW_COMMAND_SENTINEL",
   "mcp__privateServer__rawTool"
 ];
 
 describe("baseline auto refresh freshness", () => {
   it("treats missing and unreadable baselines as stale", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-refresh-freshness-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-refresh-freshness-"));
     try {
       expect(baselineIsStale(undefined, new Date("2026-05-20T12:00:00.000Z"))).toBe(true);
 
@@ -48,7 +48,7 @@ describe("baseline auto refresh freshness", () => {
   });
 
   it("honors the refresh interval env override", () => {
-    const env = { BB_CC_LITE_BASELINE_REFRESH_INTERVAL_HOURS: "2" };
+    const env = { CCVERDICT_BASELINE_REFRESH_INTERVAL_HOURS: "2" };
     const intervalHours = refreshIntervalHoursFromEnv(env);
     const now = new Date("2026-05-20T12:00:00.000Z");
 
@@ -57,20 +57,20 @@ describe("baseline auto refresh freshness", () => {
     expect(baselineIsStale(sampleBaseline("2026-05-20T09:30:00.000Z"), now, intervalHours)).toBe(true);
   });
 
-  it("lets BB_CC_LITE_AUTO_LEARN=0 disable auto refresh", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-refresh-disabled-"));
+  it("lets CCVERDICT_AUTO_LEARN=0 disable auto refresh", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-refresh-disabled-"));
     try {
       let spawned = 0;
       const result = await maybeTriggerBaselineRefresh({
         baseline: undefined,
         appHomePath: tempDir,
-        env: { BB_CC_LITE_AUTO_LEARN: "0" },
+        env: { CCVERDICT_AUTO_LEARN: "0" },
         spawnRefresh: () => {
           spawned += 1;
         }
       });
 
-      expect(shouldAutoRefresh({ BB_CC_LITE_AUTO_LEARN: "0" })).toBe(false);
+      expect(shouldAutoRefresh({ CCVERDICT_AUTO_LEARN: "0" })).toBe(false);
       expect(result).toEqual({ triggered: false, reason: "disabled" });
       expect(spawned).toBe(0);
       await expect(pathExists(baselineRefreshLockPath({ appHomePath: tempDir }))).resolves.toBe(false);
@@ -82,7 +82,7 @@ describe("baseline auto refresh freshness", () => {
 
 describe("baseline auto refresh locking", () => {
   it("allows refresh when no lock exists and writes only safe lock metadata", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-refresh-lock-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-refresh-lock-"));
     try {
       const lockPath = baselineRefreshLockPath({ appHomePath: tempDir });
 
@@ -103,7 +103,7 @@ describe("baseline auto refresh locking", () => {
   });
 
   it("keeps a fresh lock from spawning duplicate refresh work", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-refresh-fresh-lock-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-refresh-fresh-lock-"));
     try {
       await acquireRefreshLock({ appHomePath: tempDir, now: new Date("2026-05-20T12:00:00.000Z") });
 
@@ -120,7 +120,7 @@ describe("baseline auto refresh locking", () => {
   });
 
   it("replaces a stale lock and allows refresh", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-refresh-stale-lock-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-refresh-stale-lock-"));
     try {
       const lockPath = baselineRefreshLockPath({ appHomePath: tempDir });
       await acquireRefreshLock({ appHomePath: tempDir, now: new Date("2026-05-20T12:00:00.000Z") });
@@ -142,7 +142,7 @@ describe("baseline auto refresh locking", () => {
   });
 
   it("cleans up the lock after success and after refresh failure where possible", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-refresh-cleanup-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-refresh-cleanup-"));
     try {
       const lockPath = baselineRefreshLockPath({ appHomePath: tempDir });
       const success = await runBaselineRefresh({
@@ -166,7 +166,7 @@ describe("baseline auto refresh locking", () => {
   });
 
   it("passes the project directory through quiet refresh and writes a project baseline", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-refresh-project-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-refresh-project-"));
     try {
       const appHomePath = join(tempDir, "app-home");
       const projectDir = join(tempDir, "private-project");
@@ -205,7 +205,7 @@ describe("baseline auto refresh locking", () => {
   });
 
   it("does not spawn when a fresh lock already exists", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-refresh-trigger-lock-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-refresh-trigger-lock-"));
     try {
       let spawned = 0;
       await acquireRefreshLock({ appHomePath: tempDir, now: new Date("2026-05-20T12:00:00.000Z") });
@@ -227,7 +227,7 @@ describe("baseline auto refresh locking", () => {
   });
 
   it("spawns stale refresh with the current project and transcript path", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-refresh-trigger-project-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-refresh-trigger-project-"));
     try {
       const projectDir = join(tempDir, "private-project");
       const transcriptPath = join(tempDir, ".claude", "projects", "project", "session.jsonl");
@@ -255,14 +255,14 @@ describe("baseline auto refresh locking", () => {
         "--transcript",
         transcriptPath
       ]);
-      expect(spawned?.env.BB_CC_LITE_BASELINE_REFRESH_LOCK_HELD).toBe("1");
+      expect(spawned?.env.CCVERDICT_BASELINE_REFRESH_LOCK_HELD).toBe("1");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
 
   it("cleans up the lock when spawning fails", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-refresh-spawn-failure-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-refresh-spawn-failure-"));
     try {
       const lockPath = baselineRefreshLockPath({ appHomePath: tempDir });
 
@@ -285,7 +285,7 @@ describe("baseline auto refresh locking", () => {
 
 function sampleBaseline(updatedAt: string): PersonalBaseline {
   return {
-    schema: "bb-cc-lite.baseline.v1",
+    schema: "ccverdict.baseline.v1",
     version: 1,
     createdAt: "2026-05-19T00:00:00.000Z",
     updatedAt,

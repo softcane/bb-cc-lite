@@ -12,4 +12,4 @@ Privacy rules:
 
 - Do not add real prompts, tool output, file contents, workspace paths, transcript paths, secrets, raw session ids, or raw MCP names.
 - Use fake UUIDs, fake request/message ids, and safe fixture paths only.
-- Keep deliberate `BB_CC_LITE_*_SENTINEL` strings only to prove derived decisions and outputs do not leak raw material.
+- Keep deliberate `CCVERDICT_*_SENTINEL` strings only to prove derived decisions and outputs do not leak raw material.

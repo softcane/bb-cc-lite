@@ -8,7 +8,7 @@ export interface ProjectConfig {
   validationPatterns: Partial<Record<ValidationCommandCategory, string[]>>;
 }
 
-const CONFIG_FILE = ".bb-cc-lite.json";
+const CONFIG_FILE = ".ccverdict.json";
 const MAX_SEARCH_DEPTH = 20;
 const MAX_CONFIG_BYTES = 16 * 1024;
 const MAX_COMMANDS_PER_CATEGORY = 20;

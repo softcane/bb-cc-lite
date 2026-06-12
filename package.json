@@ -1,19 +1,19 @@
 {
-  "name": "bb-cc-lite",
-  "version": "0.4.1",
-  "description": "Black Box Claude Code Lite: a small Claude Code status line that says when to continue, slow down, or stop.",
+  "name": "ccverdict",
+  "version": "0.4.2",
+  "description": "ccverdict: a small Claude Code status line that says when to continue, slow down, or stop.",
   "type": "module",
   "author": "Softcane",
-  "homepage": "https://github.com/softcane/bb-cc-lite#readme",
+  "homepage": "https://github.com/softcane/ccverdict#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/softcane/bb-cc-lite.git"
+    "url": "git+https://github.com/softcane/ccverdict.git"
   },
   "bugs": {
-    "url": "https://github.com/softcane/bb-cc-lite/issues"
+    "url": "https://github.com/softcane/ccverdict/issues"
   },
   "bin": {
-    "bb-cc-lite": "dist/cli.js"
+    "ccverdict": "dist/cli.js"
   },
   "files": [
     "assets",
@@ -32,8 +32,8 @@
     "node": ">=20"
   },
   "keywords": [
-    "black-box",
-    "blackbox",
+    "behavior-gauge",
+    "verdict",
     "claude-code",
     "claude",
     "statusline",

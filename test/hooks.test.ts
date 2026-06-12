@@ -9,13 +9,13 @@ import { hookSummary, readStore, recordHookEvent } from "../src/store.js";
 import type { StatusLineInput, TranscriptSummary } from "../src/types.js";
 
 const privacySentinels = [
-  "BB_CC_LITE_RAW_PROMPT_SENTINEL",
-  "BB_CC_LITE_ASSISTANT_TEXT_SENTINEL",
-  "BB_CC_LITE_TOOL_OUTPUT_SENTINEL",
-  "BB_CC_LITE_FILE_CONTENT_SENTINEL",
-  "BB_CC_LITE_API_KEY_SENTINEL",
-  "BB_CC_LITE_RAW_SESSION_SENTINEL",
-  "/tmp/bb-cc-lite/private/workspace/src/secret.ts"
+  "CCVERDICT_RAW_PROMPT_SENTINEL",
+  "CCVERDICT_ASSISTANT_TEXT_SENTINEL",
+  "CCVERDICT_TOOL_OUTPUT_SENTINEL",
+  "CCVERDICT_FILE_CONTENT_SENTINEL",
+  "CCVERDICT_API_KEY_SENTINEL",
+  "CCVERDICT_RAW_SESSION_SENTINEL",
+  "/tmp/ccverdict/private/workspace/src/secret.ts"
 ];
 
 function input(overrides: Partial<StatusLineInput> = {}): StatusLineInput {
@@ -203,7 +203,7 @@ describe("optional Claude Code hooks", () => {
   });
 
   it("stores SessionStart lifecycle metadata without raw payload fields", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-sessionstart-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hooks-sessionstart-"));
     try {
       const storePath = join(tempDir, "events.json");
       const rawSessionId = `session-alpha-${privacySentinels[5]}`;
@@ -284,7 +284,7 @@ describe("optional Claude Code hooks", () => {
       JSON.stringify({
         session_id: "session-alpha",
         hook_event_name: "PostToolUseFailure",
-        tool_name: "Bash\nBB_CC_LITE_TOOL_OUTPUT_SENTINEL",
+        tool_name: "Bash\nCCVERDICT_TOOL_OUTPUT_SENTINEL",
         tool_input: {
           command: "npm test"
         }
@@ -320,7 +320,7 @@ describe("optional Claude Code hooks", () => {
   });
 
   it("stores hook events without raw prompt or tool-output sentinels", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-privacy-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hooks-privacy-"));
     try {
       const storePath = join(tempDir, "events.json");
       const event = parseHookPayload(
@@ -350,7 +350,7 @@ describe("optional Claude Code hooks", () => {
   });
 
   it("stores compaction metadata without raw prompt, assistant, output, file, path, or session data", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-compaction-privacy-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hooks-compaction-privacy-"));
     try {
       const storePath = join(tempDir, "events.json");
       const rawSessionId = `session-alpha-${privacySentinels[5]}`;
@@ -400,7 +400,7 @@ describe("optional Claude Code hooks", () => {
   });
 
   it("keeps concurrent hook writes from losing recent events", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-concurrent-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hooks-concurrent-"));
     try {
       const storePath = join(tempDir, "events.json");
       const events = Array.from({ length: 20 }, (_value, index) => {
@@ -431,7 +431,7 @@ describe("optional Claude Code hooks", () => {
   });
 
   it("stores hook-derived MCP tool events with only safe names and hashes", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-mcp-privacy-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hooks-mcp-privacy-"));
     try {
       const storePath = join(tempDir, "events.json");
       const rawMcpName = "mcp__privateServer__failingLookup";
@@ -471,7 +471,7 @@ describe("optional Claude Code hooks", () => {
   });
 
   it("turns hook telemetry into Careful before Stop for repeated failures", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hooks-"));
     try {
       const storePath = join(tempDir, "events.json");
       const sessionId = "session-alpha";
@@ -569,7 +569,7 @@ describe("optional Claude Code hooks", () => {
   });
 
   it("bounds open hook failure risk at SessionStart clear lifecycle boundaries", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-clear-boundary-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hooks-clear-boundary-"));
     try {
       const storePath = join(tempDir, "events.json");
       const sessionId = "session-alpha";
@@ -618,7 +618,7 @@ describe("optional Claude Code hooks", () => {
   });
 
   it("turns hook-derived repeated MCP failures into the same Careful and Stop decisions", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-mcp-decisions-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hooks-mcp-decisions-"));
     try {
       const storePath = join(tempDir, "events.json");
       const sessionId = "session-alpha";
@@ -670,7 +670,7 @@ describe("optional Claude Code hooks", () => {
   });
 
   it("turns hook-derived unchanged full-file Reads into redundant-read decisions and resets after NotebookEdit", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-redundant-read-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hooks-redundant-read-"));
     try {
       const storePath = join(tempDir, "events.json");
       const sessionId = "session-alpha";
@@ -749,7 +749,7 @@ describe("optional Claude Code hooks", () => {
   });
 
   it("clears repeated hook failure findings after the same tool purpose succeeds", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-recovery-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hooks-recovery-"));
     try {
       const storePath = join(tempDir, "events.json");
       const sessionId = "session-alpha";
@@ -852,7 +852,7 @@ describe("optional Claude Code hooks", () => {
   });
 
   it("clears hook-derived compaction warning after later hook activity", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-compaction-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hooks-compaction-"));
     try {
       const storePath = join(tempDir, "events.json");
       const sessionId = "session-alpha";
@@ -901,7 +901,7 @@ describe("optional Claude Code hooks", () => {
   });
 
   it("uses PreCompact as an open compaction boundary before later activity", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-hooks-precompact-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-hooks-precompact-"));
     try {
       const storePath = join(tempDir, "events.json");
       const sessionId = "session-alpha";

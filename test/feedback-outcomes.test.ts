@@ -16,16 +16,16 @@ import {
 import type { StoredFeedbackOutcome, StoredHookEvent } from "../src/types.js";
 
 const rawSentinels = [
-  "BB_CC_LITE_RAW_COMMAND_SENTINEL",
-  "BB_CC_LITE_RAW_PROMPT_SENTINEL",
-  "BB_CC_LITE_RAW_OUTPUT_SENTINEL",
-  "BB_CC_LITE_RAW_SESSION_SENTINEL",
-  "/tmp/bb-cc-lite/private/project/src/secret.ts"
+  "CCVERDICT_RAW_COMMAND_SENTINEL",
+  "CCVERDICT_RAW_PROMPT_SENTINEL",
+  "CCVERDICT_RAW_OUTPUT_SENTINEL",
+  "CCVERDICT_RAW_SESSION_SENTINEL",
+  "/tmp/ccverdict/private/project/src/secret.ts"
 ];
 
 describe("feedback outcome data model", () => {
   it("stores feedback outcomes with only derived safe fields", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-feedback-outcome-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-feedback-outcome-"));
     try {
       const storePath = join(tempDir, "events.json");
       const rawSessionId = `session-${rawSentinels[3]}`;
@@ -69,7 +69,7 @@ describe("feedback outcome data model", () => {
   });
 
   it("keeps feedback outcomes bounded and reads legacy stores without outcomes", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-feedback-outcome-limit-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-feedback-outcome-limit-"));
     try {
       const legacyStorePath = join(tempDir, "legacy.json");
       await writeFile(
@@ -106,7 +106,7 @@ describe("feedback outcome data model", () => {
   });
 
   it("drops legacy feedback outcomes containing forbidden raw fields before why can read them", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-feedback-outcome-legacy-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-feedback-outcome-legacy-"));
     try {
       const storePath = join(tempDir, "events.json");
       await writeFile(

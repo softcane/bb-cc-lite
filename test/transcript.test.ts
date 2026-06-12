@@ -8,11 +8,11 @@ import { TOOL_RESULT_EXPLOSION_THRESHOLD_TOKENS, parseTranscriptLines, parseTran
 import type { StatusLineInput } from "../src/types.js";
 
 const privacySentinels = [
-  "BB_CC_LITE_RAW_PROMPT_SENTINEL",
-  "BB_CC_LITE_TOOL_OUTPUT_SENTINEL",
-  "BB_CC_LITE_API_KEY_SENTINEL",
-  "BB_CC_LITE_RAW_PATH_SENTINEL",
-  "BB_CC_LITE_FILE_CONTENT_SENTINEL"
+  "CCVERDICT_RAW_PROMPT_SENTINEL",
+  "CCVERDICT_TOOL_OUTPUT_SENTINEL",
+  "CCVERDICT_API_KEY_SENTINEL",
+  "CCVERDICT_RAW_PATH_SENTINEL",
+  "CCVERDICT_FILE_CONTENT_SENTINEL"
 ];
 
 function fixturePath(name: string): string {
@@ -965,8 +965,8 @@ describe("parseTranscriptLines", () => {
   it("does not leak alphanumeric unknown tool names into summaries or statusline decisions", () => {
     const rawUnknownToolName = "PrivateCustomerLookupTool";
     const summary = parseTranscriptLines([
-      ...toolPair("private-1", rawUnknownToolName, true, { private_query: "BB_CC_LITE_RAW_PROMPT_SENTINEL" }),
-      ...toolPair("private-2", rawUnknownToolName, true, { private_query: "BB_CC_LITE_RAW_PROMPT_SENTINEL" })
+      ...toolPair("private-1", rawUnknownToolName, true, { private_query: "CCVERDICT_RAW_PROMPT_SENTINEL" }),
+      ...toolPair("private-2", rawUnknownToolName, true, { private_query: "CCVERDICT_RAW_PROMPT_SENTINEL" })
     ]);
     const gauge = buildGauge(input({ contextPercent: 42 }), summary);
     const rendered = renderGauge(gauge, 180);

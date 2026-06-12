@@ -420,30 +420,30 @@ function hasRecentCooldown(recentFeedback: RecentFeedback[], cooldownKey: string
 function messageFor(messageKey: string): string {
   switch (messageKey) {
     case "blind_retry_loop":
-      return "bb-cc-lite: the same safe validation category has failed repeatedly without a fix. Inspect the first failure and change approach before retrying.";
+      return "ccverdict: the same safe validation category has failed repeatedly without a fix. Inspect the first failure and change approach before retrying.";
     case "validation_repeated":
-      return "bb-cc-lite: validation has failed repeatedly without a passing check. Inspect the failure pattern, make one targeted fix, then run one focused check.";
+      return "ccverdict: validation has failed repeatedly without a passing check. Inspect the failure pattern, make one targeted fix, then run one focused check.";
     case "coach_validation_retry_after_feedback":
-      return "bb-cc-lite: do not run the same validation check again yet. First inspect the failure, change the approach, or summarize the blocker; only rerun after a targeted fix.";
+      return "ccverdict: do not run the same validation check again yet. First inspect the failure, change the approach, or summarize the blocker; only rerun after a targeted fix.";
     case "edit_without_validation":
-      return "bb-cc-lite: edits have not been validated yet; run one focused validation check before finishing or making more broad changes.";
+      return "ccverdict: edits have not been validated yet; run one focused validation check before finishing or making more broad changes.";
     case "budget_busy_no_observed_progress":
-      return "bb-cc-lite: budget is high and no safe progress signal was observed. Narrow the scope or summarize the blocker before continuing.";
+      return "ccverdict: budget is high and no safe progress signal was observed. Narrow the scope or summarize the blocker before continuing.";
     case "budget_summary":
-      return "bb-cc-lite: budget is high for this session; summarize progress, name the next smallest check, and avoid broad retries.";
+      return "ccverdict: budget is high for this session; summarize progress, name the next smallest check, and avoid broad retries.";
     case "busy_no_observed_progress":
-      return "bb-cc-lite: many tool calls have run without a safe progress signal. Pause, state what changed, and choose one focused next step.";
+      return "ccverdict: many tool calls have run without a safe progress signal. Pause, state what changed, and choose one focused next step.";
     case "compaction_goal_preservation":
-      return "bb-cc-lite: compaction just finished. Before continuing, restate the current goal, key constraints, and next three steps from existing context.";
+      return "ccverdict: compaction just finished. Before continuing, restate the current goal, key constraints, and next three steps from existing context.";
     case "redundant_read":
-      return "bb-cc-lite: this file was already read recently and no edit/write was seen. Use existing context or read a specific range if needed.";
+      return "ccverdict: this file was already read recently and no edit/write was seen. Use existing context or read a specific range if needed.";
     case "guard_redundant_read":
-      return "bb-cc-lite denied this Read: this file was already read recently and no edit/write was seen. Read a specific range if needed.";
+      return "ccverdict denied this Read: this file was already read recently and no edit/write was seen. Read a specific range if needed.";
     case "guard_validation_retry":
-      return "bb-cc-lite denied this retry: the same validation category has failed repeatedly without an edit or passing check. Inspect before retrying.";
+      return "ccverdict denied this retry: the same validation category has failed repeatedly without an edit or passing check. Inspect before retrying.";
     case "finish_with_unresolved_risk":
-      return "bb-cc-lite: unresolved validation risk remains. Run one focused check or summarize the blocker before finishing.";
+      return "ccverdict: unresolved validation risk remains. Run one focused check or summarize the blocker before finishing.";
     default:
-      return "bb-cc-lite: inspect the latest safe risk signal before continuing.";
+      return "ccverdict: inspect the latest safe risk signal before continuing.";
   }
 }

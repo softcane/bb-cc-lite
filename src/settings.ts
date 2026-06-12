@@ -49,7 +49,7 @@ export interface UninstallResult {
 }
 
 interface BackupManifest {
-  schema: "bb-cc-lite.install-backup.v1";
+  schema: "ccverdict.install-backup.v1";
   installId: string;
   packageVersion: string;
   createdAt: string;
@@ -111,11 +111,11 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
   const mode = options.mode || "coach";
   const learn = options.learn !== false;
 
-  if (existing && !isBbStatusLine(existing) && !options.replace) {
+  if (existing && !isCcverdictStatusLine(existing) && !options.replace) {
     return {
       status: "refused",
       target,
-      message: `Existing Claude statusLine found in ${describeSettingsTarget(target)}; pass --replace to replace it with bb-cc-lite.`
+      message: `Existing Claude statusLine found in ${describeSettingsTarget(target)}; pass --replace to replace it with ccverdict.`
     };
   }
 
@@ -126,8 +126,8 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
     padding: 0
   };
 
-  if (existing && isBbStatusLine(existing)) {
-    const afterHooks = options.hooks ? mergeBbHooks(existingHooks, launchers.hook, mode, learn) : existingHooks;
+  if (existing && isCcverdictStatusLine(existing)) {
+    const afterHooks = options.hooks ? mergeCcverdictHooks(existingHooks, launchers.hook, mode, learn) : existingHooks;
     const shouldWriteStatusLine = JSON.stringify(existing) !== JSON.stringify(statusLine);
     const shouldWriteHooks = options.hooks && JSON.stringify(existingHooks) !== JSON.stringify(afterHooks);
     if (shouldWriteStatusLine || shouldWriteHooks) {
@@ -147,14 +147,14 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
         target,
         command: statusLine.command,
         backupId: installId,
-        message: `bb-cc-lite statusLine is already installed in ${describeSettingsTarget(target)}; ${options.hooks ? `repaired ${hooksLabel(mode)} and ` : ""}refreshed runtime launcher.`
+        message: `ccverdict statusLine is already installed in ${describeSettingsTarget(target)}; ${options.hooks ? `repaired ${hooksLabel(mode)} and ` : ""}refreshed runtime launcher.`
       };
     }
     return {
       status: "updated",
       target,
       command: statusLine.command,
-      message: `bb-cc-lite statusLine is already installed in ${describeSettingsTarget(target)}; refreshed runtime launcher.`
+      message: `ccverdict statusLine is already installed in ${describeSettingsTarget(target)}; refreshed runtime launcher.`
     };
   }
 
@@ -163,7 +163,7 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
   const afterSettings = {
     ...beforeSettings,
     statusLine,
-    ...(options.hooks ? { hooks: mergeBbHooks(beforeSettings.hooks, launchers.hook, mode, learn) } : {})
+    ...(options.hooks ? { hooks: mergeCcverdictHooks(beforeSettings.hooks, launchers.hook, mode, learn) } : {})
   };
   const afterRaw = `${JSON.stringify(afterSettings, null, 2)}\n`;
   const installId = randomUUID();
@@ -176,8 +176,8 @@ export async function installStatusLine(options: InstallOptions = {}): Promise<I
     command: statusLine.command,
     backupId: installId,
     message: existing
-      ? `Replaced existing Claude statusLine with bb-cc-lite${options.hooks ? ` and ${hooksLabel(mode)}` : ""} in ${describeSettingsTarget(target)}. Previous settings were backed up.`
-      : `Installed bb-cc-lite statusLine${options.hooks ? ` and ${hooksLabel(mode)}` : ""} in ${describeSettingsTarget(target)}.`
+      ? `Replaced existing Claude statusLine with ccverdict${options.hooks ? ` and ${hooksLabel(mode)}` : ""} in ${describeSettingsTarget(target)}. Previous settings were backed up.`
+      : `Installed ccverdict statusLine${options.hooks ? ` and ${hooksLabel(mode)}` : ""} in ${describeSettingsTarget(target)}.`
   };
 }
 
@@ -185,27 +185,27 @@ export async function uninstallStatusLine(options: UninstallOptions = {}): Promi
   const target = resolveSettingsTarget(options);
   const current = await readSettings(target.settingsPath);
   const currentStatusLine = current.settings.statusLine;
-  const currentHasBbHooks = hasBbHooks(current.settings.hooks, target.homeDir);
+  const currentHasCcverdictHooks = hasCcverdictHooks(current.settings.hooks, target.homeDir);
   const manifest = await latestBackupFor(target.settingsPath, target.homeDir, (candidate) => {
-    return !(candidate.before.hadStatusLine && isBbStatusLine(candidate.before.statusLine));
+    return !(candidate.before.hadStatusLine && isCcverdictStatusLine(candidate.before.statusLine));
   });
 
-  if (!currentStatusLine && !currentHasBbHooks) {
+  if (!currentStatusLine && !currentHasCcverdictHooks) {
     return {
       status: "skipped",
       target,
-      message: `No bb-cc-lite statusLine or hooks are configured in ${describeSettingsTarget(target)}.`
+      message: `No ccverdict statusLine or hooks are configured in ${describeSettingsTarget(target)}.`
     };
   }
 
   const manifestOwned =
     manifest?.after.statusLine !== undefined &&
     JSON.stringify(currentStatusLine) === JSON.stringify(manifest.after.statusLine);
-  if (currentStatusLine && !isBbStatusLine(currentStatusLine) && !currentHasBbHooks && !manifestOwned && !options.force) {
+  if (currentStatusLine && !isCcverdictStatusLine(currentStatusLine) && !currentHasCcverdictHooks && !manifestOwned && !options.force) {
     return {
       status: "refused",
       target,
-      message: `Refused to modify non-bb-cc-lite statusLine in ${describeSettingsTarget(target)}.`
+      message: `Refused to modify non-ccverdict statusLine in ${describeSettingsTarget(target)}.`
     };
   }
 
@@ -226,18 +226,18 @@ export async function uninstallStatusLine(options: UninstallOptions = {}): Promi
     return {
       status: "removed",
       target,
-      message: `Removed bb-cc-lite statusLine and deleted settings file created by install.`
+      message: `Removed ccverdict statusLine and deleted settings file created by install.`
     };
   }
 
   const nextSettings = { ...current.settings };
-  if (currentStatusLine && (isBbStatusLine(currentStatusLine) || manifestOwned || options.force) && manifest?.before.hadStatusLine) {
+  if (currentStatusLine && (isCcverdictStatusLine(currentStatusLine) || manifestOwned || options.force) && manifest?.before.hadStatusLine) {
     nextSettings.statusLine = manifest.before.statusLine;
-  } else if (!currentStatusLine || isBbStatusLine(currentStatusLine) || manifestOwned || options.force) {
+  } else if (!currentStatusLine || isCcverdictStatusLine(currentStatusLine) || manifestOwned || options.force) {
     delete nextSettings.statusLine;
   }
-  if (currentHasBbHooks) {
-    const hooks = removeBbHooks(nextSettings.hooks, target.homeDir);
+  if (currentHasCcverdictHooks) {
+    const hooks = removeCcverdictHooks(nextSettings.hooks, target.homeDir);
     if (hooks === undefined) {
       delete nextSettings.hooks;
     } else {
@@ -258,8 +258,8 @@ export async function uninstallStatusLine(options: UninstallOptions = {}): Promi
     status: manifest?.before.hadStatusLine ? "restored" : "removed",
     target,
     message: manifest
-      ? `Restored bb-cc-lite settings from backup ${manifest.installId} while preserving unrelated current settings.`
-      : `Removed bb-cc-lite statusLine and hooks. No backup was found, so no previous statusLine was restored.`
+      ? `Restored ccverdict settings from backup ${manifest.installId} while preserving unrelated current settings.`
+      : `Removed ccverdict statusLine and hooks. No backup was found, so no previous statusLine was restored.`
   };
 }
 
@@ -279,7 +279,7 @@ export function describeSettingsTarget(target: Pick<SettingsTarget, "scope">): s
   return `${target.scope} Claude settings`;
 }
 
-export function isBbStatusLine(value: unknown): boolean {
+export function isCcverdictStatusLine(value: unknown): boolean {
   if (!value || typeof value !== "object") {
     return false;
   }
@@ -288,7 +288,7 @@ export function isBbStatusLine(value: unknown): boolean {
     return false;
   }
   const normalizedCommand = command.replaceAll("'", "");
-  return commandReferencesBbCcLite(command) || normalizedCommand.includes(join(appHome(), "bin", "statusline"));
+  return commandReferencesCcverdict(command) || normalizedCommand.includes(join(appHome(), "bin", "statusline"));
 }
 
 async function ensureRuntimeLaunchers(
@@ -302,11 +302,11 @@ async function ensureRuntimeLaunchers(
   const hookPath = join(binDir, "hook");
   const stableCliPath = await copyRuntime(cliFilePath, home);
   const learningExports =
-    options.learn === false ? "export BB_CC_LITE_AUTO_LEARN=0\nexport BB_CC_LITE_LESSON_MEMORY=0\n" : "";
+    options.learn === false ? "export CCVERDICT_AUTO_LEARN=0\nexport CCVERDICT_LESSON_MEMORY=0\n" : "";
   await mkdir(binDir, { recursive: true, mode: 0o700 });
   await writeFile(
     statuslinePath,
-    `#!/bin/sh\nexport BB_CC_LITE_HOME=${quoteShell(home)}\n${learningExports}exec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} statusline "$@"\n`,
+    `#!/bin/sh\nexport CCVERDICT_HOME=${quoteShell(home)}\n${learningExports}exec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} statusline "$@"\n`,
     {
       encoding: "utf8",
       mode: 0o700
@@ -314,7 +314,7 @@ async function ensureRuntimeLaunchers(
   );
   await writeFile(
     hookPath,
-    `#!/bin/sh\nexport BB_CC_LITE_HOME=${quoteShell(home)}\n${learningExports}exec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} hook "$@"\n`,
+    `#!/bin/sh\nexport CCVERDICT_HOME=${quoteShell(home)}\n${learningExports}exec ${quoteShell(process.execPath)} ${quoteShell(stableCliPath)} hook "$@"\n`,
     {
       encoding: "utf8",
       mode: 0o700
@@ -325,8 +325,8 @@ async function ensureRuntimeLaunchers(
   return { statusline: statuslinePath, hook: hookPath };
 }
 
-function mergeBbHooks(existingHooks: unknown, hookPath: string, mode: InstallMode, learn: boolean): Record<string, unknown> {
-  const result = removeBbHooks(existingHooks, undefined) ?? {};
+function mergeCcverdictHooks(existingHooks: unknown, hookPath: string, mode: InstallMode, learn: boolean): Record<string, unknown> {
+  const result = removeCcverdictHooks(existingHooks, undefined) ?? {};
   for (const spec of hookSpecsForMode(mode)) {
     const eventName = spec.eventName;
     const entries = Array.isArray(result[eventName]) ? [...result[eventName]] : [];
@@ -337,11 +337,11 @@ function mergeBbHooks(existingHooks: unknown, hookPath: string, mode: InstallMod
           type: "command",
           command: hookPath,
           args: [
-            "--bb-cc-lite-hook",
+            "--ccverdict-hook",
             eventName,
-            "--bb-cc-lite-mode",
+            "--ccverdict-mode",
             mode,
-            "--bb-cc-lite-learn",
+            "--ccverdict-learn",
             learn ? "1" : "0"
           ],
           ...(spec.async ? { async: true } : {}),
@@ -387,14 +387,14 @@ function hooksLabel(mode: InstallMode): string {
   return "coach hooks";
 }
 
-function removeBbHooks(existingHooks: unknown, homeDir: string | undefined): Record<string, unknown> | undefined {
+function removeCcverdictHooks(existingHooks: unknown, homeDir: string | undefined): Record<string, unknown> | undefined {
   const hooks = cloneRecord(existingHooks);
   for (const [eventName, entries] of Object.entries(hooks)) {
     if (!Array.isArray(entries)) {
       continue;
     }
     const nextEntries = entries
-      .map((entry) => removeBbHookFromEntry(entry, homeDir))
+      .map((entry) => removeCcverdictHookFromEntry(entry, homeDir))
       .filter((entry) => entry !== undefined);
     if (nextEntries.length === 0) {
       delete hooks[eventName];
@@ -405,12 +405,12 @@ function removeBbHooks(existingHooks: unknown, homeDir: string | undefined): Rec
   return Object.keys(hooks).length === 0 ? undefined : hooks;
 }
 
-export function hasBbHooks(existingHooks: unknown, homeDir: string): boolean {
+export function hasCcverdictHooks(existingHooks: unknown, homeDir: string): boolean {
   const hooks = cloneRecord(existingHooks);
-  return Object.values(hooks).some((entries) => Array.isArray(entries) && entries.some((entry) => entryHasBbHook(entry, homeDir)));
+  return Object.values(hooks).some((entries) => Array.isArray(entries) && entries.some((entry) => entryHasCcverdictHook(entry, homeDir)));
 }
 
-function removeBbHookFromEntry(entry: unknown, homeDir: string | undefined): unknown | undefined {
+function removeCcverdictHookFromEntry(entry: unknown, homeDir: string | undefined): unknown | undefined {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
     return entry;
   }
@@ -418,22 +418,22 @@ function removeBbHookFromEntry(entry: unknown, homeDir: string | undefined): unk
   if (!Array.isArray(record.hooks)) {
     return entry;
   }
-  const nextHooks = record.hooks.filter((hook) => !isBbHookCommand(hook, homeDir));
+  const nextHooks = record.hooks.filter((hook) => !isCcverdictHookCommand(hook, homeDir));
   if (nextHooks.length === 0) {
     return undefined;
   }
   return { ...record, hooks: nextHooks };
 }
 
-function entryHasBbHook(entry: unknown, homeDir: string | undefined): boolean {
+function entryHasCcverdictHook(entry: unknown, homeDir: string | undefined): boolean {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
     return false;
   }
   const hooks = (entry as Record<string, unknown>).hooks;
-  return Array.isArray(hooks) && hooks.some((hook) => isBbHookCommand(hook, homeDir));
+  return Array.isArray(hooks) && hooks.some((hook) => isCcverdictHookCommand(hook, homeDir));
 }
 
-function isBbHookCommand(value: unknown, homeDir: string | undefined): boolean {
+function isCcverdictHookCommand(value: unknown, homeDir: string | undefined): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
@@ -442,14 +442,14 @@ function isBbHookCommand(value: unknown, homeDir: string | undefined): boolean {
   const command = typeof record.command === "string" ? record.command : "";
   const normalizedCommand = command.replaceAll("'", "");
   return (
-    args.includes("--bb-cc-lite-hook") ||
-    commandReferencesBbCcLite(command) ||
+    args.includes("--ccverdict-hook") ||
+    commandReferencesCcverdict(command) ||
     (homeDir !== undefined && normalizedCommand.includes(join(appHome(homeDir), "bin", "hook")))
   );
 }
 
-function commandReferencesBbCcLite(command: string): boolean {
-  return /(^|[\s/\\])bb-cc-lite($|[\s/\\])/u.test(command.replaceAll("'", ""));
+function commandReferencesCcverdict(command: string): boolean {
+  return /(^|[\s/\\])ccverdict($|[\s/\\])/u.test(command.replaceAll("'", ""));
 }
 
 function cloneRecord(value: unknown): Record<string, unknown> {
@@ -523,7 +523,7 @@ async function writeBackup(
   }
   await writeFile(join(dir, "after.settings.json"), afterRaw, { encoding: "utf8", mode: 0o600 });
   const manifest: BackupManifest = {
-    schema: "bb-cc-lite.install-backup.v1",
+    schema: "ccverdict.install-backup.v1",
     installId,
     packageVersion: PACKAGE_VERSION,
     createdAt: new Date().toISOString(),
@@ -567,7 +567,7 @@ async function latestBackupFor(
       try {
         const parsed = JSON.parse(await readFile(join(backupDir(homeDir), entry.name, "manifest.json"), "utf8")) as BackupManifest;
         if (
-          parsed.schema === "bb-cc-lite.install-backup.v1" &&
+          parsed.schema === "ccverdict.install-backup.v1" &&
           (parsed.settingsPathHash === sha256(settingsPath) || parsed.settingsPath === settingsPath) &&
           parsed.state === "active" &&
           include(parsed)
@@ -575,7 +575,7 @@ async function latestBackupFor(
           manifests.push(parsed);
         }
       } catch {
-        // Ignore corrupt backup metadata; uninstall can still remove bb-owned statusLine.
+        // Ignore corrupt backup metadata; uninstall can still remove ccverdict-owned statusLine.
       }
     }
     return manifests.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1);

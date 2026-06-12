@@ -131,7 +131,7 @@ async function resolveInstallMode(args: ParsedArgs): Promise<InstallMode> {
 
 async function promptInstallMode(): Promise<InstallMode> {
   console.log(`
-One question: how much should bb step in?
+One question: how much should ccverdict step in?
 
   1. observe — statusline only; nothing is ever sent to Claude
   2. coach   — statusline + a short note to Claude when behavior drifts (recommended)
@@ -176,11 +176,11 @@ async function commandUninstall(args: ParsedArgs): Promise<void> {
 }
 
 async function commandUnlearn(): Promise<void> {
-  console.log("`bb-cc-lite unlearn` is deprecated; folded into: bb-cc-lite uninstall --purge");
+  console.log("`ccverdict unlearn` is deprecated; folded into: ccverdict uninstall --purge");
 }
 
 async function commandLearn(): Promise<void> {
-  console.log("`bb-cc-lite learn` is deprecated; the baseline is built on install and refreshed automatically.");
+  console.log("`ccverdict learn` is deprecated; the baseline is built on install and refreshed automatically.");
 }
 
 async function commandStatusLine(): Promise<void> {
@@ -218,11 +218,11 @@ async function commandBaselineRefresh(args: ParsedArgs): Promise<void> {
 async function commandHook(args: ParsedArgs): Promise<void> {
   try {
     const fallbackEventName =
-      stringFlag(args, "bb-cc-lite-hook") || args.positionals.find((value) => value !== "--bb-cc-lite-hook");
+      stringFlag(args, "ccverdict-hook") || args.positionals.find((value) => value !== "--ccverdict-hook");
     const response = await handleHook(await readStdin(), {
       fallbackEventName,
       mode: hookMode(args),
-      learn: stringFlag(args, "bb-cc-lite-learn") !== "0"
+      learn: stringFlag(args, "ccverdict-learn") !== "0"
     });
     if (response) {
       process.stdout.write(`${JSON.stringify(response)}\n`);
@@ -233,7 +233,7 @@ async function commandHook(args: ParsedArgs): Promise<void> {
 }
 
 async function commandWhy(): Promise<void> {
-  console.log("`bb-cc-lite why` is deprecated; folded into: bb-cc-lite audit (current-session view)");
+  console.log("`ccverdict why` is deprecated; folded into: ccverdict audit (current-session view)");
 }
 
 async function commandDoctor(args: ParsedArgs): Promise<void> {
@@ -283,7 +283,7 @@ async function commandAudit(args: ParsedArgs): Promise<void> {
 }
 
 async function commandImprove(): Promise<void> {
-  console.log("`bb-cc-lite improve` is deprecated; folded into: bb-cc-lite audit (instruction report; --apply to write)");
+  console.log("`ccverdict improve` is deprecated; folded into: ccverdict audit (instruction report; --apply to write)");
 }
 
 function validateAuditScopeFlags(args: ParsedArgs): void {
@@ -296,7 +296,7 @@ function validateAuditScopeFlags(args: ParsedArgs): void {
 }
 
 function shouldUseColor(): boolean {
-  return Boolean(process.stdout.isTTY && !process.env.NO_COLOR && process.env.BB_CC_LITE_COLOR !== "0");
+  return Boolean(process.stdout.isTTY && !process.env.NO_COLOR && process.env.CCVERDICT_COLOR !== "0");
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -352,7 +352,7 @@ function helpTopic(args: ParsedArgs): string | undefined {
 }
 
 function printVersion(): void {
-  console.log(`bb-cc-lite ${packageVersion()}`);
+  console.log(`ccverdict ${packageVersion()}`);
 }
 
 function scopeFlag(args: ParsedArgs): SettingsScope {
@@ -380,7 +380,7 @@ function installMode(args: ParsedArgs): InstallMode | undefined {
 }
 
 function hookMode(args: ParsedArgs): InstallMode {
-  const mode = stringFlag(args, "bb-cc-lite-mode");
+  const mode = stringFlag(args, "ccverdict-mode");
   if (mode === "observe" || mode === "coach" || mode === "guard") {
     return mode;
   }
@@ -407,10 +407,10 @@ function numberFlag(args: ParsedArgs, name: string): number | undefined {
 function printHelp(topic?: string): void {
   switch (topic) {
     case "audit":
-      console.log(`bb-cc-lite audit
+      console.log(`ccverdict audit
 
 Usage:
-  bb-cc-lite audit [--project <path>] [--all-projects] [--transcript <path>]
+  ccverdict audit [--project <path>] [--all-projects] [--transcript <path>]
                    [--recent <count>] [--global] [--apply] [--cleanup] [--json]
 
 audit prints three sections:
@@ -421,103 +421,103 @@ audit prints three sections:
       removal candidates, apparently-followed lines, and gaps.
 
 Plain audit never writes. --apply shows a diff, then writes only inside the marked
-bb-cc-lite CLAUDE.md block (backup first). --cleanup removes that block (backup first).
+ccverdict CLAUDE.md block (backup first). --cleanup removes that block (backup first).
 Use --json for machine-readable output covering all three sections.
 `);
       return;
     case "improve":
-      console.log(`bb-cc-lite improve
+      console.log(`ccverdict improve
 
-improve is deprecated and folded into: bb-cc-lite audit
+improve is deprecated and folded into: ccverdict audit
 The instruction report replaces it; use --apply to write, --cleanup to remove the block.
 `);
       return;
     case "install":
-      console.log(`bb-cc-lite install
+      console.log(`ccverdict install
 
 Usage:
-  bb-cc-lite install [--scope local|project|user] [--observe-only] [--coach] [--guard]
+  ccverdict install [--scope local|project|user] [--observe-only] [--coach] [--guard]
                      [--replace] [--no-learn]
 
-Installs the Claude Code statusLine and bb-owned hooks.
+Installs the Claude Code statusLine and ccverdict-owned hooks.
 On an interactive terminal, install asks one question: observe, coach, or guard.
 Pass --observe-only, --coach, or --guard to skip the question. Non-interactive
 installs default to coach. --observe-only avoids Claude-facing feedback.
 `);
       return;
     case "demo":
-      console.log(`bb-cc-lite demo
+      console.log(`ccverdict demo
 
 Usage:
-  bb-cc-lite demo
+  ccverdict demo
 
 Prints the example gauge states with explanations: healthy progress, unchecked-edit
 drift, retry loops, repeated reads, context pressure, and no-signal.
 `);
       return;
     case "doctor":
-      console.log(`bb-cc-lite doctor
+      console.log(`ccverdict doctor
 
 Usage:
-  bb-cc-lite doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing]
+  ccverdict doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing]
                     [--baseline] [--build-baseline] [--replay-baseline] [--clear-baseline]
 `);
       return;
     case "why":
-      console.log(`bb-cc-lite why
+      console.log(`ccverdict why
 
-why is deprecated and folded into: bb-cc-lite audit
+why is deprecated and folded into: ccverdict audit
 The current-session view (section 1) replaces it, correctly scoped to this project.
 `);
       return;
     case "statusline":
-      console.log(`bb-cc-lite statusline
+      console.log(`ccverdict statusline
 
 Usage:
-  bb-cc-lite statusline
+  ccverdict statusline
 `);
       return;
     case "unlearn":
-      console.log(`bb-cc-lite unlearn
+      console.log(`ccverdict unlearn
 
-unlearn is deprecated and folded into: bb-cc-lite uninstall --purge
+unlearn is deprecated and folded into: ccverdict uninstall --purge
 `);
       return;
     case "learn":
-      console.log(`bb-cc-lite learn
+      console.log(`ccverdict learn
 
 learn is deprecated; the baseline is built on install and refreshed automatically.
 `);
       return;
     case "uninstall":
-      console.log(`bb-cc-lite uninstall
+      console.log(`ccverdict uninstall
 
 Usage:
-  bb-cc-lite uninstall [--scope local|project|user] [--force] [--purge]
+  ccverdict uninstall [--scope local|project|user] [--force] [--purge]
 
 --purge also deletes learned baselines, lesson memory, and the derived event store.
 `);
       return;
   }
 
-  console.log(`bb-cc-lite
+  console.log(`ccverdict
 
 Usage:
-  bb-cc-lite audit [--project <path>] [--all-projects] [--transcript <path>]
+  ccverdict audit [--project <path>] [--all-projects] [--transcript <path>]
                    [--recent <count>] [--global] [--apply] [--cleanup] [--json]
-  bb-cc-lite install [--scope local|project|user] [--observe-only] [--coach] [--guard]
+  ccverdict install [--scope local|project|user] [--observe-only] [--coach] [--guard]
                      [--replace] [--no-learn]
-  bb-cc-lite demo
-  bb-cc-lite statusline
-  bb-cc-lite doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing]
+  ccverdict demo
+  ccverdict statusline
+  ccverdict doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing]
                     [--baseline] [--build-baseline] [--replay-baseline] [--clear-baseline]
-  bb-cc-lite uninstall [--scope local|project|user] [--force] [--purge]
+  ccverdict uninstall [--scope local|project|user] [--force] [--purge]
 
-Run bb-cc-lite with no arguments for a quick visual tour.
+Run ccverdict with no arguments for a quick visual tour.
 
 audit:
   audit [1] current session, [2] recent patterns, [3] instruction report.
-  Plain audit never writes; --apply writes only the marked bb-cc-lite CLAUDE.md block
+  Plain audit never writes; --apply writes only the marked ccverdict CLAUDE.md block
   after showing a diff, and --cleanup removes that block. Both back up first.
   --all-projects scans newest local transcripts across ~/.claude/projects.
 

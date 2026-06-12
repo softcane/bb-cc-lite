@@ -17,7 +17,7 @@ describe("feedback-outcome ledger", () => {
       { color: false }
     );
 
-    expect(rendered).toContain("Recent bb loop:");
+    expect(rendered).toContain("Recent ccverdict loop:");
     expect(rendered).toContain("1. Coach feedback: edits needed validation.");
     expect(rendered).toContain("2. Claude ran tests.");
     expect(rendered).toContain("3. Tests passed.");
@@ -26,7 +26,7 @@ describe("feedback-outcome ledger", () => {
 
   it("shows ignored repeated validation feedback without raw details", () => {
     const rawCommand = "make test --private-arg";
-    const rawPath = "/tmp/bb-cc-lite/private/project/src/secret.ts";
+    const rawPath = "/tmp/ccverdict/private/project/src/secret.ts";
     const rendered = formatFeedbackLedger(
       [
         outcome({

@@ -8,7 +8,7 @@ import type {
   RetryHazardTable
 } from "./recovery-stats.js";
 
-export const BASELINE_SCHEMA = "bb-cc-lite.baseline.v1";
+export const BASELINE_SCHEMA = "ccverdict.baseline.v1";
 export const BASELINE_VERSION = 1;
 export const BASELINE_READ_MAX_BYTES = 64 * 1024;
 export const PROJECT_BASELINE_MIN_SESSIONS = 10;

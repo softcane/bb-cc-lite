@@ -12,7 +12,7 @@ let tempDir: string;
 let storePath: string;
 
 beforeEach(async () => {
-  tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-audit-"));
+  tempDir = await mkdtemp(join(tmpdir(), "ccverdict-audit-"));
   storePath = join(tempDir, "events.json");
 });
 
@@ -47,7 +47,7 @@ describe("audit section 1 — current session", () => {
     const text = renderAuditReport(report);
 
     expect(report.session.hasHistory).toBe(false);
-    expect(text).toContain("No bb history for this project.");
+    expect(text).toContain("No ccverdict history for this project.");
     expect(text).not.toContain("blind_retry_loop");
   });
 
@@ -77,7 +77,7 @@ describe("audit section 1 — current session", () => {
     expect(text).toContain("edit_drift: edits unchecked since last check");
     expect(text).toContain("auth.ts");
     expect(text).toContain("unchecked");
-    expect(text).toContain("Recent bb loop:");
+    expect(text).toContain("Recent ccverdict loop:");
     expect(text).toMatch(/\d+s ago/u);
   });
 });
@@ -131,7 +131,7 @@ describe("audit section 3 — instruction report", () => {
 });
 
 describe("audit write behavior", () => {
-  it("plain audit performs zero writes outside bb's store", async () => {
+  it("plain audit performs zero writes outside ccverdict's store", async () => {
     const projectDir = join(tempDir, "frozen");
     await seedDecision({ projectDir, sessionKey: "f1", reasonCode: "blind_retry_loop", findings: [redFinding()] });
     await writeFileEnsured(join(projectDir, "CLAUDE.md"), "- Use existing context before rereading the same file.\n");
@@ -156,7 +156,7 @@ describe("audit write behavior", () => {
     const report = await runAuditReport({ projectDir, homeDir: tempDir, storePath, apply: true, now: new Date("2026-06-10T00:00:00.000Z") });
     const text = renderAuditReport(report);
     const afterFirst = await readFile(claudePath, "utf8");
-    const backups = (await readdir(projectDir)).filter((name) => name.startsWith("CLAUDE.md.bb-cc-lite-backup-"));
+    const backups = (await readdir(projectDir)).filter((name) => name.startsWith("CLAUDE.md.ccverdict-backup-"));
 
     expect(report.applied).toEqual([
       expect.objectContaining({ target: "project_claude", changed: true, backupCreated: true, blockAction: "created" })
@@ -165,9 +165,9 @@ describe("audit write behavior", () => {
       expect.objectContaining({ source: "generic_fallback", category: "validation_retry" })
     ]);
     expect(text).toContain("Proposed CLAUDE.md diff:");
-    expect(text).toContain("+<!-- bb-cc-lite audit:start -->");
+    expect(text).toContain("+<!-- ccverdict audit:start -->");
     expect(afterFirst).toContain("Keep this user line.");
-    expect(afterFirst).toContain("<!-- bb-cc-lite audit:start -->");
+    expect(afterFirst).toContain("<!-- ccverdict audit:start -->");
     expect(afterFirst).toContain("- Inspect the first failure before rerunning a failed check.");
     expect(backups).toHaveLength(1);
 
@@ -175,7 +175,7 @@ describe("audit write behavior", () => {
     await runAuditReport({ projectDir, homeDir: tempDir, storePath, apply: true, now: new Date("2026-06-10T01:00:00.000Z") });
     const afterSecond = await readFile(claudePath, "utf8");
     expect(afterSecond).toBe(afterFirst);
-    expect((await readdir(projectDir)).filter((name) => name.startsWith("CLAUDE.md.bb-cc-lite-backup-"))).toHaveLength(1);
+    expect((await readdir(projectDir)).filter((name) => name.startsWith("CLAUDE.md.ccverdict-backup-"))).toHaveLength(1);
   });
 
   it("never modifies a user-authored line and surfaces removals only as commented proposals", async () => {
@@ -217,7 +217,7 @@ describe("audit write behavior", () => {
       })
     ]);
     expect(text).toContain("Lesson candidates:");
-    expect(after).toContain("<!-- bb-cc-lite audit:start -->");
+    expect(after).toContain("<!-- ccverdict audit:start -->");
     expect(after).toContain(
       "- After changing code, run the smallest relevant check before the full gate. For example, for audit/report changes, run `npm test -- test/audit-report.test.ts test/instruction-correlator.test.ts` before `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build`."
     );
@@ -271,8 +271,8 @@ describe("audit write behavior", () => {
     await writePackage(projectDir, { test: "vitest run" });
     await writeAgents(projectDir);
     await writeFileEnsured(
-      join(projectDir, ".bb-cc-lite.json"),
-      `${JSON.stringify({ validationCommands: { tests: ["BB_CC_LITE_RAW_COMMAND_SENTINEL --secret"] } })}\n`
+      join(projectDir, ".ccverdict.json"),
+      `${JSON.stringify({ validationCommands: { tests: ["CCVERDICT_RAW_COMMAND_SENTINEL --secret"] } })}\n`
     );
     for (const sessionKey of ["p1", "p2", "p3"]) {
       await seedDecision({
@@ -282,7 +282,7 @@ describe("audit write behavior", () => {
         findings: [
           {
             ...redFinding("audit-report.ts"),
-            evidence: "BB_CC_LITE_RAW_PROMPT_SENTINEL /tmp/bb-cc-lite/private/worktree/src/secret.ts"
+            evidence: "CCVERDICT_RAW_PROMPT_SENTINEL /tmp/ccverdict/private/worktree/src/secret.ts"
           }
         ]
       });
@@ -292,7 +292,7 @@ describe("audit write behavior", () => {
     const after = await readFile(join(projectDir, "CLAUDE.md"), "utf8");
 
     expect(after).toContain("For example, for audit/report validation failures");
-    for (const sentinel of ["BB_CC_LITE_RAW_PROMPT_SENTINEL", "BB_CC_LITE_RAW_COMMAND_SENTINEL", "/tmp/bb-cc-lite/private/worktree"]) {
+    for (const sentinel of ["CCVERDICT_RAW_PROMPT_SENTINEL", "CCVERDICT_RAW_COMMAND_SENTINEL", "/tmp/ccverdict/private/worktree"]) {
       expect(after).not.toContain(sentinel);
     }
   });
@@ -307,15 +307,15 @@ describe("audit write behavior", () => {
         "",
         "Keep me.",
         "",
-        "<!-- bb-cc-lite audit:start -->",
-        "## bb-cc-lite lessons",
+        "<!-- ccverdict audit:start -->",
+        "## ccverdict lessons",
         "- New rule.",
-        "<!-- bb-cc-lite audit:end -->",
+        "<!-- ccverdict audit:end -->",
         "",
-        "<!-- bb-cc-lite improve:start -->",
-        "## bb-cc-lite lessons",
+        "<!-- ccverdict improve:start -->",
+        "## ccverdict lessons",
         "- Old rule.",
-        "<!-- bb-cc-lite improve:end -->",
+        "<!-- ccverdict improve:end -->",
         ""
       ].join("\n")
     );
@@ -327,8 +327,8 @@ describe("audit write behavior", () => {
       expect.objectContaining({ target: "project_claude", changed: true, backupCreated: true, blockAction: "removed" })
     ]);
     expect(after).toContain("Keep me.");
-    expect(after).not.toContain("bb-cc-lite audit:start");
-    expect(after).not.toContain("bb-cc-lite improve:start");
+    expect(after).not.toContain("ccverdict audit:start");
+    expect(after).not.toContain("ccverdict improve:start");
   });
 });
 

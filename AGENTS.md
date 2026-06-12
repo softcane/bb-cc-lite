@@ -1,23 +1,23 @@
-# bb-cc-lite Agent Map
+# ccverdict Agent Map
 
 This file governs the whole repository.
 
 ## Product Compass
 
-- `bb-cc-lite` is a small Claude Code statusline companion.
+- `ccverdict` is a small Claude Code statusline companion.
 - Core question: "What is the agent doing right now, and does its behavior look healthy?"
-- The statusline is a behavioral gauge with four lights: `green` (progressing), `blue` (drifting), `red` (intervene), `gray` (bb cannot see). No imperatives on the line, ever.
+- The statusline is a behavioral gauge with four lights: `green` (progressing), `blue` (drifting), `red` (intervene), `gray` (ccverdict cannot see). No imperatives on the line, ever.
 - The CLI must work without Envoy, Docker, Prometheus, a dashboard, a LiteLLM gateway, or extra credentials.
 - LiteLLM is pricing-data only in v1; do not add proxy/gateway/message-routing behavior.
 - The final confidence gate is real Claude Code behavior, not fixture tests alone.
 
 ## Command Map
 
-- `bb-cc-lite install [--scope local|project|user] [--replace] [--hooks] [--no-learn]`
-- `bb-cc-lite audit [--project <path>] [--all-projects] [--transcript <path>] [--recent <count>] [--global] [--apply] [--cleanup] [--json]`
-- `bb-cc-lite statusline`
-- `bb-cc-lite doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing] [--baseline] [--build-baseline] [--replay-baseline] [--clear-baseline]`
-- `bb-cc-lite uninstall [--scope local|project|user] [--purge]`
+- `ccverdict install [--scope local|project|user] [--replace] [--hooks] [--no-learn]`
+- `ccverdict audit [--project <path>] [--all-projects] [--transcript <path>] [--recent <count>] [--global] [--apply] [--cleanup] [--json]`
+- `ccverdict statusline`
+- `ccverdict doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing] [--baseline] [--build-baseline] [--replay-baseline] [--clear-baseline]`
+- `ccverdict uninstall [--scope local|project|user] [--purge]`
 - Deprecated pointers (one minor version): `why`, `improve`, `learn` -> `audit`; `unlearn` -> `uninstall --purge`.
 
 ## Source Map
@@ -77,7 +77,7 @@ This file governs the whole repository.
 - Run `npm test` after behavior changes.
 - Run `npm run build` after source changes; `dist/` is the published CLI output.
 - Run `npm run prepublishOnly` for the full release-style gate.
-- Run `npm pack` when validating `npx --package <tarball> bb-cc-lite`.
+- Run `npm pack` when validating `npx --package <tarball> ccverdict`.
 
 ## Privacy Rules
 
@@ -97,7 +97,7 @@ This file governs the whole repository.
 - Prefer concrete evidence plus concrete action on wide terminals.
 - Degrade gracefully on narrow terminals.
 - `Stop` should include short inline `why:` when space allows.
-- ANSI color is allowed only where statusline supports it; respect `NO_COLOR` and `BB_CC_LITE_COLOR=0`.
+- ANSI color is allowed only where statusline supports it; respect `NO_COLOR` and `CCVERDICT_COLOR=0`.
 - Do not let malformed JSON, missing transcript files, or unknown fields crash the statusline.
 
 ## Install And Uninstall Rules
@@ -105,9 +105,9 @@ This file governs the whole repository.
 - Existing Claude Code `statusLine` must be preserved by default.
 - Only replace an existing statusline when the user passes `--replace`.
 - Uninstall must restore the previous statusline when a valid backup exists.
-- Uninstall must remove bb-owned hooks without deleting unrelated hooks.
+- Uninstall must remove ccverdict-owned hooks without deleting unrelated hooks.
 - Do not silently edit global/user Claude settings when local/project scope is enough.
-- Tests should use temp `--project`, `--home`, and `BB_CC_LITE_HOME` paths.
+- Tests should use temp `--project`, `--home`, and `CCVERDICT_HOME` paths.
 
 ## Claude Code QA Map
 
@@ -118,7 +118,7 @@ This file governs the whole repository.
   install in disposable repo, start Claude Code, confirm statusline appears,
   run a simple read-only prompt for `Healthy`,
   create repeated failing command/test behavior for `Careful` then `Stop`,
-  run `bb-cc-lite why`,
+  run `ccverdict why`,
   uninstall and confirm settings are restored.
 
 ## Change Discipline

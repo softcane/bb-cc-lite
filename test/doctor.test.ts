@@ -22,8 +22,8 @@ describe("doctor", () => {
   beforeEach(async () => {
     workspace = await createTempWorkspace();
     restoreEnv = setIsolatedEnv({
-      BB_CC_LITE_HOME: workspace.appHome,
-      BB_CC_LITE_PRICING_CACHE: join(workspace.appHome, "pricing.json"),
+      CCVERDICT_HOME: workspace.appHome,
+      CCVERDICT_PRICING_CACHE: join(workspace.appHome, "pricing.json"),
       ANTHROPIC_BASE_URL: undefined
     });
   });
@@ -43,7 +43,7 @@ describe("doctor", () => {
     });
     await Promise.all([
       writeFile(transcriptPath, "{}", "utf8"),
-      writeFile(process.env.BB_CC_LITE_PRICING_CACHE as string, '{"models":{}}\n', "utf8")
+      writeFile(process.env.CCVERDICT_PRICING_CACHE as string, '{"models":{}}\n', "utf8")
     ]);
 
     const checks = await runDoctor({
@@ -120,9 +120,9 @@ describe("doctor", () => {
 
   it("shows a safe personal baseline summary without exposing raw fields", async () => {
     const dirs = mustHaveWorkspace(workspace);
-    const rawPathSentinel = "/tmp/bb-cc-lite/private/worktree/src/secret.ts";
+    const rawPathSentinel = "/tmp/ccverdict/private/worktree/src/secret.ts";
     await writeJson(join(dirs.appHome, "baseline.json"), {
-      schema: "bb-cc-lite.baseline.v1",
+      schema: "ccverdict.baseline.v1",
       version: 1,
       createdAt: "2026-05-19T12:00:00.000Z",
       updatedAt: "2026-05-19T12:00:00.000Z",
@@ -279,12 +279,12 @@ describe("doctor", () => {
     const eventStorePath = join(dirs.appHome, "events.json");
     await Promise.all([
       writeJson(baselinePath, {
-        schema: "bb-cc-lite.baseline.v1",
+        schema: "ccverdict.baseline.v1",
         version: 1,
         source: { sessionsSeen: 1, transcriptFilesScanned: 1 }
       }),
       writeJson(projectBaselineFile, {
-        schema: "bb-cc-lite.baseline.v1",
+        schema: "ccverdict.baseline.v1",
         version: 1,
         project: { kind: "hashed_project", key: projectKey },
         source: { sessionsSeen: 3, transcriptFilesScanned: 3 }
@@ -320,7 +320,7 @@ describe("doctor", () => {
               type: "tool_use",
               id: "bash-test",
               name: "Bash",
-              input: { command: "npm test -- BB_CC_LITE_RAW_COMMAND_SENTINEL" }
+              input: { command: "npm test -- CCVERDICT_RAW_COMMAND_SENTINEL" }
             }
           ]
         }
@@ -333,7 +333,7 @@ describe("doctor", () => {
               type: "tool_result",
               tool_use_id: "bash-test",
               is_error: false,
-              content: "BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL"
+              content: "CCVERDICT_RAW_TOOL_OUTPUT_SENTINEL"
             }
           ]
         }
@@ -353,16 +353,16 @@ describe("doctor", () => {
     const baselinePath = join(dirs.appHome, "baseline.json");
     await expect(pathExists(baselinePath)).resolves.toBe(true);
     const serialized = await readFile(baselinePath, "utf8");
-    expect(serialized).not.toContain("BB_CC_LITE_RAW_COMMAND_SENTINEL");
-    expect(serialized).not.toContain("BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL");
+    expect(serialized).not.toContain("CCVERDICT_RAW_COMMAND_SENTINEL");
+    expect(serialized).not.toContain("CCVERDICT_RAW_TOOL_OUTPUT_SENTINEL");
     const projectKey = projectKeyFromPath(dirs.projectDir);
     const projectBaselineFile = projectBaselinePath({ appHomePath: dirs.appHome, projectKey });
     await expect(pathExists(projectBaselineFile)).resolves.toBe(true);
     const serializedProjectBaseline = await readFile(projectBaselineFile, "utf8");
     expect(serializedProjectBaseline).toContain(projectKey);
     expect(serializedProjectBaseline).not.toContain(dirs.projectDir);
-    expect(serializedProjectBaseline).not.toContain("BB_CC_LITE_RAW_COMMAND_SENTINEL");
-    expect(serializedProjectBaseline).not.toContain("BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL");
+    expect(serializedProjectBaseline).not.toContain("CCVERDICT_RAW_COMMAND_SENTINEL");
+    expect(serializedProjectBaseline).not.toContain("CCVERDICT_RAW_TOOL_OUTPUT_SENTINEL");
   });
 
   it("reports aggregate-only historical replay metrics", async () => {
@@ -381,7 +381,7 @@ describe("doctor", () => {
       JSON.stringify({
         type: "user",
         message: {
-          content: [{ type: "tool_result", tool_use_id: "older-pass", is_error: false, content: "BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL" }]
+          content: [{ type: "tool_result", tool_use_id: "older-pass", is_error: false, content: "CCVERDICT_RAW_TOOL_OUTPUT_SENTINEL" }]
         }
       })
     ]);
@@ -404,7 +404,7 @@ describe("doctor", () => {
     expect(replay.message).toContain("category coverage");
     expect(replay.message).not.toContain(dirs.homeDir);
     expect(replay.message).not.toContain("npm test");
-    expect(replay.message).not.toContain("BB_CC_LITE_RAW");
+    expect(replay.message).not.toContain("CCVERDICT_RAW");
   });
 });
 
@@ -426,7 +426,7 @@ function mustHaveWorkspace(workspace: TempWorkspace | undefined): TempWorkspace 
 async function createFakeRuntime(root: string): Promise<string> {
   const distDir = join(root, `dist-${randomUUID()}`);
   await mkdir(distDir, { recursive: true });
-  await writeFile(join(distDir, "cli.js"), "console.log('fake bb-cc-lite runtime');\n", "utf8");
+  await writeFile(join(distDir, "cli.js"), "console.log('fake ccverdict runtime');\n", "utf8");
   return join(distDir, "cli.js");
 }
 
@@ -437,7 +437,7 @@ async function writeTranscript(path: string, lines: string[]): Promise<void> {
 
 function projectBaseline(projectKey: string, sessionsSeen: number): PersonalBaseline {
   return {
-    schema: "bb-cc-lite.baseline.v1",
+    schema: "ccverdict.baseline.v1",
     version: 1,
     createdAt: "2026-05-19T12:00:00.000Z",
     updatedAt: "2026-05-19T12:00:00.000Z",
@@ -523,13 +523,13 @@ function failedBashValidation(id: string): string[] {
     JSON.stringify({
       type: "assistant",
       message: {
-        content: [{ type: "tool_use", id, name: "Bash", input: { command: "npm test -- BB_CC_LITE_RAW_COMMAND_SENTINEL" } }]
+        content: [{ type: "tool_use", id, name: "Bash", input: { command: "npm test -- CCVERDICT_RAW_COMMAND_SENTINEL" } }]
       }
     }),
     JSON.stringify({
       type: "user",
       message: {
-        content: [{ type: "tool_result", tool_use_id: id, is_error: true, content: "BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL" }]
+        content: [{ type: "tool_result", tool_use_id: id, is_error: true, content: "CCVERDICT_RAW_TOOL_OUTPUT_SENTINEL" }]
       }
     })
   ];

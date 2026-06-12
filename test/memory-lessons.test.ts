@@ -13,18 +13,18 @@ import { projectKeyFromPath } from "../src/paths.js";
 import type { TranscriptSummary } from "../src/types.js";
 
 const privacySentinels = [
-  "BB_CC_LITE_RAW_PROMPT_SENTINEL",
-  "BB_CC_LITE_RAW_COMMAND_SENTINEL",
-  "BB_CC_LITE_TOOL_OUTPUT_SENTINEL",
-  "BB_CC_LITE_FILE_CONTENT_SENTINEL",
-  "BB_CC_LITE_RAW_SESSION_SENTINEL",
+  "CCVERDICT_RAW_PROMPT_SENTINEL",
+  "CCVERDICT_RAW_COMMAND_SENTINEL",
+  "CCVERDICT_TOOL_OUTPUT_SENTINEL",
+  "CCVERDICT_FILE_CONTENT_SENTINEL",
+  "CCVERDICT_RAW_SESSION_SENTINEL",
   "mcp__privateServer__rawPrivacyTool",
-  "/tmp/bb-cc-lite/private/workspace/src/secret.ts"
+  "/tmp/ccverdict/private/workspace/src/secret.ts"
 ];
 
 describe("lesson memory", () => {
   it("stores lesson cards with only allowlisted safe fields", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-lessons-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-lessons-"));
     try {
       const projectDir = join(tempDir, "project-with-private-name");
       const projectKey = projectKeyFromPath(projectDir);
@@ -68,7 +68,7 @@ describe("lesson memory", () => {
   });
 
   it("stores broader safe lesson cards without injecting them into live SessionStart context", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-lessons-broad-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-lessons-broad-"));
     try {
       const projectDir = join(tempDir, "project");
       const projectKey = projectKeyFromPath(projectDir);
@@ -118,7 +118,7 @@ describe("lesson memory", () => {
   });
 
   it("does not inject sparse, stale, or corrupt lesson memory", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-lessons-sparse-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-lessons-sparse-"));
     try {
       const projectKey = projectKeyFromPath(join(tempDir, "project"));
       await recordLessonFromSummary({
@@ -152,7 +152,7 @@ describe("lesson memory", () => {
   });
 
   it("injects safe lesson context at SessionStart only when learning is enabled", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-lessons-hook-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-lessons-hook-"));
     try {
       const projectDir = join(tempDir, "project");
       const projectKey = projectKeyFromPath(projectDir);
@@ -188,7 +188,7 @@ describe("lesson memory", () => {
       expect(learned).toMatchObject({
         hookSpecificOutput: {
           hookEventName: "SessionStart",
-          additionalContext: expect.stringContaining("bb-cc-lite lesson")
+          additionalContext: expect.stringContaining("ccverdict lesson")
         }
       });
       expect(disabled).toBeUndefined();
@@ -200,7 +200,7 @@ describe("lesson memory", () => {
   });
 
   it("creates lesson memory from SessionEnd hook state when learning is enabled", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-lessons-session-end-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-lessons-session-end-"));
     try {
       const projectDir = join(tempDir, "project");
       const storePath = join(tempDir, "events.json");
@@ -247,7 +247,7 @@ describe("lesson memory", () => {
       expect(sessionEnd).toBeUndefined();
       await expect(
         lessonContextForProject({ appHomePath: tempDir, projectKey, now: new Date("2026-05-23T00:00:00.000Z") })
-      ).resolves.toContain("bb-cc-lite lesson");
+      ).resolves.toContain("ccverdict lesson");
       const memoryText = await readFile(lessonMemoryPath({ appHomePath: tempDir, projectKey }), "utf8");
       expect(memoryText).not.toContain(projectDir);
       expectNoPrivacySentinels(memoryText);
@@ -257,7 +257,7 @@ describe("lesson memory", () => {
   });
 
   it("clears lesson memory", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-lessons-clear-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-lessons-clear-"));
     try {
       const projectKey = projectKeyFromPath(join(tempDir, "project"));
       await recordLessonFromSummary({

@@ -62,8 +62,8 @@ jobs:
           set -euo pipefail
           pack_dir="$(mktemp -d)"
           npm pack --pack-destination "$pack_dir"
-          tarball="$(find "$pack_dir" -name 'bb-cc-lite-*.tgz' -print -quit)"
-          npx -y --package "$tarball" bb-cc-lite --help
+          tarball="$(find "$pack_dir" -name 'ccverdict-*.tgz' -print -quit)"
+          npx -y --package "$tarball" ccverdict --help
 
       - name: Prepare smoke sandbox
         shell: bash
@@ -73,8 +73,8 @@ jobs:
           mkdir -p "$qa_root/project" "$qa_root/home" "$qa_root/app"
           {
             printf 'QA_ROOT=%s\n' "$qa_root"
-            printf 'BB_CC_LITE_HOME=%s\n' "$qa_root/app"
-            printf 'BB_CC_LITE_STORE=%s\n' "$qa_root/app/events.json"
+            printf 'CCVERDICT_HOME=%s\n' "$qa_root/app"
+            printf 'CCVERDICT_STORE=%s\n' "$qa_root/app/events.json"
           } >> "$GITHUB_ENV"
 
       - name: Smoke install
@@ -84,13 +84,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' '{"session_id":"ci-smoke","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"npm test"}}' | node dist/cli.js hook --bb-cc-lite-hook PostToolUseFailure
+          printf '%s\n' '{"session_id":"ci-smoke","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"npm test"}}' | node dist/cli.js hook --ccverdict-hook PostToolUseFailure
 
       - name: Smoke hook ingestion repeated failure
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' '{"session_id":"ci-smoke","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"npm test"}}' | node dist/cli.js hook --bb-cc-lite-hook PostToolUseFailure
+          printf '%s\n' '{"session_id":"ci-smoke","hook_event_name":"PostToolUseFailure","tool_name":"Bash","tool_input":{"command":"npm test"}}' | node dist/cli.js hook --ccverdict-hook PostToolUseFailure
 
       - name: Smoke statusline
         shell: bash

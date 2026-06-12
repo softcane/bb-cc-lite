@@ -4,8 +4,8 @@ import { appHome } from "./paths.js";
 import type { DecisionConfidence, TranscriptSummary } from "./types.js";
 
 export const LESSON_MEMORY_DIR_NAME = "project-lessons";
-export const LESSON_MEMORY_SCHEMA = "bb-cc-lite.lesson-memory.v1";
-export const LESSON_CARD_SCHEMA = "bb-cc-lite.lesson-card.v1";
+export const LESSON_MEMORY_SCHEMA = "ccverdict.lesson-memory.v1";
+export const LESSON_CARD_SCHEMA = "ccverdict.lesson-card.v1";
 export const LESSON_MEMORY_VERSION = 1;
 const LESSON_MEMORY_MAX_BYTES = 64 * 1024;
 const LESSON_DECAY_MS = 30 * 24 * 60 * 60 * 1000;
@@ -311,7 +311,7 @@ function isExpired(lesson: LessonCard, now: Date): boolean {
 
 function lessonMessage(wordingKey: string): string | undefined {
   if (wordingKey.startsWith("validation_repeated:")) {
-    return "bb-cc-lite lesson: similar validation retries in this project rarely recovered after repeated failures. Inspect the first failure, make one targeted fix, then run one focused check.";
+    return "ccverdict lesson: similar validation retries in this project rarely recovered after repeated failures. Inspect the first failure, make one targeted fix, then run one focused check.";
   }
   return undefined;
 }

@@ -149,8 +149,8 @@ describe("flap stability", () => {
 
 describe("renderer width tiers and color fallback", () => {
   it("degrades from full to compact to minimal while keeping the dot", () => {
-    const previousColor = process.env.BB_CC_LITE_COLOR;
-    process.env.BB_CC_LITE_COLOR = "0";
+    const previousColor = process.env.CCVERDICT_COLOR;
+    process.env.CCVERDICT_COLOR = "0";
     try {
       const gauge = buildGauge(blueDrift.input, blueDrift.transcript);
       expect(renderGauge(gauge, 120)).toBe("◐ editing · 3 files, 2 unchecked (auth.ts…) · ctx 42%");
@@ -159,7 +159,7 @@ describe("renderer width tiers and color fallback", () => {
       expect(minimal).toBe("◐ 2✎? 42%");
       expect(minimal.startsWith("◐")).toBe(true);
     } finally {
-      restoreEnv("BB_CC_LITE_COLOR", previousColor);
+      restoreEnv("CCVERDICT_COLOR", previousColor);
     }
   });
 
@@ -289,7 +289,7 @@ describe("edit ledger clear/no-clear matrix", () => {
 
 describe("store schema v2", () => {
   it("round-trips gauge fields and migrates version on first write", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "bb-cc-lite-gauge-store-"));
+    const dir = await mkdtemp(join(tmpdir(), "ccverdict-gauge-store-"));
     try {
       const storePath = join(dir, "events.json");
       const decision: Decision = {
@@ -329,7 +329,7 @@ describe("store schema v2", () => {
   });
 
   it("stores exactly the gauge-era key set with no advisor fields", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "bb-cc-lite-gauge-keys-"));
+    const dir = await mkdtemp(join(tmpdir(), "ccverdict-gauge-keys-"));
     try {
       const storePath = join(dir, "events.json");
       const summary = blueDrift.transcript;
@@ -380,7 +380,7 @@ describe("store schema v2", () => {
   });
 
   it("loads a mixed-history store (v1 + 0.2-shape + gauge-only) without error", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "bb-cc-lite-gauge-mixed-"));
+    const dir = await mkdtemp(join(tmpdir(), "ccverdict-gauge-mixed-"));
     try {
       const storePath = join(dir, "events.json");
       await writeFile(
@@ -447,7 +447,7 @@ describe("store schema v2", () => {
   });
 
   it("loads a pre-existing v1 store without error and reports version 1 until first write", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "bb-cc-lite-gauge-v1-"));
+    const dir = await mkdtemp(join(tmpdir(), "ccverdict-gauge-v1-"));
     try {
       const storePath = join(dir, "events.json");
       await writeFile(
@@ -484,7 +484,7 @@ describe("store schema v2", () => {
   });
 
   it("never cross-contaminates latest-decision queries between two projects", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "bb-cc-lite-gauge-two-writer-"));
+    const dir = await mkdtemp(join(tmpdir(), "ccverdict-gauge-two-writer-"));
     try {
       const storePath = join(dir, "events.json");
       const projectA = "a".repeat(64);
@@ -545,8 +545,8 @@ describe("file-hint chain (grill I3)", () => {
 
 describe("ctx highlight (grill B5)", () => {
   it("highlights 80-91% while leaving the dot green", () => {
-    const previous = process.env.BB_CC_LITE_COLOR;
-    process.env.BB_CC_LITE_COLOR = "0";
+    const previous = process.env.CCVERDICT_COLOR;
+    process.env.CCVERDICT_COLOR = "0";
     try {
       for (const percent of [80, 85, 91]) {
         const line = render(input({ contextPercent: percent }), transcript());
@@ -556,27 +556,27 @@ describe("ctx highlight (grill B5)", () => {
       expect(render(input({ contextPercent: 79 }), transcript())).toContain("ctx 79%");
       expect(render(input({ contextPercent: 79 }), transcript())).not.toContain("ctx 79%!");
     } finally {
-      restoreEnv("BB_CC_LITE_COLOR", previous);
+      restoreEnv("CCVERDICT_COLOR", previous);
     }
   });
 
   it("flips to a red dot at 92% with no highlight marker", () => {
-    const previous = process.env.BB_CC_LITE_COLOR;
-    process.env.BB_CC_LITE_COLOR = "0";
+    const previous = process.env.CCVERDICT_COLOR;
+    process.env.CCVERDICT_COLOR = "0";
     try {
       const line = render(input({ contextPercent: 92 }), transcript());
       expect(line.startsWith("■")).toBe(true);
       expect(line).not.toContain("ctx 92%!");
     } finally {
-      restoreEnv("BB_CC_LITE_COLOR", previous);
+      restoreEnv("CCVERDICT_COLOR", previous);
     }
   });
 
   it("emits an ANSI-colored ctx segment when color is on, dot still green", () => {
     const previousNoColor = process.env.NO_COLOR;
-    const previousFlag = process.env.BB_CC_LITE_COLOR;
+    const previousFlag = process.env.CCVERDICT_COLOR;
     delete process.env.NO_COLOR;
-    delete process.env.BB_CC_LITE_COLOR;
+    delete process.env.CCVERDICT_COLOR;
     try {
       const raw = renderGauge(buildGauge(input({ contextPercent: 85 }), transcript()), 120);
       expect(stripAnsi(raw)).toContain("ctx 85%");
@@ -586,7 +586,7 @@ describe("ctx highlight (grill B5)", () => {
       expect(stripAnsi(raw).startsWith("●")).toBe(true);
     } finally {
       restoreEnv("NO_COLOR", previousNoColor);
-      restoreEnv("BB_CC_LITE_COLOR", previousFlag);
+      restoreEnv("CCVERDICT_COLOR", previousFlag);
     }
   });
 });

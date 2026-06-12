@@ -11,7 +11,7 @@ permissions:
 jobs:
   publish:
     name: Publish to npm
-    if: github.repository == 'softcane/bb-cc-lite'
+    if: github.repository == 'softcane/ccverdict'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -56,8 +56,8 @@ jobs:
           set -euo pipefail
           pack_dir="$(mktemp -d)"
           npm pack --pack-destination "$pack_dir"
-          tarball="$(find "$pack_dir" -name 'bb-cc-lite-*.tgz' -print -quit)"
-          npx -y --package "$tarball" bb-cc-lite --help
+          tarball="$(find "$pack_dir" -name 'ccverdict-*.tgz' -print -quit)"
+          npx -y --package "$tarball" ccverdict --help
 
       - name: Publish to npm
         run: npm publish --access public --ignore-scripts

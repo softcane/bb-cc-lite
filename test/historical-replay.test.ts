@@ -6,7 +6,7 @@ import { evaluateHistoricalReplay, formatHistoricalReplayMetrics } from "../src/
 
 describe("historical replay evaluation", () => {
   it("prints aggregate-only holdout metrics from synthetic JSONL history", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-replay-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-replay-"));
     try {
       const claudeProjectsDir = join(tempDir, ".claude", "projects", "project");
       await mkdir(claudeProjectsDir, { recursive: true });
@@ -69,21 +69,21 @@ describe("historical replay evaluation", () => {
       expect(formatted).toContain("category coverage tests:2");
       expect(formatted).not.toContain(claudeProjectsDir);
       expect(formatted).not.toContain("npm test");
-      expect(formatted).not.toContain("BB_CC_LITE_RAW");
+      expect(formatted).not.toContain("CCVERDICT_RAW");
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
 
   it("keeps MCP and session identifiers out of replay metrics", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-replay-private-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-replay-private-"));
     try {
       const claudeProjectsDir = join(tempDir, ".claude", "projects", "project");
       await mkdir(claudeProjectsDir, { recursive: true });
-      const rawMcpName = "mcp__privateServer__BB_CC_LITE_RAW_MCP_SENTINEL";
-      const rawSessionId = "BB_CC_LITE_RAW_SESSION_SENTINEL";
-      const rawPrompt = "BB_CC_LITE_RAW_PROMPT_SENTINEL";
-      const rawPath = "/private/BB_CC_LITE_RAW_PATH_SENTINEL.ts";
+      const rawMcpName = "mcp__privateServer__CCVERDICT_RAW_MCP_SENTINEL";
+      const rawSessionId = "CCVERDICT_RAW_SESSION_SENTINEL";
+      const rawPrompt = "CCVERDICT_RAW_PROMPT_SENTINEL";
+      const rawPath = "/private/CCVERDICT_RAW_PATH_SENTINEL.ts";
 
       const older = join(claudeProjectsDir, "older-mcp-recovered.jsonl");
       const newer = join(claudeProjectsDir, "newer-mcp-unrecovered.jsonl");
@@ -108,7 +108,7 @@ describe("historical replay evaluation", () => {
         }
       });
       expect(formatted).toContain("category coverage mcp:1");
-      for (const sentinel of [rawMcpName, rawSessionId, rawPrompt, rawPath, "BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL"]) {
+      for (const sentinel of [rawMcpName, rawSessionId, rawPrompt, rawPath, "CCVERDICT_RAW_TOOL_OUTPUT_SENTINEL"]) {
         expect(formatted).not.toContain(sentinel);
         expect(serializedMetrics).not.toContain(sentinel);
       }
@@ -120,7 +120,7 @@ describe("historical replay evaluation", () => {
   });
 
   it("measures safe cost and duration before warning when transcript metrics are available", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-replay-budget-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-replay-budget-"));
     try {
       const claudeProjectsDir = join(tempDir, ".claude", "projects", "project");
       await mkdir(claudeProjectsDir, { recursive: true });
@@ -162,7 +162,7 @@ async function setMtime(path: string, timestamp: string): Promise<void> {
 
 function recoveredTestTranscript(prefix: string): string[] {
   return [
-    ...failedBashCommand(`${prefix}-fail-1`, "npm test -- BB_CC_LITE_RAW_COMMAND_SENTINEL"),
+    ...failedBashCommand(`${prefix}-fail-1`, "npm test -- CCVERDICT_RAW_COMMAND_SENTINEL"),
     ...successfulEdit(`${prefix}-edit`),
     ...failedBashCommand(`${prefix}-fail-2`, "npm test"),
     ...successfulBashCommand(`${prefix}-pass`, "npm test")
@@ -171,7 +171,7 @@ function recoveredTestTranscript(prefix: string): string[] {
 
 function unrecoveredBlindTestTranscript(prefix: string): string[] {
   return [
-    ...failedBashCommand(`${prefix}-fail-1`, "npm test -- BB_CC_LITE_RAW_COMMAND_SENTINEL"),
+    ...failedBashCommand(`${prefix}-fail-1`, "npm test -- CCVERDICT_RAW_COMMAND_SENTINEL"),
     ...failedBashCommand(`${prefix}-fail-2`, "npm test"),
     ...failedBashCommand(`${prefix}-fail-3`, "npm test")
   ];
@@ -179,7 +179,7 @@ function unrecoveredBlindTestTranscript(prefix: string): string[] {
 
 function unrecoveredBlindTestTranscriptWithMetrics(prefix: string): string[] {
   return [
-    toolUse(`${prefix}-fail-1`, "Bash", { command: "npm test -- BB_CC_LITE_RAW_COMMAND_SENTINEL" }),
+    toolUse(`${prefix}-fail-1`, "Bash", { command: "npm test -- CCVERDICT_RAW_COMMAND_SENTINEL" }),
     toolResultWithMetrics(`${prefix}-fail-1`, true, "2026-05-19T00:00:01.000Z", 0.04, 1000),
     toolUse(`${prefix}-fail-2`, "Bash", { command: "npm test" }),
     toolResultWithMetrics(`${prefix}-fail-2`, true, "2026-05-19T00:02:00.000Z", 0.12, 120000),
@@ -212,13 +212,13 @@ function unrecoveredMcpTranscript(prefix: string, rawMcpName: string, rawSession
 
 function successfulEdit(id: string): string[] {
   return [
-    toolUse(id, "Edit", { file_path: "/private/BB_CC_LITE_RAW_PATH_SENTINEL.ts", new_string: "private" }),
+    toolUse(id, "Edit", { file_path: "/private/CCVERDICT_RAW_PATH_SENTINEL.ts", new_string: "private" }),
     toolResult(id, false)
   ];
 }
 
 function successfulEditWithPath(id: string, rawPath: string): string[] {
-  return [toolUse(id, "Edit", { file_path: rawPath, new_string: "BB_CC_LITE_RAW_FILE_CONTENT_SENTINEL" }), toolResult(id, false)];
+  return [toolUse(id, "Edit", { file_path: rawPath, new_string: "CCVERDICT_RAW_FILE_CONTENT_SENTINEL" }), toolResult(id, false)];
 }
 
 function failedBashCommand(id: string, command: string): string[] {
@@ -265,7 +265,7 @@ function toolResult(id: string, isError: boolean): string {
           type: "tool_result",
           tool_use_id: id,
           is_error: isError,
-          content: "BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL"
+          content: "CCVERDICT_RAW_TOOL_OUTPUT_SENTINEL"
         }
       ]
     }
@@ -286,7 +286,7 @@ function toolResultWithMetrics(id: string, isError: boolean, timestamp: string, 
           type: "tool_result",
           tool_use_id: id,
           is_error: isError,
-          content: "BB_CC_LITE_RAW_TOOL_OUTPUT_SENTINEL"
+          content: "CCVERDICT_RAW_TOOL_OUTPUT_SENTINEL"
         }
       ]
     }

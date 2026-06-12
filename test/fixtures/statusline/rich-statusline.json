@@ -1,7 +1,7 @@
 {
   "session_id": "session-fixture-001",
-  "transcript_path": "/tmp/bb-cc-lite/transcripts/session.jsonl",
-  "cwd": "/tmp/bb-cc-lite/workspace",
+  "transcript_path": "/tmp/ccverdict/transcripts/session.jsonl",
+  "cwd": "/tmp/ccverdict/workspace",
   "model": {
     "id": "claude-sonnet-4-5",
     "display_name": "Claude Sonnet 4.5"
@@ -37,9 +37,9 @@
     "context_tokens": 94000
   },
   "terminal_width": 132,
-  "raw_prompt": "BB_CC_LITE_RAW_PROMPT_SENTINEL must not appear in parsed status input",
-  "tool_output": "BB_CC_LITE_TOOL_OUTPUT_SENTINEL must not appear in parsed status input",
+  "raw_prompt": "CCVERDICT_RAW_PROMPT_SENTINEL must not appear in parsed status input",
+  "tool_output": "CCVERDICT_TOOL_OUTPUT_SENTINEL must not appear in parsed status input",
   "environment": {
-    "ANTHROPIC_API_KEY": "BB_CC_LITE_API_KEY_SENTINEL"
+    "ANTHROPIC_API_KEY": "CCVERDICT_API_KEY_SENTINEL"
   }
 }

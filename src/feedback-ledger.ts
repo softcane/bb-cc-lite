@@ -22,7 +22,7 @@ export interface FeedbackLedgerOptions {
 
 export function formatFeedbackLedger(outcomes: StoredFeedbackOutcome[], options: FeedbackLedgerOptions = {}): string | undefined {
   const color = options.color === true;
-  const label = options.label ?? "Recent bb loop";
+  const label = options.label ?? "Recent ccverdict loop";
   const outcome = outcomes.filter((candidate) => candidate.kind === "feedback_outcome").at(-1);
   if (!outcome) {
     return undefined;

@@ -873,7 +873,7 @@ function baselineFromCounters(
 ): PersonalBaseline {
   const timestamp = now.toISOString();
   return {
-    schema: "bb-cc-lite.baseline.v1",
+    schema: "ccverdict.baseline.v1",
     version: 1,
     createdAt: timestamp,
     updatedAt: timestamp,

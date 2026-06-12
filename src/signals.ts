@@ -99,11 +99,11 @@ export function normalizeBudgetThresholds(thresholds: BudgetThresholds | undefin
 }
 
 export function budgetThresholdsFromEnv(env: NodeJS.ProcessEnv = process.env): BudgetThresholds | undefined {
-  const costUsd = numberEnv(env, "BB_CC_LITE_BUDGET_COST_USD", "BB_CC_LITE_COST_BUDGET_USD");
-  const costDeltaUsd = numberEnv(env, "BB_CC_LITE_BUDGET_COST_DELTA_USD", "BB_CC_LITE_COST_DELTA_BUDGET_USD");
+  const costUsd = numberEnv(env, "CCVERDICT_BUDGET_COST_USD", "CCVERDICT_COST_BUDGET_USD");
+  const costDeltaUsd = numberEnv(env, "CCVERDICT_BUDGET_COST_DELTA_USD", "CCVERDICT_COST_DELTA_BUDGET_USD");
   const durationMs =
-    numberEnv(env, "BB_CC_LITE_BUDGET_DURATION_MS", "BB_CC_LITE_DURATION_BUDGET_MS") ??
-    minutesEnv(env, "BB_CC_LITE_BUDGET_DURATION_MINUTES", "BB_CC_LITE_DURATION_BUDGET_MINUTES");
+    numberEnv(env, "CCVERDICT_BUDGET_DURATION_MS", "CCVERDICT_DURATION_BUDGET_MS") ??
+    minutesEnv(env, "CCVERDICT_BUDGET_DURATION_MINUTES", "CCVERDICT_DURATION_BUDGET_MINUTES");
   return costUsd === undefined && costDeltaUsd === undefined && durationMs === undefined
     ? undefined
     : {

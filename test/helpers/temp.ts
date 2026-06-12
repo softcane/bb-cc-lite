@@ -11,7 +11,7 @@ export interface TempWorkspace {
 }
 
 export async function createTempWorkspace(): Promise<TempWorkspace> {
-  const root = await mkdtemp(join(tmpdir(), "bb-cc-lite-test-"));
+  const root = await mkdtemp(join(tmpdir(), "ccverdict-test-"));
   const workspace = {
     root,
     projectDir: join(root, "project"),

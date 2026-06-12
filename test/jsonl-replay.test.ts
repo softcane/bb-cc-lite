@@ -62,17 +62,17 @@ const REPLAY_CASES: ReplayCase[] = [
 ];
 
 const PRIVACY_SENTINELS = [
-  "BB_CC_LITE_RAW_PROMPT_SENTINEL",
-  "BB_CC_LITE_TOOL_OUTPUT_SENTINEL",
-  "BB_CC_LITE_FILE_CONTENT_SENTINEL",
-  "BB_CC_LITE_API_KEY_SENTINEL",
-  "BB_CC_LITE_RAW_COMMAND_SENTINEL",
-  "BB_CC_LITE_RAW_SESSION_SENTINEL",
-  "BB_CC_LITE_RAW_PATH_SENTINEL",
-  "BB_CC_LITE_RAW_MCP_SENTINEL",
-  "BB_CC_LITE_RAW_TOOL_NAME_SENTINEL",
-  "mcp__bbcc_private__rawPrivacyTool",
-  "/tmp/bb-cc-lite-fixture/"
+  "CCVERDICT_RAW_PROMPT_SENTINEL",
+  "CCVERDICT_TOOL_OUTPUT_SENTINEL",
+  "CCVERDICT_FILE_CONTENT_SENTINEL",
+  "CCVERDICT_API_KEY_SENTINEL",
+  "CCVERDICT_RAW_COMMAND_SENTINEL",
+  "CCVERDICT_RAW_SESSION_SENTINEL",
+  "CCVERDICT_RAW_PATH_SENTINEL",
+  "CCVERDICT_RAW_MCP_SENTINEL",
+  "CCVERDICT_RAW_TOOL_NAME_SENTINEL",
+  "mcp__ccverdict_private__rawPrivacyTool",
+  "/tmp/ccverdict-fixture/"
 ];
 
 describe("real-shape sanitized JSONL replay fixtures", () => {
@@ -104,29 +104,29 @@ describe("real-shape sanitized JSONL replay fixtures", () => {
     ).join("\n");
 
     for (const sentinel of [
-      "BB_CC_LITE_RAW_PROMPT_SENTINEL",
-      "BB_CC_LITE_TOOL_OUTPUT_SENTINEL",
-      "BB_CC_LITE_FILE_CONTENT_SENTINEL",
-      "BB_CC_LITE_API_KEY_SENTINEL",
-      "BB_CC_LITE_RAW_COMMAND_SENTINEL",
-      "BB_CC_LITE_RAW_PATH_SENTINEL",
-      "BB_CC_LITE_RAW_MCP_SENTINEL",
-      "BB_CC_LITE_RAW_TOOL_NAME_SENTINEL",
-      "mcp__bbcc_private__rawPrivacyTool"
+      "CCVERDICT_RAW_PROMPT_SENTINEL",
+      "CCVERDICT_TOOL_OUTPUT_SENTINEL",
+      "CCVERDICT_FILE_CONTENT_SENTINEL",
+      "CCVERDICT_API_KEY_SENTINEL",
+      "CCVERDICT_RAW_COMMAND_SENTINEL",
+      "CCVERDICT_RAW_PATH_SENTINEL",
+      "CCVERDICT_RAW_MCP_SENTINEL",
+      "CCVERDICT_RAW_TOOL_NAME_SENTINEL",
+      "mcp__ccverdict_private__rawPrivacyTool"
     ]) {
       expect(corpus).toContain(sentinel);
     }
   });
 
   it("routes every fixture through statusline orchestration and stores only derived decisions", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-jsonl-replay-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-jsonl-replay-"));
     const appHome = join(tempDir, "app-home");
     const storePath = join(appHome, "events.json");
     const restoreEnv = setIsolatedEnv({
-      BB_CC_LITE_HOME: appHome,
-      BB_CC_LITE_STORE: storePath,
-      BB_CC_LITE_COLOR: "0",
-      BB_CC_LITE_AUTO_LEARN: "0"
+      CCVERDICT_HOME: appHome,
+      CCVERDICT_STORE: storePath,
+      CCVERDICT_COLOR: "0",
+      CCVERDICT_AUTO_LEARN: "0"
     });
 
     try {
@@ -170,14 +170,14 @@ function statusLineInput(path: string, testCase: ReplayCase, sessionId: string):
   return `${JSON.stringify({
     session_id: sessionId,
     transcript_path: path,
-    cwd: "/tmp/bb-cc-lite-fixture/project/BB_CC_LITE_RAW_PATH_SENTINEL",
+    cwd: "/tmp/ccverdict-fixture/project/CCVERDICT_RAW_PATH_SENTINEL",
     model: {
       id: "claude-sonnet-4-5",
       display_name: "Claude Sonnet 4.5"
     },
     workspace: {
-      current_dir: "/tmp/bb-cc-lite-fixture/project/BB_CC_LITE_RAW_PATH_SENTINEL",
-      project_dir: "/tmp/bb-cc-lite-fixture/project",
+      current_dir: "/tmp/ccverdict-fixture/project/CCVERDICT_RAW_PATH_SENTINEL",
+      project_dir: "/tmp/ccverdict-fixture/project",
       added_dirs: []
     },
     context_window: {
@@ -194,13 +194,13 @@ function statusLineInput(path: string, testCase: ReplayCase, sessionId: string):
       name: "default"
     },
     terminal_width: 220,
-    raw_prompt: "BB_CC_LITE_RAW_PROMPT_SENTINEL",
-    tool_output: "BB_CC_LITE_TOOL_OUTPUT_SENTINEL",
-    file_contents: "BB_CC_LITE_FILE_CONTENT_SENTINEL",
+    raw_prompt: "CCVERDICT_RAW_PROMPT_SENTINEL",
+    tool_output: "CCVERDICT_TOOL_OUTPUT_SENTINEL",
+    file_contents: "CCVERDICT_FILE_CONTENT_SENTINEL",
     environment: {
-      ANTHROPIC_API_KEY: "BB_CC_LITE_API_KEY_SENTINEL"
+      ANTHROPIC_API_KEY: "CCVERDICT_API_KEY_SENTINEL"
     },
-    mcp_server_name: "mcp__bbcc_private__rawPrivacyTool"
+    mcp_server_name: "mcp__ccverdict_private__rawPrivacyTool"
   })}\n`;
 }
 

@@ -11,14 +11,14 @@ import { recordHookEvent } from "../src/store.js";
 import { parseTranscriptLines } from "../src/transcript.js";
 
 describe("project validation config", () => {
-  it("loads .bb-cc-lite.json from cwd or nearest parent", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-project-config-"));
+  it("loads .ccverdict.json from cwd or nearest parent", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-project-config-"));
     try {
       const projectDir = join(tempDir, "project");
       const nestedDir = join(projectDir, "packages", "app");
       await mkdir(nestedDir, { recursive: true });
       await writeFile(
-        join(projectDir, ".bb-cc-lite.json"),
+        join(projectDir, ".ccverdict.json"),
         `${JSON.stringify({
           validationCommands: {
             tests: ["make test"],
@@ -50,17 +50,17 @@ describe("project validation config", () => {
   });
 
   it("ignores invalid JSON and unknown categories safely", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-project-config-invalid-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-project-config-invalid-"));
     try {
       const invalidDir = join(tempDir, "invalid");
       await mkdir(invalidDir, { recursive: true });
-      await writeFile(join(invalidDir, ".bb-cc-lite.json"), "{not-json", "utf8");
+      await writeFile(join(invalidDir, ".ccverdict.json"), "{not-json", "utf8");
       await expect(loadProjectConfig(invalidDir)).resolves.toMatchObject({ validationCommands: {} });
 
       const unknownDir = join(tempDir, "unknown");
       await mkdir(unknownDir, { recursive: true });
       await writeFile(
-        join(unknownDir, ".bb-cc-lite.json"),
+        join(unknownDir, ".ccverdict.json"),
         `${JSON.stringify({
           validationCommands: {
             deploy: ["make deploy"],
@@ -79,12 +79,12 @@ describe("project validation config", () => {
   });
 
   it("classifies configured transcript commands without storing raw command strings", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-project-config-transcript-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-project-config-transcript-"));
     try {
       const projectDir = join(tempDir, "project");
       await mkdir(projectDir, { recursive: true });
       await writeFile(
-        join(projectDir, ".bb-cc-lite.json"),
+        join(projectDir, ".ccverdict.json"),
         `${JSON.stringify({ validationCommands: { tests: ["make test"] } })}\n`,
         "utf8"
       );
@@ -103,13 +103,13 @@ describe("project validation config", () => {
   });
 
   it("classifies configured hook commands and keeps raw configured commands out of event history", async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), "bb-cc-lite-project-config-hooks-"));
+    const tempDir = await mkdtemp(join(tmpdir(), "ccverdict-project-config-hooks-"));
     try {
       const projectDir = join(tempDir, "project");
       const storePath = join(tempDir, "events.json");
       await mkdir(projectDir, { recursive: true });
       await writeFile(
-        join(projectDir, ".bb-cc-lite.json"),
+        join(projectDir, ".ccverdict.json"),
         `${JSON.stringify({ validationCommands: { tests: ["make test"] } })}\n`,
         "utf8"
       );
