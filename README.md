@@ -2,13 +2,29 @@
 
 [![CI](https://github.com/softcane/bb-cc-lite/actions/workflows/ci.yml/badge.svg)](https://github.com/softcane/bb-cc-lite/actions/workflows/ci.yml)
 
-A local statusline for Claude Code sessions.
+A local behavior gauge for Claude Code sessions.
 
 Claude Code can look busy while it drifts. It can retry the same failed check, edit files without validation, reread a file it already saw, or push the context window too high.
 
-`bb-cc-lite` watches derived local metadata and prints one gauge line:
+Many statuslines show facts like model, branch, cost, or time. `bb-cc-lite` adds a behavior verdict:
+
+```text
+progressing · drifting · needs intervention · no signal
+```
+
+It watches derived local metadata and answers one question:
 
 > What is the agent doing right now, and does its behavior look healthy?
+
+Try it before installing hooks:
+
+```bash
+npx --yes bb-cc-lite audit --project .
+```
+
+Install it when you want the verdict live in your Claude Code statusline.
+
+The live gauge prints one short line:
 
 ```text
 <dot> · <verb> · <evidence> · <files> · <ctx> · <cost>
