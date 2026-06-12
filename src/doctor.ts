@@ -242,7 +242,11 @@ export async function clearPersonalBaseline(
 
 function formatBuiltBaselineMessage(value: unknown): string {
   const sessionsSeen = sessionsSeenFrom(value);
-  return `Personal baseline ready (${sessionsSeen} sessions).`;
+  if (sessionsSeen === 0) {
+    return "No local session history yet — bb will calibrate to your habits as you work.";
+  }
+  const sessionWord = sessionsSeen === 1 ? "session" : "sessions";
+  return `Baseline calibrated from ${sessionsSeen} past ${sessionWord} — bb now knows what your normal pace and recovery look like.`;
 }
 
 function formatBaselineSummaryMessage(value: unknown, summary?: unknown): string {

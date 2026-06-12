@@ -205,13 +205,6 @@ bb-cc-lite uninstall --purge
 
 `uninstall` removes bb-owned statusline and hooks. When a valid backup exists, it restores the previous Claude Code statusline. `uninstall --purge` also deletes learned baselines, lesson memory, and the derived event store.
 
-Deprecated commands still print one-line pointers:
-
-- `why` points to `audit`.
-- `improve` points to `audit`.
-- `learn` is automatic on install and refresh.
-- `unlearn` points to `uninstall --purge`.
-
 ## Validation Signals
 
 `bb-cc-lite` observes checks Claude Code runs. It does not run tests, lint, typecheck, or build commands by itself.

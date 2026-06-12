@@ -349,7 +349,7 @@ describe("doctor", () => {
 
     const baseline = findCheck(checks, "baseline");
     expect(baseline).toMatchObject({ level: "OK" });
-    expect(baseline.message).toContain("Personal baseline ready (1 sessions).");
+    expect(baseline.message).toContain("Baseline calibrated from 1 past session");
     const baselinePath = join(dirs.appHome, "baseline.json");
     await expect(pathExists(baselinePath)).resolves.toBe(true);
     const serialized = await readFile(baselinePath, "utf8");

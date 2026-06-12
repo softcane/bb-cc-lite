@@ -14,6 +14,8 @@ import { rm } from "node:fs/promises";
 import { installStatusLine, uninstallStatusLine, type InstallMode, type SettingsScope } from "./settings.js";
 import { readStdin } from "./status-input.js";
 import { createStatusLine } from "./statusline.js";
+import { renderDemo, renderInstallBanner, renderWelcome } from "./welcome.js";
+import { createInterface } from "node:readline/promises";
 
 interface ParsedArgs {
   command: string;
@@ -22,7 +24,12 @@ interface ParsedArgs {
 }
 
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (argv.length === 0) {
+    console.log(renderWelcome(packageVersion(), { color: shouldUseColor() }));
+    return;
+  }
+  const args = parseArgs(argv);
   if (isVersionRequest(args)) {
     printVersion();
     return;
@@ -65,6 +72,9 @@ async function main(): Promise<void> {
     case "hook":
       await commandHook(args);
       break;
+    case "demo":
+      console.log(renderDemo({ color: shouldUseColor() }));
+      break;
     case "help":
       printHelp();
       break;
@@ -81,7 +91,7 @@ async function main(): Promise<void> {
 
 async function commandInstall(args: ParsedArgs): Promise<void> {
   const shouldLearn = !args.flags["no-learn"];
-  const mode = installMode(args);
+  const mode = await resolveInstallMode(args);
   const result = await installStatusLine({
     scope: scopeFlag(args),
     replace: Boolean(args.flags.replace),
@@ -96,12 +106,54 @@ async function commandInstall(args: ParsedArgs): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  let baselineLine: string | undefined;
   if (!shouldLearn) {
     console.log("Personal baseline skipped (--no-learn).");
-    return;
+  } else {
+    const baseline = await buildPersonalBaseline({ homeDir: stringFlag(args, "home"), projectDir: result.target.projectDir });
+    baselineLine = baseline.message;
   }
-  const baseline = await buildPersonalBaseline({ homeDir: stringFlag(args, "home"), projectDir: result.target.projectDir });
-  console.log(baseline.message);
+  console.log(renderInstallBanner({ mode, baselineLine, color: shouldUseColor() }));
+}
+
+// The mode question only fires on an interactive terminal with no mode flag, so scripts, hooks,
+// and CI installs keep the non-interactive coach default.
+async function resolveInstallMode(args: ParsedArgs): Promise<InstallMode> {
+  const explicit = installMode(args);
+  if (explicit !== undefined) {
+    return explicit;
+  }
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return "coach";
+  }
+  return promptInstallMode();
+}
+
+async function promptInstallMode(): Promise<InstallMode> {
+  console.log(`
+One question: how much should bb step in?
+
+  1. observe — statusline only; nothing is ever sent to Claude
+  2. coach   — statusline + a short note to Claude when behavior drifts (recommended)
+  3. guard   — coach, plus deny high-confidence blind validation retries
+`);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = (await rl.question("Choose 1-3 [2]: ")).trim().toLowerCase();
+    if (answer === "1" || answer.startsWith("o")) {
+      return "observe";
+    }
+    if (answer === "3" || answer.startsWith("g")) {
+      return "guard";
+    }
+    return "coach";
+  } catch {
+    // Stdin closed at the prompt (Ctrl+D or EOF): fall back to the non-interactive default.
+    console.log("\nNo answer — using coach mode.");
+    return "coach";
+  } finally {
+    rl.close();
+  }
 }
 
 async function commandUninstall(args: ParsedArgs): Promise<void> {
@@ -311,7 +363,7 @@ function scopeFlag(args: ParsedArgs): SettingsScope {
   throw new Error(`Invalid --scope ${scope}; expected local, project, or user`);
 }
 
-function installMode(args: ParsedArgs): InstallMode {
+function installMode(args: ParsedArgs): InstallMode | undefined {
   if (args.flags.guard && args.flags["observe-only"]) {
     throw new Error("--guard cannot be combined with --observe-only");
   }
@@ -321,7 +373,10 @@ function installMode(args: ParsedArgs): InstallMode {
   if (args.flags["observe-only"]) {
     return "observe";
   }
-  return "coach";
+  if (args.flags.coach) {
+    return "coach";
+  }
+  return undefined;
 }
 
 function hookMode(args: ParsedArgs): InstallMode {
@@ -381,11 +436,23 @@ The instruction report replaces it; use --apply to write, --cleanup to remove th
       console.log(`bb-cc-lite install
 
 Usage:
-  bb-cc-lite install [--scope local|project|user] [--observe-only] [--guard]
+  bb-cc-lite install [--scope local|project|user] [--observe-only] [--coach] [--guard]
                      [--replace] [--no-learn]
 
 Installs the Claude Code statusLine and bb-owned hooks.
-Default mode is coach. --observe-only avoids Claude-facing feedback.
+On an interactive terminal, install asks one question: observe, coach, or guard.
+Pass --observe-only, --coach, or --guard to skip the question. Non-interactive
+installs default to coach. --observe-only avoids Claude-facing feedback.
+`);
+      return;
+    case "demo":
+      console.log(`bb-cc-lite demo
+
+Usage:
+  bb-cc-lite demo
+
+Prints the example gauge states with explanations: healthy progress, unchecked-edit
+drift, retry loops, repeated reads, context pressure, and no-signal.
 `);
       return;
     case "doctor":
@@ -438,12 +505,15 @@ Usage:
 Usage:
   bb-cc-lite audit [--project <path>] [--all-projects] [--transcript <path>]
                    [--recent <count>] [--global] [--apply] [--cleanup] [--json]
-  bb-cc-lite install [--scope local|project|user] [--observe-only] [--guard]
+  bb-cc-lite install [--scope local|project|user] [--observe-only] [--coach] [--guard]
                      [--replace] [--no-learn]
+  bb-cc-lite demo
   bb-cc-lite statusline
   bb-cc-lite doctor [--scope local|project|user] [--transcript <path>] [--refresh-pricing]
                     [--baseline] [--build-baseline] [--replay-baseline] [--clear-baseline]
   bb-cc-lite uninstall [--scope local|project|user] [--force] [--purge]
+
+Run bb-cc-lite with no arguments for a quick visual tour.
 
 audit:
   audit [1] current session, [2] recent patterns, [3] instruction report.
@@ -452,7 +522,8 @@ audit:
   --all-projects scans newest local transcripts across ~/.claude/projects.
 
 install:
-  install enables coach mode and builds a small local baseline by default.
+  install asks observe/coach/guard on an interactive terminal (coach otherwise)
+  and builds a small local baseline by default.
   --observe-only keeps display and local telemetry without Claude-facing feedback.
   --guard enables coach feedback plus strict repeated-validation retry denial.
   install preserves an existing Claude statusLine unless --replace is passed.

@@ -90,6 +90,24 @@ describe("CLI behavior characterization", () => {
     expect(invalidCleanup.stderr).toContain("--cleanup cannot be combined with --transcript");
   });
 
+  it("prints the welcome tour with no arguments and the demo walkthrough on demand", async () => {
+    const welcome = await runCli([]);
+    const demo = await runCli(["demo"]);
+
+    expect(welcome.exitCode).toBe(0);
+    expect(welcome.stderr).toBe("");
+    expect(welcome.stdout).toContain("a behavioral gauge for Claude Code");
+    expect(welcome.stdout).toContain("retrying tests · 3 fails, no fix between runs");
+    expect(welcome.stdout).toContain("npx bb-cc-lite install --scope local");
+    expect(demo.exitCode).toBe(0);
+    expect(demo.stderr).toBe("");
+    expect(demo.stdout).toContain("Dot legend:");
+    expect(demo.stdout).toContain("reread config.ts 3x");
+    // Piped output is the no-color path: the ctx warning must use the "!" marker, not ANSI.
+    expect(demo.stdout).toContain("ctx 85%!");
+    expect(demo.stdout).not.toContain("\u001b[");
+  });
+
   it("install --no-learn skips personal baseline learning explicitly", async () => {
     const workspace = await createTempWorkspace();
     try {
@@ -207,7 +225,7 @@ describe("CLI behavior characterization", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain("Installed bb-cc-lite statusLine");
-      expect(result.stdout).toContain("Personal baseline ready (1 sessions).");
+      expect(result.stdout).toContain("Baseline calibrated from 1 past session");
       expect(result.stdout).not.toContain("It reads local Claude JSONL once.");
       expect(result.stdout).not.toContain("No prompts, assistant text");
 
@@ -229,7 +247,7 @@ describe("CLI behavior characterization", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain("Installed bb-cc-lite statusLine");
-      expect(result.stdout).toContain("Personal baseline ready (0 sessions).");
+      expect(result.stdout).toContain("No local session history yet");
 
       const baselineText = await readFile(join(workspace.appHome, "baseline.json"), "utf8");
       const baseline = JSON.parse(baselineText) as {
@@ -439,7 +457,8 @@ describe("CLI behavior characterization", () => {
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain("Existing Claude statusLine found");
       expect(result.stdout).toContain("pass --replace");
-      expect(result.stdout).not.toContain("Personal baseline ready");
+      expect(result.stdout).not.toContain("Baseline calibrated");
+      expect(result.stdout).not.toContain("No local session history yet");
       const settings = JSON.parse(await readFile(settingsPath, "utf8")) as { statusLine?: { command?: string } };
       expect(settings.statusLine?.command).toBe("custom-statusline");
       await expect(pathExists(join(workspace.appHome, "baseline.json"))).resolves.toBe(false);
@@ -472,7 +491,7 @@ describe("CLI behavior characterization", () => {
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain("Replaced existing Claude statusLine with bb-cc-lite");
       expect(result.stdout).toContain("Previous settings were backed up.");
-      expect(result.stdout).toContain("Personal baseline ready (1 sessions).");
+      expect(result.stdout).toContain("Baseline calibrated from 1 past session");
       const settings = JSON.parse(await readFile(settingsPath, "utf8")) as { statusLine?: { command?: string } };
       expect(settings.statusLine?.command).toContain(join(workspace.appHome, "bin", "statusline"));
       await expect(pathExists(join(workspace.appHome, "baseline.json"))).resolves.toBe(true);
